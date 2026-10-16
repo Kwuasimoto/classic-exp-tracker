@@ -1,0 +1,139 @@
+import { useRef, useState, type MouseEvent } from "react";
+import { formatPct } from "../lib/format";
+import { getCalibrationFrame, previewRegions, saveCalibration, type AppError, type CalibrationFrame, type Rect, type RegionPreview } from "../lib/ipc";
+
+type Target = "exp" | "map";
+const DEFAULT_MAP: Rect = { x: 62, y: 36, w: 240, h: 44 };
+const COLORS: Record<Target, string> = { exp: "#2f6fde", map: "#e0742f" };
+
+export function CalibrateView() {
+  const [frame, setFrame] = useState<CalibrationFrame | null>(null);
+  const [rects, setRects] = useState<Record<Target, Rect | null>>({ exp: null, map: DEFAULT_MAP });
+  const [target, setTarget] = useState<Target>("exp");
+  const [drag, setDrag] = useState<{ x: number; y: number } | null>(null);
+  const [preview, setPreview] = useState<RegionPreview | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<AppError | null>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
+
+  const grab = async () => {
+    setError(null);
+    setPreview(null);
+    const res = await getCalibrationFrame();
+    if (!res.success) return setError(res.error);
+    setFrame(res.data);
+    setRects({ exp: res.data.current?.exp ?? null, map: res.data.current?.map ?? DEFAULT_MAP });
+  };
+
+  const toImage = (e: MouseEvent) => {
+    const img = imgRef.current;
+    if (!img || !frame) return null;
+    const b = img.getBoundingClientRect();
+    const clamp = (v: number, max: number) => Math.min(Math.max(Math.round(v), 0), max);
+    return {
+      x: clamp(((e.clientX - b.left) * frame.width) / b.width, frame.width),
+      y: clamp(((e.clientY - b.top) * frame.height) / b.height, frame.height),
+    };
+  };
+
+  const onMove = (e: MouseEvent) => {
+    const p = toImage(e);
+    if (!drag || !p) return;
+    setRects((r) => ({ ...r, [target]: { x: Math.min(drag.x, p.x), y: Math.min(drag.y, p.y), w: Math.abs(p.x - drag.x), h: Math.abs(p.y - drag.y) } }));
+  };
+
+  const setField = (key: keyof Rect, value: string) => {
+    const n = Number.parseInt(value, 10);
+    const current = rects[target];
+    if (!current || Number.isNaN(n) || n < 0) return;
+    setRects((r) => ({ ...r, [target]: { ...current, [key]: n } }));
+  };
+
+  const both = rects.exp && rects.map ? { exp: rects.exp, map: rects.map } : null;
+
+  const runPreview = async () => {
+    if (!both) return;
+    const res = await previewRegions(both);
+    if (res.success) setPreview(res.data);
+    else setError(res.error);
+  };
+
+  const save = async () => {
+    if (!both) return;
+    const res = await saveCalibration(both);
+    if (res.success) setMessage("Saved. Tracking uses these boxes from now on.");
+    else setError(res.error);
+  };
+
+  const active = rects[target];
+  return (
+    <>
+      <div className="card">
+        <p className="status">
+          Open MapleStory, then grab a frame. Draw the <b style={{ color: COLORS.exp }}>EXP box</b> tightly around the numbers after
+          "EXP." (leave room on the right for longer numbers). Check that the <b style={{ color: COLORS.map }}>map box</b> covers the
+          street and map name under the minimap title.
+        </p>
+        <div className="row">
+          <button className="primary" onClick={() => void grab()}>Grab frame</button>
+          {(["exp", "map"] as const).map((t) => (
+            <button key={t} className={t === target ? "primary" : ""} onClick={() => setTarget(t)}>
+              Edit {t === "exp" ? "EXP box" : "map box"}
+            </button>
+          ))}
+          <button disabled={!both || !frame} onClick={() => void runPreview()}>Preview</button>
+          <button className="primary" disabled={!both || !frame} onClick={() => void save()}>Save</button>
+        </div>
+        {active && (
+          <div className="row" style={{ marginTop: 8 }}>
+            {(["x", "y", "w", "h"] as const).map((k) => (
+              <label key={k}>
+                {k} <input type="number" min={0} value={active[k]} onChange={(e) => setField(k, e.target.value)} style={{ width: 80 }} />
+              </label>
+            ))}
+          </div>
+        )}
+        {error && <p className="error">{error.message}</p>}
+        {message && <p className="status">{message}</p>}
+        {preview && (
+          <p>
+            EXP: {preview.exp.kind === "ok" ? `${preview.exp.value.exp} (${formatPct(preview.exp.value.pctBp)})` : `✗ ${preview.exp.reason}`}
+            <br />
+            Map: {preview.map.kind === "ok" ? preview.map.value : `✗ ${preview.map.reason}`}
+          </p>
+        )}
+      </div>
+      {frame && (
+        <div
+          className="card"
+          style={{ position: "relative", padding: 0, overflow: "hidden", cursor: "crosshair", userSelect: "none" }}
+          onMouseDown={(e) => setDrag(toImage(e))}
+          onMouseMove={onMove}
+          onMouseUp={() => setDrag(null)}
+          onMouseLeave={() => setDrag(null)}
+        >
+          <img ref={imgRef} src={frame.pngDataUrl} alt="Captured frame" draggable={false} style={{ width: "100%", display: "block" }} />
+          {(["exp", "map"] as const).map((t) => {
+            const r = rects[t];
+            return (
+              r && (
+                <div
+                  key={t}
+                  style={{
+                    position: "absolute",
+                    left: `${(r.x / frame.width) * 100}%`,
+                    top: `${(r.y / frame.height) * 100}%`,
+                    width: `${(r.w / frame.width) * 100}%`,
+                    height: `${(r.h / frame.height) * 100}%`,
+                    outline: `2px solid ${COLORS[t]}`,
+                    pointerEvents: "none",
+                  }}
+                />
+              )
+            );
+          })}
+        </div>
+      )}
+    </>
+  );
+}
