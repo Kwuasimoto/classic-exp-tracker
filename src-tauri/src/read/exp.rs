@@ -9,8 +9,6 @@ use crate::geom::Crop;
 
 /// Text pixels have luminance ≥ this (measured on the 2026-10-15 fixture).
 pub const TEXT_LUM_MIN: u32 = 150;
-/// Max share of differing pixels for a glyph to match a template.
-const MAX_MISMATCH_RATIO: f32 = 0.15;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -62,54 +60,10 @@ pub fn segment(crop: &Crop) -> Result<Vec<Glyph>, ReadError> {
     Ok(glyphs)
 }
 
-fn cell(rows: &[&[u8]], col: usize, row: usize) -> bool {
-    rows.get(row).and_then(|r| r.get(col)).is_some_and(|&b| b == b'#')
-}
-
-/// Differing pixels between two glyphs, top-aligned, trying both horizontal
-/// alignments when widths differ by one. `None` when sizes are too different.
-fn mismatches(a: &[String], b: &[&str]) -> Option<(usize, usize)> {
-    let a: Vec<&[u8]> = a.iter().map(|r| r.as_bytes()).collect();
-    let b: Vec<&[u8]> = b.iter().map(|r| r.as_bytes()).collect();
-    let (wa, wb) = (a.first()?.len(), b.first()?.len());
-    if wa.abs_diff(wb) > 1 || a.len().abs_diff(b.len()) > 2 {
-        return None;
-    }
-    let (width, height) = (wa.max(wb), a.len().max(b.len()));
-    let shifts: &[(usize, usize)] = if wa == wb { &[(0, 0)] } else if wa < wb { &[(0, 0), (1, 0)] } else { &[(0, 0), (0, 1)] };
-    shifts
-        .iter()
-        .map(|&(shift_a, shift_b)| {
-            (0..height)
-                .flat_map(|row| (0..width).map(move |col| (row, col)))
-                .filter(|&(row, col)| {
-                    let pa = col.checked_sub(shift_a).is_some_and(|c| cell(&a, c, row));
-                    let pb = col.checked_sub(shift_b).is_some_and(|c| cell(&b, c, row));
-                    pa != pb
-                })
-                .count()
-        })
-        .min()
-        .map(|n| (n, width * height))
-}
-
-/// Nearest template character, if it is close enough and strictly better than
-/// the best template of any other character.
+/// The template whose rows equal the glyph's exactly. No near matches: a shape
+/// the templates don't have fails the read instead of becoming a wrong digit.
 pub fn classify(glyph: &Glyph, templates: &[Template]) -> Option<char> {
-    let mut best_per_char: Vec<(char, usize, usize)> = Vec::new();
-    for t in templates {
-        let Some((n, area)) = mismatches(&glyph.rows, t.rows) else { continue };
-        match best_per_char.iter_mut().find(|(c, _, _)| *c == t.ch) {
-            Some(entry) if n < entry.1 => *entry = (t.ch, n, area),
-            Some(_) => {}
-            None => best_per_char.push((t.ch, n, area)),
-        }
-    }
-    best_per_char.sort_by_key(|&(_, n, _)| n);
-    let &(ch, n, area) = best_per_char.first()?;
-    let close_enough = (n as f32) <= MAX_MISMATCH_RATIO * area as f32;
-    let unambiguous = best_per_char.get(1).is_none_or(|&(_, second, _)| second > n);
-    (close_enough && unambiguous).then_some(ch)
+    templates.iter().find(|t| t.rows.iter().eq(glyph.rows.iter())).map(|t| t.ch)
 }
 
 /// Parse `<digits/commas>[<int>.<2 digits>%]`.
