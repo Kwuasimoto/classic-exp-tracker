@@ -1,4 +1,5 @@
-//! Pure EXP/session state machine and map debouncing: samples in, effects out. No I/O.
+//! Pure EXP/session state machine and map debouncing: samples in, effects out.
+//! No I/O apart from log lines explaining its decisions.
 
 mod confirm;
 mod level;
@@ -7,6 +8,8 @@ pub use confirm::{ConfirmOutcome, MapConfirmer, CONFIRM_FRAMES};
 pub use level::TotalBounds;
 
 use std::collections::BTreeMap;
+
+use log::{info, warn};
 
 use crate::read::exp::ExpReading;
 
@@ -144,6 +147,7 @@ impl Tracker {
                 .bounds
                 .or_else(|| TotalBounds::from_reading(base))
                 .map_or(base.exp, TotalBounds::estimate);
+            info!("level-up: {base:?} -> {r:?}, old level total estimated at {total}");
             self.reset_to(r);
             return total.saturating_sub(base.exp) + r.exp;
         }
@@ -152,7 +156,9 @@ impl Tracker {
                 Some(merged) => self.bounds = Some(merged),
                 None => {
                     self.rejections += 1;
+                    warn!("rejected {r:?}: implies level total {implied:?}, outside {known:?} (rejection {})", self.rejections);
                     if self.rejections >= MAX_CONSECUTIVE_REJECTIONS {
+                        warn!("{MAX_CONSECUTIVE_REJECTIONS} rejections in a row; restarting from {r:?}");
                         self.reset_to(r);
                     }
                     return 0;
@@ -160,6 +166,9 @@ impl Tracker {
             },
             (None, implied) => self.bounds = implied,
             (Some(_), None) => {}
+        }
+        if r.exp < base.exp {
+            info!("EXP dropped {base:?} -> {r:?}: counted as a death, no gain");
         }
         self.rejections = 0;
         self.baseline = Some(r);

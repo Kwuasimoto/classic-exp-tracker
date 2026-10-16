@@ -28,6 +28,8 @@ rusqlite = { version = "0.40.2", features = ["bundled"] }
 thiserror = "2.0.21"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 base64 = "0.23.1"
+log = "0.4.34"
+tauri-plugin-log = "2.10.1"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

@@ -187,6 +187,7 @@ pub fn save_calibration(state: AppStateRef<'_>, exp: Rect, map: Rect) -> Result<
     }
     let calibration = Calibration { exp, map };
     state.store.lock().expect("store lock poisoned").save_calibration(&resolution_key(width, height), &calibration)?;
+    log::info!("calibration saved for {width}x{height}: {calibration:?}");
     *state.capture.regions.write().expect("regions lock poisoned") = Some(Regions { width, height, calibration });
     Ok(())
 }

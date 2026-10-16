@@ -2,12 +2,14 @@
 //! tracker and readers stay pure, all I/O happens here.
 
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use log::{error, info, warn};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
@@ -89,7 +91,7 @@ pub fn shutdown(state: &AppState) {
     let handle = state.thread.lock().expect("thread slot lock poisoned").take();
     if let Some(handle) = handle
         && handle.join().is_err() {
-            eprintln!("exp-pipeline thread panicked; the last minute may not be saved");
+            error!("exp-pipeline thread panicked; the last minute may not be saved");
         }
 }
 
@@ -111,6 +113,19 @@ struct Pipeline {
     capture_error: Option<String>,
     storage_error: Option<String>,
     notify_error: Option<String>,
+    /// Whether the previous frame's readers failed; failures are logged when this flips.
+    exp_failing: bool,
+    map_failing: bool,
+    minute: MinuteStats,
+}
+
+/// Reader counts for one wall-clock minute, logged as one line when the minute ends.
+#[derive(Default)]
+struct MinuteStats {
+    minute: i64,
+    frames: u32,
+    exp_unreadable: u32,
+    map_unreadable: u32,
 }
 
 impl Pipeline {
@@ -134,6 +149,9 @@ impl Pipeline {
             capture_error: None,
             storage_error: None,
             notify_error: None,
+            exp_failing: false,
+            map_failing: false,
+            minute: MinuteStats::default(),
         }
     }
 
@@ -152,17 +170,19 @@ impl Pipeline {
         self.apply(fx);
         if let Some(control) = self.control.take()
             && let Err(e) = control.stop() {
-                eprintln!("stopping capture at shutdown: {e:?}");
+                error!("stopping capture at shutdown: {e:?}");
             }
     }
 
     fn ensure_capture(&mut self) {
         if let Some(finished) = self.control.take_if(|c| c.is_finished()) {
-            self.capture_error = Some(match finished.into_thread_handle().join() {
+            let reason = match finished.into_thread_handle().join() {
                 Ok(Ok(())) => "capture ended".to_string(),
                 Ok(Err(e)) => format!("{e:?}"),
                 Err(_) => "capture thread panicked".to_string(),
-            });
+            };
+            warn!("monitor capture stopped: {reason}; retrying in {}s", self.backoff.as_secs());
+            self.capture_error = Some(reason);
             self.schedule_retry();
             self.publish(ReaderStatus::NotCalibrated);
         }
@@ -170,8 +190,12 @@ impl Pipeline {
             return;
         }
         match capture::start(self.tx.clone(), Arc::clone(&self.state.capture)) {
-            Ok(control) => self.control = Some(control),
+            Ok(control) => {
+                info!("monitor capture started");
+                self.control = Some(control);
+            }
             Err(e) => {
+                warn!("monitor capture failed to start: {e}; retrying in {}s", self.backoff.as_secs());
                 self.capture_error = Some(e.to_string());
                 self.schedule_retry();
                 self.publish(ReaderStatus::NotCalibrated);
@@ -196,11 +220,12 @@ impl Pipeline {
             let found = self.state.store.lock().expect("store lock poisoned").calibration(&resolution_key(width, height));
             match found {
                 Ok(Some(calibration)) => {
+                    info!("loaded calibration for {width}x{height}: {calibration:?}");
                     *self.state.capture.regions.write().expect("regions lock poisoned") =
                         Some(Regions { width, height, calibration });
                 }
-                Ok(None) => {}
-                Err(e) => self.storage_error = Some(e.to_string()),
+                Ok(None) => info!("no calibration saved for {width}x{height}; waiting for the Calibrate tab"),
+                Err(e) => self.storage_failed("loading calibration", e),
             }
         }
         self.publish(ReaderStatus::NotCalibrated);
@@ -208,16 +233,44 @@ impl Pipeline {
 
     fn on_regions(&mut self, t: i64, exp_crop: Crop, map_crop: Crop) {
         self.frames_flowing();
-        let exp = read_exp(&exp_crop).ok();
+        self.count_frame(t);
+        let exp = match read_exp(&exp_crop) {
+            Ok(r) => {
+                if self.exp_failing {
+                    info!("EXP readable again: {} [{}.{:02}%]", r.exp, r.pct_bp / 100, r.pct_bp % 100);
+                }
+                Some(r)
+            }
+            Err(e) => {
+                if !self.exp_failing {
+                    warn!("EXP unreadable: {e}");
+                }
+                self.minute.exp_unreadable += 1;
+                None
+            }
+        };
+        self.exp_failing = exp.is_none();
         let mut reader = if exp.is_some() { ReaderStatus::Ok } else { ReaderStatus::ExpUnreadable };
         match read_strip(&map_crop) {
             Ok(strip) => {
+                if self.map_failing {
+                    info!("map strip readable again");
+                }
+                self.map_failing = false;
                 if let ConfirmOutcome::Changed { signature, strips } = self.confirmer.feed(strip.signature, map_crop) {
                     self.resolve_map(t, &signature, &strips);
                 }
             }
-            Err(_) if reader == ReaderStatus::Ok => reader = ReaderStatus::MapUnreadable,
-            Err(_) => {}
+            Err(e) => {
+                if !self.map_failing {
+                    warn!("map strip unreadable: {e}");
+                }
+                self.map_failing = true;
+                self.minute.map_unreadable += 1;
+                if reader == ReaderStatus::Ok {
+                    reader = ReaderStatus::MapUnreadable;
+                }
+            }
         }
         let fx = self.tracker.on_sample(Sample { t, exp, map: self.current_map });
         let minute_written = fx.iter().any(|e| matches!(e, Effect::Minute { .. }));
@@ -225,22 +278,49 @@ impl Pipeline {
         self.publish(reader);
         if minute_written
             && let Err(e) = self.app.emit(MINUTE_EVENT, ()) {
+                warn!("sending {MINUTE_EVENT} to the UI failed: {e}");
                 self.notify_error = Some(e.to_string());
             }
     }
 
+    /// Count a frame; at each new wall-clock minute, log the previous minute's counts.
+    fn count_frame(&mut self, t: i64) {
+        let minute = t.div_euclid(60);
+        if minute != self.minute.minute {
+            let m = &self.minute;
+            if m.frames > 0 {
+                info!(
+                    "minute summary: {} frames, EXP unreadable {}, map unreadable {}",
+                    m.frames, m.exp_unreadable, m.map_unreadable
+                );
+            }
+            self.minute = MinuteStats { minute, ..MinuteStats::default() };
+        }
+        self.minute.frames += 1;
+    }
+
+    fn storage_failed(&mut self, doing: &str, e: impl Display) {
+        error!("database error while {doing}: {e}");
+        self.storage_error = Some(e.to_string());
+    }
+
     fn resolve_map(&mut self, t: i64, signature: &Signature, strips: &[Crop]) {
         let result = self.find_map(signature).and_then(|found| match found {
-            Some(id) => Ok(id),
+            Some(id) => {
+                info!("map confirmed: known map #{id}");
+                Ok(id)
+            }
             None => {
                 let name = self.label(strips);
-                self.state.store.lock().expect("store lock poisoned").insert_map(&name, signature, t)
+                let id = self.state.store.lock().expect("store lock poisoned").insert_map(&name, signature, t)?;
+                info!("map confirmed: new map #{id}, OCR label {name:?}");
+                Ok(id)
             }
         });
         match result {
             Ok(id) => self.current_map = Some(id),
             Err(e) => {
-                self.storage_error = Some(e.to_string());
+                self.storage_failed("looking up or saving a map", e);
                 // Re-confirm on upcoming frames so the lookup is retried.
                 self.confirmer = MapConfirmer::new();
             }
@@ -272,29 +352,34 @@ impl Pipeline {
         }
         let store = self.state.store.lock().expect("store lock poisoned");
         let mut done = 0;
+        let mut failure = None;
         for effect in &self.pending {
             let result = match *effect {
                 Effect::SessionStarted { key, map, t } => store.start_session(map, t).map(|id| {
+                    info!("session #{id} started on map #{map}");
                     self.keys.insert(key, id);
                 }),
                 Effect::SessionEnded { key, t } => {
                     let id = *self.keys.get(&key).expect("SessionStarted is applied before its SessionEnded");
-                    store.end_session(id, t)
+                    store.end_session(id, t).map(|()| info!("session #{id} ended"))
                 }
                 Effect::Minute { minute_start, key, exp_gained, training_secs } => {
                     let id = *self.keys.get(&key).expect("SessionStarted is applied before its minutes");
-                    store.add_minute(minute_start, id, exp_gained, training_secs)
+                    store
+                        .add_minute(minute_start, id, exp_gained, training_secs)
+                        .map(|()| info!("session #{id} minute saved: +{exp_gained} EXP, {training_secs}s training"))
                 }
             };
-            match result {
-                Ok(()) => done += 1,
-                Err(e) => {
-                    self.storage_error = Some(e.to_string());
-                    break;
-                }
+            if let Err(e) = result {
+                failure = Some(e);
+                break;
             }
+            done += 1;
         }
         drop(store);
+        if let Some(e) = failure {
+            self.storage_failed("saving tracker results (kept queued for retry)", e);
+        }
         self.pending.drain(..done);
         if self.pending.is_empty() {
             self.storage_error = None;
@@ -302,14 +387,13 @@ impl Pipeline {
     }
 
     fn publish(&mut self, reader: ReaderStatus) {
-        let map_name = match self.current_map {
-            Some(id) => match self.state.store.lock().expect("store lock poisoned").map_name(id) {
-                Ok(name) => name,
-                Err(e) => {
-                    self.storage_error = Some(e.to_string());
-                    None
-                }
-            },
+        let found = self.current_map.map(|id| self.state.store.lock().expect("store lock poisoned").map_name(id));
+        let map_name = match found {
+            Some(Ok(name)) => name,
+            Some(Err(e)) => {
+                self.storage_failed("loading the map name", e);
+                None
+            }
             None => None,
         };
         let status = if let Some(e) = &self.capture_error {
@@ -332,7 +416,10 @@ impl Pipeline {
         *self.state.live.write().expect("live lock poisoned") = tick.clone();
         match self.app.emit(TICK_EVENT, &tick) {
             Ok(()) => self.notify_error = None,
-            Err(e) => self.notify_error = Some(e.to_string()),
+            Err(e) => {
+                warn!("sending {TICK_EVENT} to the UI failed: {e}");
+                self.notify_error = Some(e.to_string());
+            }
         }
     }
 }

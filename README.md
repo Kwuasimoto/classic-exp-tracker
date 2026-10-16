@@ -57,6 +57,7 @@ flowchart TB
 - **Pipeline.** `pipeline.rs` is one background thread that runs the readers and tracker on each frame. It is the only place that writes to the database.
 - **Tracking.** `tracker/` has no I/O. It turns each second's reading into effects (`SessionStarted`, `SessionEnded`, `Minute`), which `pipeline.rs` writes to SQLite. Repot trips and AFK time count as zero training seconds, so they don't lower the rate.
 - **UI.** The UI only talks to the backend through Tauri commands and two events. Every payload is validated with Zod in `lib/ipc.ts`.
+- **Logs.** A text log in `%LOCALAPPDATA%\com.mapleexp.tracker\logs\` (5 files of up to 1 MB) records reader failures with the partially read text, map and session changes, tracker decisions (level-up, death, rejected misreads), capture restarts and database errors, plus one summary line per minute. It contains text only, never images.
 - **Dev tool.** `src/bin/glyph_collect.rs` is a developer-only tool for capturing new digit shapes. It is built only with the `dev-tools` feature and is not part of the release build.
 
 ## Development

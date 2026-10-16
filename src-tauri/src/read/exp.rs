@@ -88,11 +88,13 @@ pub fn parse(text: &str) -> Result<ExpReading, ReadError> {
 }
 
 pub fn read_exp(crop: &Crop) -> Result<ExpReading, ReadError> {
-    let text = segment(crop)?
-        .iter()
-        .map(|g| classify(g, TEMPLATES).ok_or(ReadError::UnknownGlyph(g.x)))
-        .collect::<Result<String, _>>()?;
-    parse(&text)
+    let glyphs = segment(crop)?;
+    let chars: Vec<Option<char>> = glyphs.iter().map(|g| classify(g, TEMPLATES)).collect();
+    if let Some(i) = chars.iter().position(Option::is_none) {
+        let line = chars.iter().map(|c| c.unwrap_or('?')).collect();
+        return Err(ReadError::UnknownGlyph { column: glyphs[i].x, line });
+    }
+    parse(&chars.into_iter().flatten().collect::<String>())
 }
 
 #[cfg(test)]

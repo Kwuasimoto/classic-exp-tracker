@@ -10,8 +10,9 @@ pub mod ocr;
 pub enum ReadError {
     #[error("region contains no text")]
     Blank,
-    #[error("unrecognized glyph at column {0}")]
-    UnknownGlyph(u32),
+    /// `line` is the readout with '?' for each unknown glyph, e.g. `1?,176[4.3?%]`.
+    #[error("unrecognized glyph at column {column}, read as {line:?}")]
+    UnknownGlyph { column: u32, line: String },
     #[error("text {0:?} is not an EXP readout")]
     Parse(String),
 }
