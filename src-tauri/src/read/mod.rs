@@ -2,6 +2,8 @@
 
 pub mod exp;
 pub mod glyphs;
+pub mod map_strip;
+pub mod ocr;
 
 /// A failed read is a normal outcome (loading screen, alt-tab, covered region).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

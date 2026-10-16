@@ -1,5 +1,6 @@
 pub mod geom;
 pub mod read;
+pub mod tracker;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
