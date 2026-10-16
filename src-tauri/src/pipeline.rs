@@ -126,6 +126,8 @@ struct MinuteStats {
     frames: u32,
     exp_unreadable: u32,
     map_unreadable: u32,
+    last_exp_error: Option<String>,
+    last_map_error: Option<String>,
 }
 
 impl Pipeline {
@@ -246,6 +248,7 @@ impl Pipeline {
                     warn!("EXP unreadable: {e}");
                 }
                 self.minute.exp_unreadable += 1;
+                self.minute.last_exp_error = Some(e.to_string());
                 None
             }
         };
@@ -267,6 +270,7 @@ impl Pipeline {
                 }
                 self.map_failing = true;
                 self.minute.map_unreadable += 1;
+                self.minute.last_map_error = Some(e.to_string());
                 if reader == ReaderStatus::Ok {
                     reader = ReaderStatus::MapUnreadable;
                 }
@@ -283,16 +287,24 @@ impl Pipeline {
             }
     }
 
-    /// Count a frame; at each new wall-clock minute, log the previous minute's counts.
+    /// Count a frame; at each new wall-clock minute, log the previous minute's counts
+    /// and its latest reader errors.
     fn count_frame(&mut self, t: i64) {
         let minute = t.div_euclid(60);
         if minute != self.minute.minute {
             let m = &self.minute;
             if m.frames > 0 {
-                info!(
+                let mut line = format!(
                     "minute summary: {} frames, EXP unreadable {}, map unreadable {}",
                     m.frames, m.exp_unreadable, m.map_unreadable
                 );
+                if let Some(e) = &m.last_exp_error {
+                    line += &format!("; last EXP error: {e}");
+                }
+                if let Some(e) = &m.last_map_error {
+                    line += &format!("; last map error: {e}");
+                }
+                info!("{line}");
             }
             self.minute = MinuteStats { minute, ..MinuteStats::default() };
         }
