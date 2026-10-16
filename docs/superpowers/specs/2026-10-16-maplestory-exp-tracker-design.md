@@ -43,7 +43,7 @@ Three regions are read from each frame. Observed layout at 1920×1080 (reference
 
 All readers are pure functions: `crop -> Result<Reading, ReadError>`. A failed read is a normal outcome (loading screen, alt-tab, a window covering the region), not an error to surface.
 
-- **Digits (EXP, %, level):** binarize the crop, split it into glyphs by column, and match each glyph against stored template images of the game's bitmap font. Glyphs: `0–9 . , % [ ]` for EXP; `0–9` for level. Matching must exceed a similarity threshold, or the read fails. Templates are cut from real captures. A dev command saves region crops to collect the full glyph set.
+- **Digits (EXP, %, level):** binarize the crop, split it into glyphs by column, and match each glyph against stored template images of the game's bitmap font. Glyphs: `0–9 . , % [ ]` for EXP; `0–9` for level. Matching must exceed a similarity threshold, or the read fails. Templates are cut from real captures during development and compiled into the binary (`include_bytes!`). A dev-only binary (excluded from release builds) saves region crops to collect the full glyph set.
 - **EXP output:** `exp: u64`, `pct_bp: u32` (percent in basis points, `0.10%` → `10`). Consistency check: once the level's total EXP is estimated, `exp / total` must agree with `pct_bp` within rounding, or the read is rejected.
 - **Map name:** Windows built-in OCR (`Windows.Media.Ocr` via the `windows` crate) on the upscaled crop. Result is normalized (trim, collapse whitespace) and fuzzy-matched (edit distance ≤ 2) against map names seen before. A close match snaps to the known name. An unmatched name becomes a candidate.
 
@@ -62,7 +62,13 @@ Capture runs every **1 s**. Each frame produces a `Sample { t, exp: Option<(u64,
 - **Sessions:** a session starts on the first EXP gain on a confirmed map. It continues while the player stays on that map, and continues if they leave and come back to the **same map within 10 minutes** (time away is excluded because it isn't training time). It ends when EXP is gained on a different map, or after 10 minutes away. Visits that never gain EXP never create a session.
 - **Minute rollup:** every wall-clock minute, the tracker writes one row per session active in that minute: `exp_gained`, `training_secs`, `level` at end of minute.
 
-## Storage (SQLite, app data dir)
+## Storage
+
+- **No images are ever written to disk by the shipped app.** Frames and crops exist only in memory for the duration of a read, and are dropped once parsed. Only parsed numbers and names are stored. (The calibration screen's frozen frame is held in memory and sent to the UI, never saved.)
+- **One file, nothing to install.** Data lives in a single SQLite file, `%APPDATA%\<app>\tracker.db`. SQLite is compiled into the `.exe` (`rusqlite` with the `bundled` feature), so there is no database server, service, or runtime for the user to install. The installer ships one exe plus the WebView2 runtime Windows 11 already has. Deleting the file resets all history.
+- SQLite over flat files (JSON/CSV): the per-map averages, session lookups and windowed chart queries are indexed queries on SQLite. Flat files would need reading and re-aggregating the full history on every query, and rewriting files to close a session.
+
+Schema:
 
 - `maps(id, name UNIQUE, first_seen)`
 - `sessions(id, map_id, started_at, ended_at NULL)`
@@ -101,7 +107,7 @@ Computed in Rust from minute rows and sent to the UI (one implementation, unit-t
 
 ## Testing
 
-- **Readers:** fixture crops (EXP, level and map name only — no chat or other players) in `src-tauri/tests/fixtures/`, starting with the 2026-10-15 capture (`326`, `0.10%`, `41`, `Victoria Road / Perion`). Add more as glyphs are collected.
+- **Readers:** fixture crops (EXP, level and map name only — no chat or other players) in `src-tauri/tests/fixtures/`. These are dev-only test assets in the repo, not shipped and not written by the app, starting with the 2026-10-15 capture (`326`, `0.10%`, `41`, `Victoria Road / Perion`). Add more as glyphs are collected.
 - **Tracker:** pure state machine fed synthetic `Sample` sequences: normal gain, level-up, death, map debounce through unreadable frames, repot return within and after 10 minutes, AFK, a misread rejected by the consistency check.
 - **Rates:** bucket and SMA functions against hand-computed minute rows.
 - **Store:** in-memory SQLite round-trips.
