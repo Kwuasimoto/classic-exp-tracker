@@ -77,17 +77,15 @@ impl Tracker {
         self.roll_minute(s.t, &mut fx);
         let gain = s.exp.map_or(0, |r| self.accept(r));
 
-        if let Some(sess) = self.session.as_mut() {
-            if s.map == Some(sess.map) {
+        if let Some(sess) = self.session.as_mut()
+            && s.map == Some(sess.map) {
                 sess.last_on_map = s.t;
             }
-        }
-        if let Some(sess) = self.session {
-            if s.t - sess.last_on_map > RETURN_WINDOW_SECS {
+        if let Some(sess) = self.session
+            && s.t - sess.last_on_map > RETURN_WINDOW_SECS {
                 fx.push(Effect::SessionEnded { key: sess.key, t: sess.last_on_map });
                 self.session = None;
             }
-        }
 
         if gain > 0 {
             self.last_gain_t = Some(s.t);
