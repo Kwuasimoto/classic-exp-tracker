@@ -22,14 +22,3 @@ impl From<StoreError> for AppError {
         AppError::Storage(e.to_string())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn serializes_as_tagged_object() {
-        let json = serde_json::to_string(&AppError::NotFound("map 3".into())).expect("serializes");
-        assert_eq!(json, r#"{"kind":"notFound","message":"map 3"}"#);
-    }
-}

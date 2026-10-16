@@ -84,38 +84,3 @@ pub fn fixture(name: &str) -> Crop {
         .to_rgba8();
     Crop::from_image(&img)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fits_in_rejects_empty_and_overflowing_rects() {
-        assert!(Rect { x: 0, y: 0, w: 10, h: 10 }.fits_in(10, 10));
-        assert!(!Rect { x: 1, y: 0, w: 10, h: 10 }.fits_in(10, 10));
-        assert!(!Rect { x: 0, y: 0, w: 0, h: 10 }.fits_in(10, 10));
-        assert!(!Rect { x: u32::MAX, y: 0, w: 2, h: 1 }.fits_in(10, 10));
-    }
-
-    #[test]
-    fn new_rejects_wrong_buffer_length() {
-        assert!(Crop::new(2, 2, vec![0; 16]).is_some());
-        assert!(Crop::new(2, 2, vec![0; 15]).is_none());
-    }
-
-    #[test]
-    fn sub_copies_the_right_pixels() {
-        // 3x2 image where each pixel's red channel is its index.
-        let rgba: Vec<u8> = (0..6u8).flat_map(|i| [i, 0, 0, 255]).collect();
-        let crop = Crop::new(3, 2, rgba).expect("valid buffer");
-        let sub = crop.sub(Rect { x: 1, y: 0, w: 2, h: 2 }).expect("fits");
-        assert_eq!((sub.width, sub.height), (2, 2));
-        assert_eq!([sub.px(0, 0)[0], sub.px(1, 0)[0], sub.px(0, 1)[0], sub.px(1, 1)[0]], [1, 2, 4, 5]);
-        assert!(crop.sub(Rect { x: 2, y: 0, w: 2, h: 1 }).is_none());
-    }
-
-    #[test]
-    fn resolution_key_format() {
-        assert_eq!(resolution_key(1920, 1080), "1920x1080");
-    }
-}

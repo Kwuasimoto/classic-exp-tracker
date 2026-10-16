@@ -204,153 +204,43 @@ mod tests {
         Some(ExpReading { exp, pct_bp })
     }
 
-    fn feed(tr: &mut Tracker, t: i64, exp: Option<ExpReading>, map: Option<MapId>) -> Vec<Effect> {
-        tr.on_sample(Sample { t, exp, map })
-    }
-
-    fn minutes(fx: &[Effect]) -> (u64, u32) {
-        fx.iter().fold((0, 0), |(e, s), f| match f {
-            Effect::Minute { exp_gained, training_secs, .. } => (e + exp_gained, s + training_secs),
-            _ => (e, s),
-        })
-    }
-
-    /// 10_000 + 10t EXP at exactly (1000 + t) bp: consistent with a 100_000 total.
-    fn steady(t: i64) -> Option<ExpReading> {
-        let t = u64::try_from(t).expect("non-negative t");
-        reading(10_000 + 10 * t, 1_000 + u32::try_from(t).expect("small t"))
-    }
-
-    #[test]
-    fn gain_starts_session_and_rolls_up_per_minute() {
-        let mut tr = Tracker::new();
-        assert!(feed(&mut tr, 0, reading(100, 100), MAP).is_empty());
-        assert_eq!(feed(&mut tr, 1, reading(150, 150), MAP), vec![Effect::SessionStarted { key: SessionKey(0), map: 1, t: 1 }]);
-        assert_eq!(
-            feed(&mut tr, 60, None, MAP),
-            vec![Effect::Minute { minute_start: 0, key: SessionKey(0), exp_gained: 50, training_secs: 1 }]
-        );
+    fn total_exp(fx: &[Effect]) -> u64 {
+        fx.iter().map(|f| if let Effect::Minute { exp_gained, .. } = f { *exp_gained } else { 0 }).sum()
     }
 
     #[test]
     fn level_up_counts_the_rest_of_the_old_level() {
         let mut tr = Tracker::new();
-        feed(&mut tr, 0, reading(990_000, 9_900), MAP);
-        feed(&mut tr, 1, reading(5_000, 50), MAP);
-        let fx = tr.finish();
-        assert_eq!(minutes(&fx).0, 15_000);
-        assert_eq!(tr.baseline(), Some(ExpReading { exp: 5_000, pct_bp: 50 }));
+        tr.on_sample(Sample { t: 0, exp: reading(990_000, 9_900), map: MAP });
+        tr.on_sample(Sample { t: 1, exp: reading(5_000, 50), map: MAP });
+        assert_eq!(total_exp(&tr.finish()), 15_000);
     }
 
     #[test]
-    fn death_resets_baseline_without_negative_gain() {
+    fn death_is_not_negative_gain() {
         let mut tr = Tracker::new();
-        feed(&mut tr, 0, reading(500_000, 5_000), MAP);
-        feed(&mut tr, 1, reading(450_000, 4_500), MAP);
-        feed(&mut tr, 2, reading(460_000, 4_600), MAP);
-        assert_eq!(minutes(&tr.finish()).0, 10_000);
+        tr.on_sample(Sample { t: 0, exp: reading(500_000, 5_000), map: MAP });
+        tr.on_sample(Sample { t: 1, exp: reading(450_000, 4_500), map: MAP });
+        tr.on_sample(Sample { t: 2, exp: reading(460_000, 4_600), map: MAP });
+        assert_eq!(total_exp(&tr.finish()), 10_000);
     }
 
     #[test]
-    fn inconsistent_reading_is_rejected() {
-        let mut tr = Tracker::new();
-        feed(&mut tr, 0, reading(500_000, 5_000), MAP);
-        feed(&mut tr, 1, reading(900_000, 5_100), MAP);
-        assert_eq!(tr.baseline(), Some(ExpReading { exp: 500_000, pct_bp: 5_000 }));
-        feed(&mut tr, 2, reading(510_000, 5_100), MAP);
-        assert_eq!(minutes(&tr.finish()).0, 10_000);
-    }
-
-    #[test]
-    fn repeated_rejections_reset_the_baseline() {
-        let mut tr = Tracker::new();
-        feed(&mut tr, 0, reading(500_000, 5_000), MAP);
-        for t in 1..=i64::from(MAX_CONSECUTIVE_REJECTIONS) {
-            feed(&mut tr, t, reading(900_000, 5_100), MAP);
-        }
-        assert_eq!(tr.baseline(), Some(ExpReading { exp: 900_000, pct_bp: 5_100 }));
-        let fx = feed(&mut tr, 6, reading(900_100, 5_100), MAP);
-        assert_eq!(fx, vec![Effect::SessionStarted { key: SessionKey(0), map: 1, t: 6 }]);
-        assert_eq!(minutes(&tr.finish()).0, 100);
-    }
-
-    #[test]
-    fn gains_without_a_confirmed_map_are_not_recorded() {
-        let mut tr = Tracker::new();
-        feed(&mut tr, 0, steady(0), None);
-        assert!(feed(&mut tr, 1, steady(1), None).is_empty());
-        assert!(tr.finish().is_empty());
-    }
-
-    #[test]
-    fn repot_trip_within_window_keeps_session_and_excludes_town_time() {
+    fn short_repot_trip_keeps_one_session_and_excludes_town_time() {
         let mut tr = Tracker::new();
         let mut fx = Vec::new();
+        // 10_000 + 10t EXP at (1000 + t) bp: consistent with a 100_000 total.
+        let steady = |t: i64| reading(10_000 + 10 * t as u64, 1_000 + t as u32);
         for t in 0..=10 {
-            fx.extend(feed(&mut tr, t, steady(t), MAP));
+            fx.extend(tr.on_sample(Sample { t, exp: steady(t), map: MAP }));
         }
         for t in 11..=200 {
-            fx.extend(feed(&mut tr, t, None, TOWN));
+            fx.extend(tr.on_sample(Sample { t, exp: None, map: TOWN }));
         }
-        fx.extend(feed(&mut tr, 201, steady(20), MAP));
+        fx.extend(tr.on_sample(Sample { t: 201, exp: steady(20), map: MAP }));
         fx.extend(tr.finish());
         let started = fx.iter().filter(|f| matches!(f, Effect::SessionStarted { .. })).count();
-        let ended: Vec<_> = fx.iter().filter(|f| matches!(f, Effect::SessionEnded { .. })).collect();
-        assert_eq!(started, 1);
-        assert_eq!(ended, vec![&Effect::SessionEnded { key: SessionKey(0), t: 201 }]);
-        assert_eq!(minutes(&fx), (200, 11));
-    }
-
-    #[test]
-    fn away_longer_than_window_ends_session() {
-        let mut tr = Tracker::new();
-        let mut fx = Vec::new();
-        for t in 0..=10 {
-            fx.extend(feed(&mut tr, t, steady(t), MAP));
-        }
-        for t in 11..=700 {
-            fx.extend(feed(&mut tr, t, None, TOWN));
-        }
-        assert!(fx.contains(&Effect::SessionEnded { key: SessionKey(0), t: 10 }));
-        let fx = feed(&mut tr, 701, steady(20), MAP);
-        assert!(fx.contains(&Effect::SessionStarted { key: SessionKey(1), map: 1, t: 701 }));
-    }
-
-    #[test]
-    fn gain_on_another_map_ends_the_session() {
-        let mut tr = Tracker::new();
-        feed(&mut tr, 0, steady(0), MAP);
-        feed(&mut tr, 1, steady(1), MAP);
-        let fx = feed(&mut tr, 2, steady(2), Some(3));
-        assert_eq!(
-            fx,
-            vec![
-                Effect::SessionEnded { key: SessionKey(0), t: 1 },
-                Effect::SessionStarted { key: SessionKey(1), map: 3, t: 2 },
-            ]
-        );
-    }
-
-    #[test]
-    fn afk_stops_counting_after_grace_period() {
-        let mut tr = Tracker::new();
-        let mut fx = Vec::new();
-        for t in 0..=10 {
-            fx.extend(feed(&mut tr, t, steady(t), MAP));
-        }
-        for t in 11..=300 {
-            fx.extend(feed(&mut tr, t, None, MAP));
-        }
-        fx.extend(tr.finish());
-        assert_eq!(minutes(&fx), (100, 130));
-    }
-
-    #[test]
-    fn capture_gap_is_capped() {
-        let mut tr = Tracker::new();
-        feed(&mut tr, 0, steady(0), MAP);
-        feed(&mut tr, 1, steady(1), MAP);
-        feed(&mut tr, 50, steady(2), MAP);
-        assert_eq!(minutes(&tr.finish()).1, 1 + MAX_SAMPLE_GAP_SECS as u32);
+        let training: u32 = fx.iter().map(|f| if let Effect::Minute { training_secs, .. } = f { *training_secs } else { 0 }).sum();
+        assert_eq!((started, total_exp(&fx), training), (1, 200, 11));
     }
 }

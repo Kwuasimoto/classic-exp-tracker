@@ -97,46 +97,11 @@ pub fn best_hour_rate(rows: &[MinuteRow]) -> Option<f64> {
 mod tests {
     use super::*;
 
-    fn row(minute_start: i64, exp_gained: u64, training_secs: u32) -> MinuteRow {
-        MinuteRow { minute_start, exp_gained, training_secs }
-    }
-
     #[test]
-    fn live_range_aligns_to_buckets() {
-        assert_eq!(live_range(7_200, 120), (600, 7_200));
-        assert_eq!(live_range(7_259, 180), (-3_000, 7_200));
-    }
-
-    #[test]
-    fn bars_and_sma_match_hand_computation() {
-        let rows = [row(600, 600, 60), row(1_200, 1_200, 60)];
-        let (first, last) = live_range(7_200, 120);
-        let bars = bars_range(&rows, first, last);
-        assert_eq!(bars.len(), 12);
-        assert_eq!(bars[0], Bar { start: 600, exp_gained: 600, rate_per_hour: Some(36_000.0) });
-        assert_eq!(bars[1], Bar { start: 1_200, exp_gained: 1_200, rate_per_hour: Some(54_000.0) });
-        assert_eq!(bars[6], Bar { start: 4_200, exp_gained: 0, rate_per_hour: Some(72_000.0) });
-        assert_eq!(bars[7], Bar { start: 4_800, exp_gained: 0, rate_per_hour: None });
-    }
-
-    #[test]
-    fn zero_training_buckets_do_not_dilute_the_rate() {
-        // 30 min of training then a 10-min repot bucket with no training time.
-        let rows: Vec<_> = (0..30).map(|m| row(m * 60, 100, 60)).collect();
-        let bars = bars_range(&rows, 1_800, 1_800);
+    fn rate_ignores_buckets_without_training() {
+        // 30 min of training at 100 EXP/min, then 30 min away (no rows).
+        let rows: Vec<_> = (0..30).map(|m| MinuteRow { minute_start: m * 60, exp_gained: 100, training_secs: 60 }).collect();
+        let bars = bars_range(&rows, 3_000, 3_000);
         assert_eq!(bars[0].rate_per_hour, Some(6_000.0));
-    }
-
-    #[test]
-    fn empty_range_is_empty() {
-        assert!(bars_range(&[], 1_200, 600).is_empty());
-    }
-
-    #[test]
-    fn best_hour_ignores_short_spikes() {
-        let mut rows: Vec<_> = (0..60).map(|m| row(m * 60, 100, 60)).collect();
-        rows.push(row(120 * 60, 10_000, 60));
-        assert_eq!(best_hour_rate(&rows), Some(6_000.0));
-        assert_eq!(best_hour_rate(&rows[..10]), None);
     }
 }

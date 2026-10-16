@@ -12,6 +12,8 @@
 
 ## Global Constraints
 
+- **Minimal tests.** The repo goes to Nexon for ToS review, so it must read straightforwardly. Tests cover only reading the committed fixtures and the tracker's EXP rules (level-up, death, repot trip) plus the rate line. No frontend tests.
+
 - **Nexon ToS (non-negotiable):** capture the **monitor** via WGC only — never a window/HWND, never injection. Never open a handle to the game process, read its memory or files, hook it, or send input. No in-game overlay. If the game blocks capture, stop and report — do not circumvent.
 - **No images are ever written to disk by the shipped app.** Frames and crops exist only in memory. Only the dev-only `glyph-collect` binary (cargo feature `dev-tools`) and committed test fixtures involve image files.
 - **One data file:** `%APPDATA%\com.mapleexp.tracker\tracker.db`, SQLite bundled into the exe (`rusqlite` feature `bundled`). No WAL mode (it creates extra files).
@@ -2611,28 +2613,6 @@ Open `glyphs-collected.txt`. Each entry shows the ASCII glyph and the line it wa
 
 Ask the user for another short capture (60 s) and repeat Steps 1–2 until the tool prints `// 0 unknown glyph shape(s)` over a minute of play containing every digit 0–9 in the EXP number. If two different characters' templates make `classify` ambiguous (it returns `None` for a glyph that is clearly a known char), report it instead of loosening `MAX_MISMATCH_RATIO`.
 
-- [ ] **Step 4: Add a coverage test**
-
-Append to the `tests` module in `src-tauri/src/read/exp.rs`:
-```rust
-    #[test]
-    fn templates_cover_every_readout_character() {
-        for ch in "0123456789.%[]".chars() {
-            assert!(TEMPLATES.iter().any(|t| t.ch == ch), "no template for {ch:?}");
-        }
-    }
-
-    #[test]
-    fn every_template_classifies_as_itself() {
-        for t in TEMPLATES {
-            let glyph = Glyph { x: 0, rows: t.rows.iter().map(|r| r.to_string()).collect() };
-            assert_eq!(classify(&glyph, TEMPLATES), Some(t.ch), "template {:?} {:?}", t.ch, t.rows);
-        }
-    }
-```
-Run: `cargo test --manifest-path src-tauri/Cargo.toml read::exp`
-Expected: all pass.
-
 - [ ] **Step 5: Commit**
 
 ```bash
@@ -4219,7 +4199,6 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo test --manifest-path src-tauri/Cargo.toml
 pnpm exec tsc --noEmit
-pnpm test
 ```
 Expected: all clean and green.
 

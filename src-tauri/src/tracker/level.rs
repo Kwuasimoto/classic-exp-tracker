@@ -32,32 +32,3 @@ impl TotalBounds {
         self.lo + (self.hi - self.lo) / 2
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn r(exp: u64, pct_bp: u32) -> ExpReading {
-        ExpReading { exp, pct_bp }
-    }
-
-    #[test]
-    fn high_percent_gives_tight_bounds_around_true_total() {
-        let b = TotalBounds::from_reading(r(990_000, 9_900)).expect("informative");
-        assert_eq!(b, TotalBounds { lo: 999_899, hi: 1_000_102 });
-        assert_eq!(b.estimate(), 1_000_000);
-    }
-
-    #[test]
-    fn too_little_information_gives_none() {
-        assert_eq!(TotalBounds::from_reading(r(5, 1)), None);
-        assert_eq!(TotalBounds::from_reading(r(0, 500)), None);
-    }
-
-    #[test]
-    fn intersect_narrows_or_detects_conflict() {
-        let a = TotalBounds { lo: 10, hi: 20 };
-        assert_eq!(a.intersect(TotalBounds { lo: 15, hi: 30 }), Some(TotalBounds { lo: 15, hi: 20 }));
-        assert_eq!(a.intersect(TotalBounds { lo: 21, hi: 30 }), None);
-    }
-}

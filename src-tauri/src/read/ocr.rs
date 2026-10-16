@@ -92,19 +92,6 @@ mod tests {
     use crate::geom::fixture;
 
     #[test]
-    fn normalize_collapses_whitespace_and_case() {
-        assert_eq!(normalize("  Victoria   Road\nperion "), "victoria road perion");
-    }
-
-    #[test]
-    fn title_case_capitalizes_words() {
-        assert_eq!(title_case("victoria road perion"), "Victoria Road Perion");
-        assert_eq!(title_case(""), "");
-    }
-
-    /// Real Windows OCR. Verified 2026-10-15: all four variants read this strip as
-    /// "victoria road perion" after normalization.
-    #[test]
     fn labels_the_fixture() {
         let ocr = MapOcr::new().expect("Windows OCR available");
         let label = ocr.label(&[fixture("map_victoria_road_perion.png")]).expect("OCR runs");
