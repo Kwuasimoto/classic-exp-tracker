@@ -1,4 +1,5 @@
 pub mod geom;
+pub mod rates;
 pub mod read;
 pub mod tracker;
 
