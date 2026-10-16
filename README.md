@@ -19,7 +19,7 @@ flowchart TB
         capture["capture.rs<br/>Windows Graphics Capture of the monitor, 1 frame/s<br/>copies 2 small boxes into memory, drops the rest"]
 
         subgraph pipeline["pipeline.rs"]
-            exp["read/exp.rs + read/glyphs.rs<br/>EXP box to 326 and 0.10%<br/>(glyph templates, no OCR)"]
+            exp["read/exp.rs + read/glyphs.rs<br/>EXP box to 326 and 0.10%<br/>(greyscale glyph matching, no OCR)"]
             strip["read/map_strip.rs<br/>map box to pixel signature"]
             confirm["tracker/confirm.rs<br/>map confirmed after<br/>3 matching frames"]
             ocr["read/ocr.rs<br/>Windows OCR: display name<br/>for a newly seen map"]
@@ -53,7 +53,7 @@ flowchart TB
 ### Reading the diagram
 
 - **Input.** The only input is the monitor image. `capture.rs` asks Windows for frames of the primary monitor (`Monitor::primary()`), never a window. It copies two small rectangles out of each frame and drops the rest.
-- **Reading.** Readers in `read/` are pure functions (no I/O): pixels in, values out. The EXP number is matched against glyph shapes stored as ASCII art in `glyphs.rs`. The map is identified by its pixel signature, and OCR only produces a display name the user can rename.
+- **Reading.** Readers in `read/` are pure functions (no I/O): pixels in, values out. Each EXP glyph is centred on its centre of brightness and compared with one greyscale reference per character, stored as ASCII art in `glyphs.rs`; a glyph that isn't clearly one character fails the read rather than guessing. The map is identified by its pixel signature, and OCR only produces a display name the user can rename.
 - **Pipeline.** `pipeline.rs` is one background thread that runs the readers and tracker on each frame. It is the only place that writes to the database.
 - **Tracking.** `tracker/` has no I/O. It turns each second's reading into effects (`SessionStarted`, `SessionEnded`, `Minute`), which `pipeline.rs` writes to SQLite. Repot trips and AFK time count as zero training seconds, so they don't lower the rate.
 - **UI.** The UI only talks to the backend through Tauri commands and two events. Every payload is validated with Zod in `lib/ipc.ts`.

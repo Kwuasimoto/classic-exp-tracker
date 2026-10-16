@@ -3,12 +3,22 @@
 
 use serde::Serialize;
 
-use super::glyphs::{Template, TEMPLATES};
+use super::glyphs::{Reference, REFERENCES};
 use super::ReadError;
 use crate::geom::Crop;
 
-/// Text pixels have luminance ≥ this (measured on the 2026-10-15 fixture).
+/// Pixels with luminance ≥ this are text; used to find the text rows and the
+/// gaps between glyphs (measured on the 2026-10-15 fixture).
 pub const TEXT_LUM_MIN: u32 = 150;
+/// Ink 1.0 = this much brighter than the row's background (text ≈ 225, bar ≈ 100).
+const INK_RANGE: f32 = 120.0;
+/// Glyphs are compared over the centre of brightness −6 … +6 columns.
+pub const HALF_WIDTH: i32 = 6;
+/// The nearest reference is accepted only if it is at least this many times
+/// closer than the nearest reference of another character…
+const MIN_MARGIN: f32 = 1.5;
+/// …and closer than this (sum of squared ink differences).
+const MAX_DISTANCE: f32 = 8.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -18,28 +28,43 @@ pub struct ExpReading {
     pub pct_bp: u32,
 }
 
-/// One glyph cut from the text line: rows of '#'/'.', and its left column in the crop.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// One glyph cut from the text line: its left column in the crop and, per row,
+/// the ink of each pixel (0.0 = background, 1.0 = full text brightness).
+#[derive(Clone, Debug, PartialEq)]
 pub struct Glyph {
     pub x: u32,
-    pub rows: Vec<String>,
+    pub ink: Vec<Vec<f32>>,
 }
 
-fn is_text(px: [u8; 4]) -> bool {
+fn lum(px: [u8; 4]) -> u32 {
     let [r, g, b, _] = px.map(u32::from);
-    (299 * r + 587 * g + 114 * b) / 1000 >= TEXT_LUM_MIN
+    (299 * r + 587 * g + 114 * b) / 1000
 }
 
-/// Trim the line to its text rows, then split at empty columns.
+/// Trim the line to its text rows, split it at columns without text, and keep
+/// one extra column on each side of a glyph for its anti-aliased edge.
 pub fn segment(crop: &Crop) -> Result<Vec<Glyph>, ReadError> {
     let (w, h) = (crop.width, crop.height);
-    let mask: Vec<bool> = (0..h).flat_map(|y| (0..w).map(move |x| (x, y))).map(|(x, y)| is_text(crop.px(x, y))).collect();
-    let at = |x: u32, y: u32| mask[(y * w + x) as usize];
-    let text_rows: Vec<u32> = (0..h).filter(|&y| (0..w).any(|x| at(x, y))).collect();
+    let lums: Vec<Vec<u32>> = (0..h).map(|y| (0..w).map(|x| lum(crop.px(x, y))).collect()).collect();
+    let is_text = |x: u32, y: u32| lums[y as usize][x as usize] >= TEXT_LUM_MIN;
+    let text_rows: Vec<u32> = (0..h).filter(|&y| (0..w).any(|x| is_text(x, y))).collect();
     let (Some(&top), Some(&bottom)) = (text_rows.first(), text_rows.last()) else {
         return Err(ReadError::Blank);
     };
-    let column_has_text = |x: u32| (top..=bottom).any(|y| at(x, y));
+    let column_has_text = |x: u32| (top..=bottom).any(|y| is_text(x, y));
+    // Most of each row is background, so its median is the background brightness.
+    let background: Vec<u32> = lums
+        .iter()
+        .map(|row| {
+            let mut sorted = row.clone();
+            sorted.sort_unstable();
+            sorted[sorted.len() / 2]
+        })
+        .collect();
+    let ink = |x: u32, y: u32| {
+        let above = lums[y as usize][x as usize] as f32 - background[y as usize] as f32;
+        (above / INK_RANGE).clamp(0.0, 1.0)
+    };
 
     let mut glyphs = Vec::new();
     let mut x = 0;
@@ -52,18 +77,67 @@ pub fn segment(crop: &Crop) -> Result<Vec<Glyph>, ReadError> {
         while x < w && column_has_text(x) {
             x += 1;
         }
-        let rows = (top..=bottom)
-            .map(|y| (start..x).map(|gx| if at(gx, y) { '#' } else { '.' }).collect())
-            .collect();
-        glyphs.push(Glyph { x: start, rows });
+        let columns = start.saturating_sub(1)..(x + 1).min(w);
+        let ink = (top..=bottom).map(|y| columns.clone().map(|gx| ink(gx, y)).collect()).collect();
+        glyphs.push(Glyph { x: start, ink });
     }
     Ok(glyphs)
 }
 
-/// The template whose rows equal the glyph's exactly. No near matches: a shape
-/// the templates don't have fails the read instead of becoming a wrong digit.
-pub fn classify(glyph: &Glyph, templates: &[Template]) -> Option<char> {
-    templates.iter().find(|t| t.rows.iter().eq(glyph.rows.iter())).map(|t| t.ch)
+/// The glyph resampled at its centre of brightness −HALF_WIDTH … +HALF_WIDTH
+/// columns (linear interpolation), so glyphs drawn at different fractional
+/// positions line up with the references.
+pub fn centred(glyph: &Glyph) -> Vec<Vec<f32>> {
+    let (mut sum, mut weighted) = (0.0, 0.0);
+    for row in &glyph.ink {
+        for (x, v) in row.iter().enumerate() {
+            sum += v;
+            weighted += v * (x as f32 + 0.5);
+        }
+    }
+    let width = glyph.ink.first().map_or(0, Vec::len);
+    let centre = if sum > 0.0 { weighted / sum } else { width as f32 / 2.0 };
+    glyph
+        .ink
+        .iter()
+        .map(|row| {
+            let at = |i: i32| usize::try_from(i).ok().and_then(|i| row.get(i)).copied().unwrap_or(0.0);
+            (-HALF_WIDTH..=HALF_WIDTH)
+                .map(|u| {
+                    let p = centre + u as f32 - 0.5;
+                    let (x0, f) = (p.floor(), p - p.floor());
+                    at(x0 as i32) * (1.0 - f) + at(x0 as i32 + 1) * f
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// Sum of squared ink differences; `None` if the line heights differ.
+fn distance(centred: &[Vec<f32>], reference: &Reference) -> Option<f32> {
+    if centred.len() != reference.rows.len() {
+        return None;
+    }
+    let level = |b: u8| b" .:-=+*#%@".iter().position(|&l| l == b).unwrap_or(0) as f32 / 9.0;
+    Some(
+        centred
+            .iter()
+            .zip(reference.rows)
+            .flat_map(|(a, r)| a.iter().zip(r.bytes()).map(move |(a, r)| (a - level(r)) * (a - level(r))))
+            .sum(),
+    )
+}
+
+/// The nearest reference's character, if it is close and clearly closer than
+/// any other character's. Otherwise `None`, and the read fails.
+pub fn classify(glyph: &Glyph, references: &[Reference]) -> Option<char> {
+    let centred = centred(glyph);
+    let mut nearest: Vec<(f32, char)> =
+        references.iter().filter_map(|r| distance(&centred, r).map(|d| (d, r.ch))).collect();
+    nearest.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let &(best, ch) = nearest.first()?;
+    let runner_up = nearest.iter().find(|(_, c)| *c != ch).map_or(f32::INFINITY, |&(d, _)| d);
+    (best <= MAX_DISTANCE && runner_up >= MIN_MARGIN * best).then_some(ch)
 }
 
 /// Parse `<digits/commas>[<int>.<2 digits>%]`.
@@ -89,7 +163,7 @@ pub fn parse(text: &str) -> Result<ExpReading, ReadError> {
 
 pub fn read_exp(crop: &Crop) -> Result<ExpReading, ReadError> {
     let glyphs = segment(crop)?;
-    let chars: Vec<Option<char>> = glyphs.iter().map(|g| classify(g, TEMPLATES)).collect();
+    let chars: Vec<Option<char>> = glyphs.iter().map(|g| classify(g, REFERENCES)).collect();
     if let Some(i) = chars.iter().position(Option::is_none) {
         let line = chars.iter().map(|c| c.unwrap_or('?')).collect();
         return Err(ReadError::UnknownGlyph { column: glyphs[i].x, line });
