@@ -60,6 +60,7 @@ Titillium Web (bundled from `@fontsource/titillium-web`, open licence), tabular 
 - **Buttons**: `.btn` (dark pill, white text); `.btn.primary` (white pill, black text) for the one main action on a screen.
 - **Icon button** (`.icon-btn`): 34 px round `--inset` button for an icon-only action, with an `aria-label`.
 - **Danger button** (`.btn.danger`): `#c42b1c`, only as the confirming step of a delete.
+- **Toast** (`.toast`): white pill floating at the bottom centre, outside the layout; says what just happened and fades after 3 s. Actions don't ask for confirmation unless they delete something.
 - **Segmented toggle** (`.segmented`): `--inset` track, white pill for the selected option.
 - **Level badge** (`.badge`): white 1.5 px outlined pill, `LV. 41`.
 - **Stat tile**: `.panel` with `.label`, `.value` and an optional caption.

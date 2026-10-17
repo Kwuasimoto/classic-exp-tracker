@@ -116,3 +116,11 @@ tr.selected td { background: rgba(255, 255, 255, 0.1); }
 /* Round icon-only button (e.g. the chart's reset). */
 .icon-btn { width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 999px; background: var(--inset); color: #b5b5b9; cursor: pointer; }
 .icon-btn:hover { background: #333338; color: var(--text); }
+
+/* Toast: floats over the window, takes no layout space, fades on its own (LiveView). */
+.toast {
+  position: fixed; left: 50%; bottom: 32px; transform: translateX(-50%); z-index: 10; pointer-events: none;
+  padding: 10px 20px; border-radius: 999px; background: var(--text); color: #000; font-weight: 700; box-shadow: var(--shadow);
+  animation: toast-in 0.15s ease-out;
+}
+@keyframes toast-in { from { opacity: 0; transform: translate(-50%, 8px); } }
