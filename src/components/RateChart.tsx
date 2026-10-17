@@ -22,9 +22,9 @@ export function RateChart({ bars, fill = false, actions }: { bars: Bar[]; fill?:
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={data} margin={{ top: 8, right: 4, bottom: 0, left: 4 }}>
             <CartesianGrid vertical={false} stroke="var(--line)" />
-            <XAxis dataKey="label" tick={axisText} tickLine={false} axisLine={false} />
-            <YAxis yAxisId="exp" tick={axisText} tickLine={false} axisLine={false} tickFormatter={tick} />
-            <YAxis yAxisId="rate" orientation="right" tick={{ ...axisText, fill: "var(--accent)" }} tickLine={false} axisLine={false} tickFormatter={tick} />
+            <XAxis dataKey="label" tick={axisText} tickLine={false} axisLine={false} tickMargin={8} minTickGap={12} />
+            <YAxis yAxisId="exp" width={40} tick={axisText} tickLine={false} axisLine={false} tickFormatter={tick} />
+            <YAxis yAxisId="rate" orientation="right" width={44} tick={{ ...axisText, fill: "var(--accent)" }} tickLine={false} axisLine={false} tickFormatter={tick} />
             <Tooltip
               formatter={tick}
               cursor={{ fill: "rgba(255, 255, 255, 0.05)" }}

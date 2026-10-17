@@ -43,9 +43,9 @@ export default function App() {
           </button>
         ))}
         <div className="nav-footer">
-          <label className="label">
-            Background
-            <select value={backdrop.id} onChange={(e) => chooseBackdrop(e.target.value)} style={{ marginTop: 6, textTransform: "none", letterSpacing: 0 }}>
+          <label className="picker">
+            <span className="label">Background</span>
+            <select value={backdrop.id} onChange={(e) => chooseBackdrop(e.target.value)}>
               {BACKDROPS.map((b) => <option key={b.id} value={b.id}>{b.label}</option>)}
             </select>
           </label>

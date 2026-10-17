@@ -14,7 +14,7 @@ export function formatHours(hours: number): string {
 }
 
 export const formatClock = (unix: number): string =>
-  new Date(unix * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  new Date(unix * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
 export const formatDateTime = (unix: number): string =>
   new Date(unix * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
