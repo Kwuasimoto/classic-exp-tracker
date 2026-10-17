@@ -5,7 +5,7 @@ mod confirm;
 mod level;
 
 pub use confirm::{ConfirmOutcome, MapConfirmer, CONFIRM_FRAMES};
-pub use level::TotalBounds;
+pub use level::{exp_to_next, TotalBounds};
 
 use std::collections::BTreeMap;
 
@@ -52,6 +52,8 @@ struct ActiveSession {
 pub struct Tracker {
     baseline: Option<ExpReading>,
     bounds: Option<TotalBounds>,
+    /// The player's level, once the bounds fit exactly one table total.
+    level: Option<u32>,
     rejections: u32,
     last_gain_t: Option<i64>,
     last_t: Option<i64>,
@@ -71,8 +73,14 @@ impl Tracker {
         self.baseline
     }
 
+    pub fn level(&self) -> Option<u32> {
+        self.level
+    }
+
+    /// The level's total EXP: exact from the table once the level is known,
+    /// otherwise the middle of the measured bounds.
     pub fn total_estimate(&self) -> Option<u64> {
-        self.bounds.map(TotalBounds::estimate)
+        self.level.and_then(exp_to_next).or_else(|| self.bounds.map(TotalBounds::estimate))
     }
 
     pub fn on_sample(&mut self, s: Sample) -> Vec<Effect> {
@@ -140,15 +148,15 @@ impl Tracker {
     fn accept(&mut self, r: ExpReading) -> u64 {
         let Some(base) = self.baseline else {
             self.reset_to(r);
+            self.check_level();
             return 0;
         };
         if base.pct_bp >= LEVEL_UP_FROM_BP && r.pct_bp < LEVEL_UP_TO_BP && r.exp < base.exp {
-            let total = self
-                .bounds
-                .or_else(|| TotalBounds::from_reading(base))
-                .map_or(base.exp, TotalBounds::estimate);
-            info!("level-up: {base:?} -> {r:?}, old level total estimated at {total}");
+            let total = self.total_estimate().unwrap_or(base.exp);
+            info!("level-up: {base:?} -> {r:?}, old level total {total} (level {:?})", self.level);
+            self.level = self.level.map(|l| l + 1);
             self.reset_to(r);
+            self.check_level();
             return total.saturating_sub(base.exp) + r.exp;
         }
         match (self.bounds, TotalBounds::from_reading(r)) {
@@ -159,7 +167,9 @@ impl Tracker {
                     warn!("rejected {r:?}: implies level total {implied:?}, outside {known:?} (rejection {})", self.rejections);
                     if self.rejections >= MAX_CONSECUTIVE_REJECTIONS {
                         warn!("{MAX_CONSECUTIVE_REJECTIONS} rejections in a row; restarting from {r:?}");
+                        self.level = None;
                         self.reset_to(r);
+                        self.check_level();
                     }
                     return 0;
                 }
@@ -167,12 +177,35 @@ impl Tracker {
             (None, implied) => self.bounds = implied,
             (Some(_), None) => {}
         }
+        self.check_level();
         if r.exp < base.exp {
             info!("EXP dropped {base:?} -> {r:?}: counted as a death, no gain");
         }
         self.rejections = 0;
         self.baseline = Some(r);
         r.exp.saturating_sub(base.exp)
+    }
+
+    /// Learn the level once the bounds fit exactly one table total; forget it
+    /// (and say so) if the readings stop fitting its total.
+    fn check_level(&mut self) {
+        let Some(bounds) = self.bounds else { return };
+        match self.level {
+            Some(level) if exp_to_next(level).is_some_and(|t| bounds.contains(t)) => {}
+            Some(level) => {
+                warn!(
+                    "readings imply a level total in {bounds:?}, but the table says level {level} needs {:?}; level unknown until the readings fit one level",
+                    exp_to_next(level)
+                );
+                self.level = None;
+            }
+            None => {
+                if let Some(level) = bounds.matching_level() {
+                    info!("level {level} identified: table total {:?} fits readings {bounds:?}", exp_to_next(level));
+                    self.level = Some(level);
+                }
+            }
+        }
     }
 
     fn reset_to(&mut self, r: ExpReading) {
@@ -223,6 +256,18 @@ mod tests {
         tr.on_sample(Sample { t: 0, exp: reading(990_000, 9_900), map: MAP });
         tr.on_sample(Sample { t: 1, exp: reading(5_000, 50), map: MAP });
         assert_eq!(total_exp(&tr.finish()), 15_000);
+    }
+
+    #[test]
+    fn level_up_uses_the_table_total_once_the_level_is_known() {
+        let mut tr = Tracker::new();
+        // 291,000 EXP at 89.75% only fits level 41's table total, 324,240.
+        tr.on_sample(Sample { t: 0, exp: reading(291_000, 8_975), map: MAP });
+        assert_eq!((tr.level(), tr.total_estimate()), (Some(41), Some(324_240)));
+        // 1,000 EXP is 0.28% of level 42's 356,916.
+        tr.on_sample(Sample { t: 1, exp: reading(1_000, 28), map: MAP });
+        assert_eq!(tr.level(), Some(42));
+        assert_eq!(total_exp(&tr.finish()), 324_240 - 291_000 + 1_000);
     }
 
     #[test]

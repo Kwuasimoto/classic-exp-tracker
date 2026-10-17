@@ -45,11 +45,13 @@ pub struct Tick {
     pub exp: Option<u64>,
     pub pct_bp: Option<u32>,
     pub total_est: Option<u64>,
+    /// Known once the readings fit exactly one level's table total.
+    pub level: Option<u32>,
 }
 
 impl Default for Tick {
     fn default() -> Self {
-        Self { status: ReaderStatus::NotCalibrated, map_name: None, exp: None, pct_bp: None, total_est: None }
+        Self { status: ReaderStatus::NotCalibrated, map_name: None, exp: None, pct_bp: None, total_est: None, level: None }
     }
 }
 
@@ -424,6 +426,7 @@ impl Pipeline {
             exp: baseline.map(|r| r.exp),
             pct_bp: baseline.map(|r| r.pct_bp),
             total_est: self.tracker.total_estimate(),
+            level: self.tracker.level(),
         };
         *self.state.live.write().expect("live lock poisoned") = tick.clone();
         match self.app.emit(TICK_EVENT, &tick) {

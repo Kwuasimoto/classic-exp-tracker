@@ -28,6 +28,7 @@ export const TickSchema = z.object({
   exp: count.nullable(),
   pctBp: count.nullable(),
   totalEst: count.nullable(),
+  level: count.nullable(),
 });
 export type Tick = z.infer<typeof TickSchema>;
 

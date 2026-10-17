@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { RateChart } from "../components/RateChart";
 import { formatExp, formatHours, formatPct, statusText } from "../lib/format";
 import { getLiveChart, getLiveSnapshot, onMinute, onTick, type AppError, type Bar, type Tick } from "../lib/ipc";
-import { liveRates } from "../lib/live";
+import { expToLevel, liveRates } from "../lib/live";
 
 type WindowMinutes = 120 | 180;
 
@@ -47,6 +47,7 @@ export function LiveView({ onCalibrate }: { onCalibrate: () => void }) {
   }, [refreshChart]);
 
   const rates = liveRates(bars, tick);
+  const toLevel = expToLevel(tick);
   const status = tick?.status ?? null;
 
   return (
@@ -69,7 +70,11 @@ export function LiveView({ onCalibrate }: { onCalibrate: () => void }) {
           <Stat label="EXP/hr (last 60 min)" value={rates.expPerHour === null ? "—" : formatExp(rates.expPerHour)} />
           <Stat label="%/hr" value={rates.pctPerHour === null ? "—" : `${rates.pctPerHour.toFixed(2)}%`} />
           <Stat label="Time to level" value={rates.hoursToLevel === null ? "—" : formatHours(rates.hoursToLevel)} />
-          <Stat label="Current EXP" value={tick?.exp == null || tick.pctBp == null ? "—" : `${formatExp(tick.exp)} (${formatPct(tick.pctBp)})`} />
+          <Stat label="EXP to level" value={toLevel === null ? "—" : `${toLevel.exact ? "" : "≈ "}${toLevel.exp.toLocaleString("en-US")}`} />
+          <Stat
+            label={tick?.level == null ? "Current EXP" : `Current EXP (Lv. ${tick.level})`}
+            value={tick?.exp == null || tick.pctBp == null ? "—" : `${formatExp(tick.exp)} (${formatPct(tick.pctBp)})`}
+          />
         </div>
       </div>
       <div className="card">
