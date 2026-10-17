@@ -28,6 +28,10 @@ const MAX_BACKOFF: Duration = Duration::from_secs(30);
 /// Accepted EXP readings, with the level box and the tracker's level both unchanged,
 /// before an unknown level digit is learned (see read/level.rs).
 const LEARN_AFTER_READS: u32 = 3;
+/// A level read from the screen is used once the level box has looked the same for
+/// this many frames: one bad frame (a loading screen, a window passing over the game)
+/// can read as another level.
+const LEVEL_STEADY_FRAMES: u32 = 3;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", content = "detail", rename_all = "camelCase")]
@@ -136,6 +140,8 @@ struct Pipeline {
     level_crop: Option<Crop>,
     level_glyphs: Vec<Glyph>,
     screen_level: Option<u32>,
+    /// Consecutive frames the level box has looked the same, including this one.
+    level_box_frames: u32,
     /// Level digits learned so far (also in the database), and whether the
     /// current level box was already tried for learning.
     learned_digits: Vec<LevelGlyph>,
@@ -184,6 +190,7 @@ impl Pipeline {
             level_crop: None,
             level_glyphs: Vec::new(),
             screen_level: None,
+            level_box_frames: 0,
             learned_digits: Vec::new(),
             learn_tried: false,
             steady_reads: 0,
@@ -349,7 +356,7 @@ impl Pipeline {
             }
         }
         self.learn_level_digits();
-        if let Some(level) = self.screen_level {
+        if let Some(level) = self.screen_level.filter(|_| self.level_box_frames >= LEVEL_STEADY_FRAMES) {
             self.tracker.use_screen_level(level);
         }
         // Also publishes the minute in progress, before the tick: the UI reloads the chart on each tick.
@@ -359,8 +366,10 @@ impl Pipeline {
 
     fn read_level_box(&mut self, crop: Option<Crop>) {
         if crop == self.level_crop {
+            self.level_box_frames = self.level_box_frames.saturating_add(1);
             return;
         }
+        self.level_box_frames = 1;
         self.level_glyphs = crop.as_ref().and_then(|c| level::segment(c).ok()).unwrap_or_default();
         let read = level::read_level(&self.level_glyphs, &self.learned_digits);
         if read.is_some() && read != self.screen_level {
