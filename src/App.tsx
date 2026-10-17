@@ -3,6 +3,7 @@ import "@fontsource/titillium-web/400.css";
 import "@fontsource/titillium-web/700.css";
 import "@fontsource/titillium-web/900.css";
 import "./App.css";
+import { TitleBar } from "./components/TitleBar";
 import { BACKDROPS, saveBackdrop, savedBackdrop } from "./lib/backgrounds";
 import { statusText } from "./lib/format";
 import { useTick } from "./lib/useTick";
@@ -33,32 +34,34 @@ export default function App() {
   };
 
   return (
-    <div className="shell" style={backdrop.css ?? undefined}>
-      <nav className="nav" aria-label="Screens">
-        <div className="brand">EXP TRACKER</div>
-        {TABS.map((t) => (
-          <button key={t.id} className={t.id === tab ? "nav-link current" : "nav-link"} aria-current={t.id === tab ? "page" : undefined} onClick={() => setTab(t.id)}>
-            <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" {...ICON}>{t.icon}</svg>
-            {t.label}
-          </button>
-        ))}
-        <div className="nav-footer">
-          <label className="picker">
-            <span className="label">Background</span>
-            <select value={backdrop.id} onChange={(e) => chooseBackdrop(e.target.value)}>
-              {BACKDROPS.map((b) => <option key={b.id} value={b.id}>{b.label}</option>)}
-            </select>
-          </label>
-          <div className={status?.kind === "ok" ? "reader-status ok" : "reader-status"} role="status">
-            {error ? error.message : status ? statusText(status) : "Starting…"}
+    <div className="window" style={backdrop.css ?? undefined}>
+      <TitleBar />
+      <div className="shell">
+        <nav className="nav" aria-label="Screens">
+          {TABS.map((t) => (
+            <button key={t.id} className={t.id === tab ? "nav-link current" : "nav-link"} aria-current={t.id === tab ? "page" : undefined} onClick={() => setTab(t.id)}>
+              <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" {...ICON}>{t.icon}</svg>
+              {t.label}
+            </button>
+          ))}
+          <div className="nav-footer">
+            <label className="picker">
+              <span className="label">Background</span>
+              <select value={backdrop.id} onChange={(e) => chooseBackdrop(e.target.value)}>
+                {BACKDROPS.map((b) => <option key={b.id} value={b.id}>{b.label}</option>)}
+              </select>
+            </label>
+            <div className={status?.kind === "ok" ? "reader-status ok" : "reader-status"} role="status">
+              {error ? error.message : status ? statusText(status) : "Starting…"}
+            </div>
           </div>
-        </div>
-      </nav>
-      <main className="content">
-        {tab === "live" && <LiveView tick={tick} onCalibrate={() => setTab("calibrate")} />}
-        {tab === "history" && <HistoryView />}
-        {tab === "calibrate" && <CalibrateView />}
-      </main>
+        </nav>
+        <main className="content">
+          {tab === "live" && <LiveView tick={tick} onCalibrate={() => setTab("calibrate")} />}
+          {tab === "history" && <HistoryView />}
+          {tab === "calibrate" && <CalibrateView />}
+        </main>
+      </div>
     </div>
   );
 }

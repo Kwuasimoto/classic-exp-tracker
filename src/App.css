@@ -29,17 +29,26 @@ button, input, select { font: inherit; color: inherit; }
 /* Keyboard focus: a white ring inside the control (orange is reserved for EXP/hr). */
 :focus-visible { outline: 2px solid rgba(255, 255, 255, 0.75); outline-offset: -2px; }
 
-/* Layout: side nav + content over the chosen backdrop. */
-.shell { height: 100%; display: flex; gap: 20px; padding: 20px; background-color: var(--ground); background-repeat: no-repeat; }
+/* Layout: title bar, then side nav + content, over the chosen backdrop. */
+.window { height: 100%; display: flex; flex-direction: column; background-color: var(--ground); background-repeat: no-repeat; }
+.shell { flex: 1; min-height: 0; display: flex; gap: 20px; padding: 20px; }
 .content { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; }
 
 .panel { background: var(--panel); backdrop-filter: blur(10px); border-radius: 10px; box-shadow: var(--shadow); padding: 16px 20px; }
 
 .nav {
   width: 188px; flex-shrink: 0; display: flex; flex-direction: column; gap: 6px;
-  background: var(--nav); backdrop-filter: blur(10px); border-radius: 10px; box-shadow: var(--shadow); padding: 22px 12px;
+  background: var(--nav); backdrop-filter: blur(10px); border-radius: 10px; box-shadow: var(--shadow); padding: 12px;
 }
-.brand { font-size: 12px; font-weight: 900; letter-spacing: 0.14em; color: var(--accent); padding: 0 14px 18px; }
+
+/* Title bar: the window has no native frame (tauri.conf.json). */
+.titlebar { height: 36px; flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding-left: 20px; background: var(--nav); backdrop-filter: blur(10px); user-select: none; }
+.titlebar-name { font-size: 12px; font-weight: 900; letter-spacing: 0.14em; }
+.titlebar-error { font-size: 12px; }
+.window-controls { margin-left: auto; display: flex; height: 100%; }
+.window-controls button { width: 46px; height: 100%; display: grid; place-items: center; border: 0; background: none; color: #b5b5b9; cursor: pointer; }
+.window-controls button:hover { background: rgba(255, 255, 255, 0.1); color: var(--text); }
+.window-controls button.close:hover { background: #c42b1c; color: #ffffff; }
 .nav-link {
   display: flex; align-items: center; gap: 12px; padding: 10px 14px; border: 0; border-radius: 999px; background: none;
   color: #b5b5b9; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer; text-align: left;
@@ -47,7 +56,7 @@ button, input, select { font: inherit; color: inherit; }
 .nav-link:hover { color: var(--text); }
 .nav-link.current { background: var(--text); color: #000; }
 /* Everything in the nav shares the links' 14 px inner inset. */
-.nav-footer { margin-top: auto; display: flex; flex-direction: column; gap: 18px; }
+.nav-footer { margin-top: auto; display: flex; flex-direction: column; gap: 18px; padding-bottom: 10px; }
 .picker { display: flex; flex-direction: column; gap: 8px; }
 .picker .label { padding: 0 14px; }
 .picker select {

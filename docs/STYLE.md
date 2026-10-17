@@ -44,10 +44,16 @@ Titillium Web (bundled from `@fontsource/titillium-web`, open licence), tabular 
 - Radius: 10 px panels, 999 px (pill) for buttons, toggles and the level badge.
 - Panels: `--panel` + 10 px backdrop blur + the MapleStory shadow
   (`--shadow`: `0 7px 8px -4px`, `0 12px 17px 2px`, `0 5px 22px 4px` in black at 40 / 28 / 24 %).
-- Spacing: 20 px around and between the nav and content, 12–14 px between panels.
+- Spacing: 20 px around and between the nav and content, 12–14 px between panels; 12 px inside the nav,
+  and every nav item's content at a 14 px inset.
 
 ## Components
 
+- **Title bar** (`TitleBar.tsx`): the window has no native frame. A 36 px `--nav` strip, the
+  app icon and name at the 20 px content inset, 46 px wide window buttons; close turns `#c42b1c`
+  on hover. The whole strip drags the window (`data-tauri-drag-region`).
+- **App icon**: three bars growing from small to large, white, white, orange
+  (`src-tauri/icons/app-icon.svg`; regenerate the set with `pnpm tauri icon src-tauri/icons/app-icon.svg`).
 - **Side nav**: uppercase pill links; the current one is a white pill with black text.
 - **Buttons**: `.btn` (dark pill, white text); `.btn.primary` (white pill, black text) for the one main action on a screen.
 - **Segmented toggle** (`.segmented`): `--inset` track, white pill for the selected option.
