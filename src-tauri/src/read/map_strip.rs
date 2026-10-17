@@ -14,9 +14,13 @@ const TEXT_MIN_CHANNEL: u8 = 215;
 const EDGE_PROBE_ROW: u32 = 2;
 /// Summed per-column difference still considered the same map.
 const MATCH_TOLERANCE: u32 = 4;
+/// Background columns the minimap leaves after a name: 5–6 on names that fill it
+/// (measured 2026-10-17). Fewer means something ended the strip inside the name.
+const MIN_MARGIN: usize = 5;
 
 /// Text-pixel count per column, from the start of the background to the minimap's
-/// right edge, or to the map box's edge when the box is narrower (`cut`).
+/// right edge, or to whatever ends the strip first: the map box's edge (`cut`) or a
+/// game window drawn over the minimap.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Signature {
     pub counts: Vec<u8>,
@@ -24,14 +28,25 @@ pub struct Signature {
 }
 
 impl Signature {
-    /// Same map: the columns both signatures cover differ by ≤ MATCH_TOLERANCE, and
-    /// they cover the same width unless the shorter one was cut by its box (so a
-    /// wider or narrower map box still finds the same map).
+    /// The name's columns: the strip without the empty background after it, whose
+    /// width depends on the minimap and on windows covering it, not on the map.
+    fn name(&self) -> &[u8] {
+        let len = self.counts.iter().rposition(|&c| c > 0).map_or(0, |i| i + 1);
+        &self.counts[..len]
+    }
+
+    /// Whether the name may continue past the strip: the map box or a window cut it off.
+    fn may_be_cut(&self) -> bool {
+        self.cut || self.counts.len() - self.name().len() < MIN_MARGIN
+    }
+
+    /// Same map: the names differ by ≤ MATCH_TOLERANCE over the columns both cover,
+    /// and are the same width unless the shorter one may be cut off.
     pub fn matches(&self, other: &Signature) -> bool {
-        let (short, long) = if self.counts.len() <= other.counts.len() { (self, other) } else { (other, self) };
-        let widths_ok = short.counts.len() == long.counts.len() || short.cut;
+        let (short, long) = if self.name().len() <= other.name().len() { (self, other) } else { (other, self) };
+        let widths_ok = short.name().len() == long.name().len() || short.may_be_cut();
         widths_ok
-            && short.counts.iter().zip(&long.counts).map(|(a, b)| u32::from(a.abs_diff(*b))).sum::<u32>() <= MATCH_TOLERANCE
+            && short.name().iter().zip(long.name()).map(|(a, b)| u32::from(a.abs_diff(*b))).sum::<u32>() <= MATCH_TOLERANCE
     }
 }
 
@@ -89,7 +104,20 @@ mod tests {
         let narrow = image.sub(crate::geom::Rect { x: 0, y: 0, w: image.width - 60, h: image.height }).expect("fits");
         let cut = read_strip(&narrow).expect("readable").signature;
         assert!(cut.cut && cut.matches(&full) && full.matches(&cut));
-        let other = Signature { counts: full.counts[..cut.counts.len()].to_vec(), cut: false };
-        assert!(!other.matches(&full), "an uncut signature of a different width is a different map");
+    }
+
+    #[test]
+    fn a_window_over_the_minimap_still_matches_the_same_map() {
+        let full = read_strip(&fixture("map_victoria_road_perion.png")).expect("readable").signature;
+        let name_len = full.counts.iter().rposition(|&c| c > 0).expect("has text") + 1;
+        let ended_at = |len: usize| Signature { counts: full.counts[..len].to_vec(), cut: false };
+        // A window over the background after the name (seen 2026-10-17 with the inventory open).
+        assert!(ended_at(name_len + 30).matches(&full));
+        // A window over the name itself.
+        assert!(ended_at(name_len - 20).matches(&full));
+        // A whole shorter name is another map, even when a longer name starts with it.
+        let mut shorter = full.counts[..name_len - 20].to_vec();
+        shorter.extend([0; 30]);
+        assert!(!Signature { counts: shorter, cut: false }.matches(&full));
     }
 }
