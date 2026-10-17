@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use windows_capture::capture::{CaptureControl, Context, GraphicsCaptureApiHandler};
 use windows_capture::frame::Frame;
-use windows_capture::graphics_capture_api::InternalCaptureControl;
+use windows_capture::graphics_capture_api::{GraphicsCaptureApi, InternalCaptureControl};
 use windows_capture::monitor::Monitor;
 use windows_capture::settings::{
     ColorFormat, CursorCaptureSettings, DirtyRegionSettings, DrawBorderSettings, MinimumUpdateIntervalSettings,
@@ -140,10 +140,18 @@ impl GraphicsCaptureApiHandler for Handler {
 
 /// Start capturing the primary monitor on a dedicated thread.
 pub fn start(tx: SyncSender<CaptureMsg>, shared: Arc<Shared>) -> Result<Control, CaptureError> {
+    // Hiding the yellow capture border needs Windows 11; Windows 10 shows it, which is
+    // only cosmetic. Asking for no border where it's unsupported fails the capture.
+    let border = if GraphicsCaptureApi::is_border_settings_supported().map_err(|e| CaptureError::Start(format!("{e:?}")))? {
+        DrawBorderSettings::WithoutBorder
+    } else {
+        log::info!("this Windows version can't hide the capture border; Windows draws it");
+        DrawBorderSettings::Default
+    };
     let settings = Settings::new(
         Monitor::primary()?,
         CursorCaptureSettings::WithoutCursor,
-        DrawBorderSettings::WithoutBorder,
+        border,
         SecondaryWindowSettings::Default,
         MinimumUpdateIntervalSettings::Default,
         DirtyRegionSettings::Default,
