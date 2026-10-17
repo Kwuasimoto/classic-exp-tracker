@@ -14,7 +14,8 @@
       {
         "title": "Maple EXP Tracker",
         "width": 1100,
-        "height": 760
+        "height": 760,
+        "visible": false
       }
     ],
     "security": {

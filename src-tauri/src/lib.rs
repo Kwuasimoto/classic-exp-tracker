@@ -21,6 +21,24 @@ pub fn now_unix() -> i64 {
     i64::try_from(secs).expect("unix seconds fit in i64")
 }
 
+/// Open the window centred on a monitor other than the primary one: the game
+/// covers the primary monitor, and that is the monitor the app reads. With one
+/// monitor the window stays where Windows puts it.
+fn move_off_primary_monitor(window: &tauri::WebviewWindow) -> tauri::Result<()> {
+    let primary = window.primary_monitor()?;
+    let other = window
+        .available_monitors()?
+        .into_iter()
+        .find(|m| primary.as_ref().is_none_or(|p| p.position() != m.position()));
+    let Some(other) = other else { return Ok(()) };
+    let (origin, area, window_size) = (other.position(), other.size(), window.outer_size()?);
+    let centre = |area: u32, window: u32| i32::try_from(area.saturating_sub(window) / 2).unwrap_or(0);
+    window.set_position(tauri::PhysicalPosition::new(
+        origin.x + centre(area.width, window_size.width),
+        origin.y + centre(area.height, window_size.height),
+    ))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -43,6 +61,12 @@ pub fn run() {
             let state = Arc::new(pipeline::AppState::new(store));
             app.manage(Arc::clone(&state));
             pipeline::spawn(app.handle().clone(), state)?;
+            // The window starts hidden (tauri.conf.json) so it doesn't flash on the game's monitor.
+            let window = app.get_webview_window("main").ok_or("window \"main\" missing from tauri.conf.json")?;
+            if let Err(e) = move_off_primary_monitor(&window) {
+                log::warn!("could not move the window off the primary monitor: {e}");
+            }
+            window.show()?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
