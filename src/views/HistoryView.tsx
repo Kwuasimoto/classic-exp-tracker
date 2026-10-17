@@ -44,9 +44,9 @@ export function HistoryView() {
 
   return (
     <>
-      {error && <p className="error">{error.message}</p>}
-      <div className="card">
-        <h3>Maps</h3>
+      {error && <p className="panel error">{error.message}</p>}
+      <section className="panel">
+        <h2>Maps</h2>
         <table>
           <thead>
             <tr><th>Map</th><th>Sessions</th><th>Training</th><th>Avg EXP/hr</th><th>Best hour</th><th /></tr>
@@ -67,19 +67,19 @@ export function HistoryView() {
                 <td>{rate(m.bestHourRate)}</td>
                 <td>
                   {editing?.id === m.mapId ? (
-                    <button className="primary" onClick={(e) => { e.stopPropagation(); void saveRename(); }}>Save</button>
+                    <button className="btn primary" onClick={(e) => { e.stopPropagation(); void saveRename(); }}>Save</button>
                   ) : (
-                    <button onClick={(e) => { e.stopPropagation(); setEditing({ id: m.mapId, name: m.name }); }}>Rename</button>
+                    <button className="btn" onClick={(e) => { e.stopPropagation(); setEditing({ id: m.mapId, name: m.name }); }}>Rename</button>
                   )}
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
-        {maps.length === 0 && <p className="status">No training sessions recorded yet.</p>}
-      </div>
-      <div className="card">
-        <h3>{mapId === null ? "All sessions" : "Sessions on this map"}</h3>
+        {maps.length === 0 && <p className="caption">No training sessions recorded yet.</p>}
+      </section>
+      <section className="panel">
+        <h2>{mapId === null ? "All sessions" : "Sessions on this map"}</h2>
         <table>
           <thead>
             <tr><th>Started</th><th>Map</th><th>Training</th><th>EXP</th><th>EXP/hr</th></tr>
@@ -96,12 +96,8 @@ export function HistoryView() {
             ))}
           </tbody>
         </table>
-      </div>
-      {sessionId !== null && (
-        <div className="card">
-          <RateChart bars={sessionBars} />
-        </div>
-      )}
+      </section>
+      {sessionId !== null && <RateChart bars={sessionBars} />}
     </>
   );
 }

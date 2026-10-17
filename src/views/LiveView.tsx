@@ -1,24 +1,21 @@
 import { useCallback, useEffect, useState } from "react";
 import { RateChart } from "../components/RateChart";
-import { formatExp, formatHours, formatPct, statusText } from "../lib/format";
-import { getLiveChart, getLiveSnapshot, onMinute, onTick, type AppError, type Bar, type Tick } from "../lib/ipc";
+import { formatHours, formatPct } from "../lib/format";
+import { getLiveChart, onMinute, type AppError, type Bar, type Tick } from "../lib/ipc";
 import { expToLevel, liveRates } from "../lib/live";
 
 type WindowMinutes = 120 | 180;
+const whole = (n: number) => Math.round(n).toLocaleString("en-US");
 
-export function LiveView({ onCalibrate }: { onCalibrate: () => void }) {
-  const [tick, setTick] = useState<Tick | null>(null);
+export function LiveView({ tick, onCalibrate }: { tick: Tick | null; onCalibrate: () => void }) {
   const [bars, setBars] = useState<Bar[]>([]);
   const [windowMinutes, setWindowMinutes] = useState<WindowMinutes>(120);
   const [error, setError] = useState<AppError | null>(null);
 
   const refreshChart = useCallback(async () => {
     const res = await getLiveChart(windowMinutes);
-    if (res.success) {
-      setBars(res.data);
-    } else {
-      setError(res.error);
-    }
+    if (res.success) setBars(res.data);
+    else setError(res.error);
   }, [windowMinutes]);
 
   useEffect(() => {
@@ -27,75 +24,72 @@ export function LiveView({ onCalibrate }: { onCalibrate: () => void }) {
 
   useEffect(() => {
     let disposed = false;
-    const unlisteners: Array<() => void> = [];
-    const keep = (res: Awaited<ReturnType<typeof onMinute>>) => {
+    let unlisten: (() => void) | null = null;
+    void onMinute(() => void refreshChart()).then((res) => {
       if (!res.success) return setError(res.error);
       if (disposed) res.data();
-      else unlisteners.push(res.data);
-    };
-    void getLiveSnapshot().then((res) => {
-      if (disposed) return;
-      if (res.success) setTick(res.data);
-      else setError(res.error);
+      else unlisten = res.data;
     });
-    void onTick((res) => (res.success ? setTick(res.data) : setError(res.error))).then(keep);
-    void onMinute(() => void refreshChart()).then(keep);
     return () => {
       disposed = true;
-      unlisteners.forEach((u) => u());
+      unlisten?.();
     };
   }, [refreshChart]);
 
   const rates = liveRates(bars, tick);
   const toLevel = expToLevel(tick);
-  const status = tick?.status ?? null;
+  const level = tick?.level ?? null;
 
   return (
     <>
-      <div className="card">
-        <div className="row" style={{ justifyContent: "space-between" }}>
-          <h2 style={{ margin: 0 }}>{tick?.mapName ?? "Waiting for map…"}</h2>
-          <span className={status?.kind === "ok" ? "status" : "status warn"}>
-            {status ? statusText(status) : "Starting…"}
-            {status?.kind === "notCalibrated" && (
-              <>
-                {" "}
-                <button className="primary" onClick={onCalibrate}>Calibrate</button>
-              </>
-            )}
-          </span>
+      <section className="panel row" style={{ flexWrap: "nowrap", gap: 16 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="label">Current map</div>
+          <h1>{tick?.mapName ?? "Waiting for map…"}</h1>
         </div>
-        {error && <p className="error">{error.message}</p>}
-        <div className="stats" style={{ marginTop: 12 }}>
-          <Stat label="EXP/hr (last 60 min)" value={rates.expPerHour === null ? "—" : formatExp(rates.expPerHour)} />
-          <Stat label="%/hr" value={rates.pctPerHour === null ? "—" : `${rates.pctPerHour.toFixed(2)}%`} />
-          <Stat label="Time to level" value={rates.hoursToLevel === null ? "—" : formatHours(rates.hoursToLevel)} />
-          <Stat label="EXP to level" value={toLevel === null ? "—" : `${toLevel.exact ? "" : "≈ "}${toLevel.exp.toLocaleString("en-US")}`} />
-          <Stat
-            label={tick?.level == null ? "Current EXP" : `Current EXP (Lv. ${tick.level})`}
-            value={tick?.exp == null || tick.pctBp == null ? "—" : `${formatExp(tick.exp)} (${formatPct(tick.pctBp)})`}
-          />
-        </div>
+        {tick?.status.kind === "notCalibrated" && <button className="btn primary" onClick={onCalibrate}>Calibrate</button>}
+        {level !== null && <div className="badge">LV. {level}</div>}
+      </section>
+      {error && <p className="panel error">{error.message}</p>}
+
+      <div className="stats">
+        <Stat label="EXP / hr" accent value={rates.expPerHour === null ? "—" : whole(rates.expPerHour)} caption="last 60 min of training" />
+        <Stat label="% / hr" value={rates.pctPerHour === null ? "—" : `${rates.pctPerHour.toFixed(2)}%`} caption={level === null ? "of this level" : `of level ${level}`} />
+        <Stat label="Time to level" value={rates.hoursToLevel === null ? "—" : formatHours(rates.hoursToLevel)} caption="at the current rate" />
+        <Stat
+          label="EXP to level"
+          value={toLevel === null ? "—" : `${toLevel.exact ? "" : "≈ "}${whole(toLevel.exp)}`}
+          caption={
+            tick?.exp == null || tick.pctBp == null
+              ? "waiting for EXP"
+              : `${whole(tick.exp)}${tick.totalEst == null ? "" : ` / ${whole(tick.totalEst)}`} (${formatPct(tick.pctBp)})`
+          }
+        />
       </div>
-      <div className="card">
-        <div className="row" style={{ justifyContent: "flex-end", marginBottom: 8 }}>
-          {([120, 180] as const).map((m) => (
-            <button key={m} className={m === windowMinutes ? "primary" : ""} onClick={() => setWindowMinutes(m)}>
-              {m / 60}h
-            </button>
-          ))}
-        </div>
-        <RateChart bars={bars} />
-      </div>
+
+      <RateChart
+        bars={bars}
+        fill
+        actions={
+          <div className="segmented" role="group" aria-label="Chart window">
+            {([120, 180] as const).map((m) => (
+              <button key={m} className={m === windowMinutes ? "current" : ""} aria-pressed={m === windowMinutes} onClick={() => setWindowMinutes(m)}>
+                {m / 60}H
+              </button>
+            ))}
+          </div>
+        }
+      />
     </>
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value, caption, accent = false }: { label: string; value: string; caption: string; accent?: boolean }) {
   return (
-    <div className="stat">
-      <div className="label">{label}</div>
+    <section className="panel">
+      <div className={accent ? "label accent" : "label"}>{label}</div>
       <div className="value">{value}</div>
-    </div>
+      <div className="caption">{caption}</div>
+    </section>
   );
 }

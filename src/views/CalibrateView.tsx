@@ -8,7 +8,8 @@ const LABELS: Record<Target, string> = { exp: "EXP box", map: "map box", level: 
 // Presets for 1920x1080 (measured 2026-10-15/16); adjust if they miss.
 const DEFAULT_MAP: Rect = { x: 62, y: 36, w: 240, h: 44 };
 const DEFAULT_LEVEL: Rect = { x: 457, y: 1045, w: 50, h: 21 };
-const COLORS: Record<Target, string> = { exp: "#2f6fde", map: "#e0742f", level: "#2fa86f" };
+// Box outlines; orange is reserved for EXP/hr (docs/STYLE.md).
+const COLORS: Record<Target, string> = { exp: "#ffffff", map: "#5fa8ff", level: "#51bb86" };
 
 export function CalibrateView() {
   const [frame, setFrame] = useState<CalibrationFrame | null>(null);
@@ -76,34 +77,36 @@ export function CalibrateView() {
   const active = rects[target];
   return (
     <>
-      <div className="card">
-        <p className="status">
+      <section className="panel">
+        <p className="caption" style={{ fontSize: 14, marginTop: 0 }}>
           Open MapleStory, then grab a frame. Draw the <b style={{ color: COLORS.exp }}>EXP box</b> tightly around the numbers after
           "EXP." (leave room on the right for longer numbers). Check that the <b style={{ color: COLORS.map }}>map box</b> covers the
           street and map name under the minimap title, and that the <b style={{ color: COLORS.level }}>level box</b> covers only
           the number after "LV." (not the "LV." itself). The app learns the level digits by itself while you play.
         </p>
         <div className="row">
-          <button className="primary" onClick={() => void grab()}>Grab frame</button>
-          {TARGETS.map((t) => (
-            <button key={t} className={t === target ? "primary" : ""} onClick={() => setTarget(t)}>
-              Edit {LABELS[t]}
-            </button>
-          ))}
-          <button disabled={!boxes || !frame} onClick={() => void runPreview()}>Preview</button>
-          <button className="primary" disabled={!boxes || !frame} onClick={() => void save()}>Save</button>
+          <button className="btn" onClick={() => void grab()}>Grab frame</button>
+          <div className="segmented" role="group" aria-label="Box to edit">
+            {TARGETS.map((t) => (
+              <button key={t} className={t === target ? "current" : ""} aria-pressed={t === target} onClick={() => setTarget(t)}>
+                {LABELS[t]}
+              </button>
+            ))}
+          </div>
+          <button className="btn" disabled={!boxes || !frame} onClick={() => void runPreview()}>Preview</button>
+          <button className="btn primary" disabled={!boxes || !frame} onClick={() => void save()}>Save</button>
         </div>
         {active && (
-          <div className="row" style={{ marginTop: 8 }}>
+          <div className="row" style={{ marginTop: 10 }}>
             {(["x", "y", "w", "h"] as const).map((k) => (
               <label key={k}>
-                {k} <input type="number" min={0} value={active[k]} onChange={(e) => setField(k, e.target.value)} style={{ width: 80 }} />
+                <span className="label">{k}</span> <input type="number" min={0} value={active[k]} onChange={(e) => setField(k, e.target.value)} style={{ width: 80 }} />
               </label>
             ))}
           </div>
         )}
         {error && <p className="error">{error.message}</p>}
-        {message && <p className="status">{message}</p>}
+        {message && <p className="caption">{message}</p>}
         {preview && (
           <p>
             EXP: {preview.exp.kind === "ok" ? `${preview.exp.value.exp} (${formatPct(preview.exp.value.pctBp)})` : `✗ ${preview.exp.reason}`}
@@ -117,11 +120,11 @@ export function CalibrateView() {
             )}
           </p>
         )}
-      </div>
+      </section>
       {frame && (
         <div
-          className="card"
-          style={{ position: "relative", padding: 0, overflow: "hidden", cursor: "crosshair", userSelect: "none" }}
+          className="panel"
+          style={{ position: "relative", padding: 0, overflow: "hidden", flexShrink: 0, cursor: "crosshair", userSelect: "none" }}
           onMouseDown={(e) => setDrag(toImage(e))}
           onMouseMove={onMove}
           onMouseUp={() => setDrag(null)}
