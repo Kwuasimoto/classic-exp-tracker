@@ -500,7 +500,11 @@ impl Pipeline {
                 }),
                 Effect::SessionEnded { key, t } => {
                     let id = *self.keys.get(&key).expect("SessionStarted is applied before its SessionEnded");
-                    store.end_session(id, t).map(|()| info!("session #{id} ended"))
+                    // Nothing refers to a session after it ends (see tracker::Effect).
+                    store.end_session(id, t).map(|()| {
+                        self.keys.remove(&key);
+                        info!("session #{id} ended");
+                    })
                 }
                 Effect::Minute { minute_start, key, exp_gained, training_secs } => {
                     let id = *self.keys.get(&key).expect("SessionStarted is applied before its minutes");

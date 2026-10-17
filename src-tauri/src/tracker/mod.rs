@@ -29,6 +29,8 @@ pub struct Sample {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// A session's effects come in order: `SessionStarted`, its `Minute`s, `SessionEnded`.
+/// Nothing refers to a session after it ends.
 pub enum Effect {
     SessionStarted { key: SessionKey, map: MapId, t: i64 },
     SessionEnded { key: SessionKey, t: i64 },
@@ -98,8 +100,7 @@ impl Tracker {
             }
         if let Some(sess) = self.session
             && s.t - sess.last_on_map > RETURN_WINDOW_SECS {
-                fx.push(Effect::SessionEnded { key: sess.key, t: sess.last_on_map });
-                self.session = None;
+                self.end(sess, &mut fx);
             }
 
         if gain > 0 {
@@ -128,15 +129,30 @@ impl Tracker {
         if let Some(minute) = self.minute.take() {
             self.flush(minute, &mut fx);
         }
-        if let Some(sess) = self.session.take() {
-            fx.push(Effect::SessionEnded { key: sess.key, t: sess.last_on_map });
+        if let Some(sess) = self.session {
+            self.end(sess, &mut fx);
         }
         fx
     }
 
     /// End the open session now (the user reset it); the next EXP gain starts a new one.
     pub fn end_session(&mut self) -> Vec<Effect> {
-        self.session.take().map(|s| vec![Effect::SessionEnded { key: s.key, t: s.last_on_map }]).unwrap_or_default()
+        let mut fx = Vec::new();
+        if let Some(sess) = self.session {
+            self.end(sess, &mut fx);
+        }
+        fx
+    }
+
+    /// End `sess`: its part of the minute in progress first, then `SessionEnded`.
+    fn end(&mut self, sess: ActiveSession, fx: &mut Vec<Effect>) {
+        if let (Some(minute_start), Some((exp_gained, training_secs))) = (self.minute, self.acc.remove(&sess.key))
+            && (exp_gained > 0 || training_secs > 0)
+        {
+            fx.push(Effect::Minute { minute_start, key: sess.key, exp_gained, training_secs });
+        }
+        fx.push(Effect::SessionEnded { key: sess.key, t: sess.last_on_map });
+        self.session = None;
     }
 
     fn session_for(&mut self, map: MapId, t: i64, fx: &mut Vec<Effect>) -> SessionKey {
@@ -144,7 +160,7 @@ impl Tracker {
             if sess.map == map {
                 return sess.key;
             }
-            fx.push(Effect::SessionEnded { key: sess.key, t: sess.last_on_map });
+            self.end(sess, fx);
         }
         let key = SessionKey(self.next_key);
         self.next_key += 1;
@@ -366,5 +382,31 @@ mod tests {
         let started = fx.iter().filter(|f| matches!(f, Effect::SessionStarted { .. })).count();
         let training: u32 = fx.iter().map(|f| if let Effect::Minute { training_secs, .. } = f { *training_secs } else { 0 }).sum();
         assert_eq!((started, total_exp(&fx), training), (1, 200, 11));
+    }
+
+    #[test]
+    fn nothing_refers_to_a_session_after_it_ends() {
+        let mut tr = Tracker::new();
+        let mut fx = Vec::new();
+        // Gain on MAP, then on TOWN within the same minute: MAP's session ends mid-minute.
+        for t in 0..=5 {
+            fx.extend(tr.on_sample(Sample { t, exp: reading(10_000 + 10 * t as u64, 1_000 + t as u32), map: MAP }));
+        }
+        for t in 6..=8 {
+            fx.extend(tr.on_sample(Sample { t, exp: reading(10_000 + 10 * t as u64, 1_000 + t as u32), map: TOWN }));
+        }
+        fx.extend(tr.end_session());
+        let mut ended = Vec::new();
+        for f in &fx {
+            let key = match f {
+                Effect::SessionStarted { key, .. } | Effect::Minute { key, .. } => key,
+                Effect::SessionEnded { key, .. } => {
+                    ended.push(*key);
+                    continue;
+                }
+            };
+            assert!(!ended.contains(key), "{f:?} after its session ended");
+        }
+        assert_eq!((ended.len(), total_exp(&fx)), (2, 80));
     }
 }
