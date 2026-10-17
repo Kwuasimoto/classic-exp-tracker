@@ -43,7 +43,7 @@ impl MapOcr {
             let img = strip.to_image();
             for (scale, filter) in VARIANTS {
                 let up = resize(&img, img.width() * scale, img.height() * scale, filter);
-                let text = normalize(&self.recognize(&up)?);
+                let text = numeral_to_number(&normalize(&self.recognize(&up)?));
                 if !text.is_empty() {
                     *votes.entry(text).or_default() += 1;
                 }
@@ -73,6 +73,37 @@ pub fn normalize(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
+/// Map names end in a Roman numeral ("The Burnt Land II"), which OCR reads with
+/// I, l, 1 and | mixed up ("li", "ll", "1i"). A last word made only of those and
+/// v/x, holding at least one letter, that spells a valid numeral up to XXXIX
+/// becomes a number: "the burnt land li" → "the burnt land 2". Expects
+/// `normalize`d text.
+pub fn numeral_to_number(text: &str) -> String {
+    let Some((head, last)) = text.rsplit_once(' ') else { return text.to_string() };
+    if !last.chars().any(|c| c.is_ascii_alphabetic()) {
+        return text.to_string();
+    }
+    let roman: Option<String> = last
+        .chars()
+        .map(|c| match c {
+            'i' | 'l' | '1' | '|' | '!' => Some('I'),
+            'v' => Some('V'),
+            'x' => Some('X'),
+            _ => None,
+        })
+        .collect();
+    match roman.and_then(|r| roman_value(&r)) {
+        Some(n) => format!("{head} {n}"),
+        None => text.to_string(),
+    }
+}
+
+/// Value of a canonical Roman numeral from I to XXXIX; `None` for anything else ("IIII", "VX").
+fn roman_value(roman: &str) -> Option<u32> {
+    const ONES: [&str; 10] = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX"];
+    (1..40).find(|&n: &u32| format!("{}{}", "X".repeat((n / 10) as usize), ONES[(n % 10) as usize]) == roman)
+}
+
 pub fn title_case(text: &str) -> String {
     text.split(' ')
         .map(|word| {
@@ -90,6 +121,21 @@ pub fn title_case(text: &str) -> String {
 mod tests {
     use super::*;
     use crate::geom::fixture;
+
+    #[test]
+    fn reads_roman_numerals_as_numbers() {
+        for (ocr, name) in [
+            ("the burnt land li", "the burnt land 2"),
+            ("the burnt land ll", "the burnt land 2"),
+            ("ant tunnel i", "ant tunnel 1"),
+            ("sleepy dungeon iv", "sleepy dungeon 4"),
+            ("victoria road perion", "victoria road perion"),
+            ("forest 11", "forest 11"),
+            ("hill iiii", "hill iiii"),
+        ] {
+            assert_eq!(numeral_to_number(ocr), name);
+        }
+    }
 
     #[test]
     fn labels_the_fixture() {
