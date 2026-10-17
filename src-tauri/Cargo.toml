@@ -1,18 +1,18 @@
 [package]
-name = "maple-exp-tracker"
+name = "classic-exp-tracker"
 version = "0.1.0"
 description = "MapleStory Classic World EXP tracker"
-authors = ["you"]
+authors = ["Kwuasimoto"]
+repository = "https://github.com/Kwuasimoto/classic-exp-tracker"
+publish = false
 edition = "2024"
-default-run = "maple-exp-tracker"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+default-run = "classic-exp-tracker"
 
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "maple_exp_tracker_lib"
+name = "classic_exp_tracker_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

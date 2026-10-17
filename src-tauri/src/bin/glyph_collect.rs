@@ -15,9 +15,9 @@ use std::sync::mpsc::sync_channel;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use maple_exp_tracker_lib::capture::{self, CaptureMsg, Regions, Shared};
-use maple_exp_tracker_lib::geom::{Calibration, Crop, Rect};
-use maple_exp_tracker_lib::read::exp::{centred, classify, read_exp, segment, to_art};
+use classic_exp_tracker_lib::capture::{self, CaptureMsg, Regions, Shared};
+use classic_exp_tracker_lib::geom::{Calibration, Crop, Rect};
+use classic_exp_tracker_lib::read::exp::{centred, classify, read_exp, segment, to_art};
 
 /// Rejected glyphs, keyed by their greyscale art, with a count and the line they were in.
 type Rejected = BTreeMap<Vec<String>, (usize, String)>;

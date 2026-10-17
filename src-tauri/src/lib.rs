@@ -42,7 +42,7 @@ fn move_off_primary_monitor(window: &tauri::WebviewWindow) -> tauri::Result<()> 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        // Text log for debugging: %LOCALAPPDATA%\com.mapleexp.tracker\logs, 5 files of 1 MB.
+        // Text log for debugging: %LOCALAPPDATA%\com.classicexp.tracker\logs, 5 files of 1 MB.
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(log::LevelFilter::Info)
@@ -55,7 +55,7 @@ pub fn run() {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
             let db = dir.join("tracker.db");
-            log::info!("Maple EXP Tracker {} starting, database {}", app.package_info().version, db.display());
+            log::info!("Classic EXP Tracker {} starting, database {}", app.package_info().version, db.display());
             let store = store::Store::open(&db)?;
             store.close_open_sessions()?;
             let live_since = store.live_since()?;

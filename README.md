@@ -1,10 +1,50 @@
-# Maple EXP Tracker
+# Classic EXP Tracker
 
 A Windows desktop app that measures EXP/hr in MapleStory Classic World by reading the screen. Once a second, it captures the primary monitor (the same way OBS "Display Capture" does). It reads the EXP readout, the level and the minimap's map name from that image in memory, and records EXP gained per map in a local SQLite file.
 
 **The app never touches the game.** It does not open, read, inject into or hook the MapleStory process, read game files, target the game window, send keyboard or mouse input, or draw an overlay. It never writes screenshots to disk.
 
-## How it works
+> **Status:** submitted to Nexon for review against the MapleStory Terms of Service. It won't be released publicly until Nexon confirms in writing that it's allowed.
+
+## Install
+
+1. Download `Classic EXP Tracker_<version>_x64-setup.exe` from the [Releases page](https://github.com/Kwuasimoto/classic-exp-tracker/releases).
+2. Run it. The installer isn't code-signed, so Windows SmartScreen may say "Windows protected your PC": choose **More info**, then **Run anyway**.
+3. It installs for your user account only (no administrator rights) and adds a Start menu entry.
+
+**Requirements:** Windows 10 version 2004 or later, or Windows 11, 64-bit. The installer downloads Microsoft Edge WebView2 if it's missing (Windows 11 already has it). On Windows 10, Windows draws a yellow border around the screen while the app captures it; Windows 11 lets the app hide it. Map names are read with Windows' built-in text recognition, which needs a Windows display language that supports it, such as English.
+
+## Set up (once)
+
+1. **Put MapleStory on your primary monitor**, with the status bar (EXP and level) and the minimap visible, and the minimap showing the map name. The app reads only the primary monitor. If you have a second monitor, the app opens there so it doesn't cover the game; with one monitor, keep the app's window away from the EXP bar and minimap.
+2. Open the app and go to **Calibrate**, then press **Grab frame**.
+3. With **EXP** selected, drag a box tightly around the numbers after "EXP." Leave room on the right for longer numbers.
+4. Check the **Map** box covers the street and map name under the minimap title, and the **Level** box covers only the number after "LV.". At 1920×1080 both start in the right place; at other resolutions, drag them yourself.
+5. Press **Preview**. When it shows your EXP, percentage, map and level correctly, press **Save**.
+
+The level digits aren't built in: the app learns them by itself while you play, from the level it works out from your EXP. Until then the level comes from the EXP readings alone.
+
+## Use
+
+- **Live** shows your EXP/hr over the last 60 minutes of training, %/hr, time to level and EXP to level, with a chart of EXP per 10 minutes. Time in town or AFK doesn't lower the rate.
+- The **reset** button left of 2H/3H saves the last 2 hours to History as a snapshot and starts a new session.
+- **History** lists snapshots, maps and sessions. Maps and snapshots can be renamed; snapshots can be deleted.
+- The status line at the bottom of the side nav says whether reading works. If it doesn't:
+  - **EXP not readable:** the status bar is hidden or covered, or the EXP box moved. Recalibrate.
+  - **Map name not readable:** open the minimap.
+  - **Not calibrated for this screen resolution:** calibration is saved per resolution; calibrate again at the new one.
+  - **Screen capture failed:** another app or the game is blocking capture. The app stops rather than working around it.
+
+## Your data
+
+Everything stays on your PC; the app makes no network requests.
+
+- History: `%APPDATA%\com.classicexp.tracker\tracker.db`
+- Logs (text only): `%LOCALAPPDATA%\com.classicexp.tracker\logs\`
+
+To uninstall, use **Settings > Apps > Installed apps > Classic EXP Tracker**. Your history is kept unless you tick **Delete the application data** in the uninstaller.
+
+## How it works (for reviewers and developers)
 
 ```mermaid
 %%{init: {"flowchart": {"wrappingWidth": 320}}}%%
@@ -27,7 +67,7 @@ flowchart TB
             track["tracker/mod.rs + tracker/level.rs<br/>EXP gained, level-up, death,<br/>sessions, training time per minute"]
         end
 
-        store[("store.rs: SQLite, one file<br/>%APPDATA%/com.mapleexp.tracker/tracker.db")]
+        store[("store.rs: SQLite, one file<br/>%APPDATA%/com.classicexp.tracker/tracker.db")]
         commands["commands.rs: Tauri commands<br/>+ rates.rs: 10-min bars, 60-min EXP/hr"]
     end
 
@@ -61,7 +101,7 @@ flowchart TB
 - **Pipeline.** `pipeline.rs` is one background thread that runs the readers and tracker on each frame. It is the only place that writes to the database.
 - **Tracking.** `tracker/` does no I/O apart from log lines explaining its decisions. It turns each second's reading into effects (`SessionStarted`, `SessionEnded`, `Minute`), which `pipeline.rs` writes to SQLite. Repot trips and AFK time count as zero training seconds, so they don't lower the rate. `tracker/level.rs` holds the EXP-per-level table (a community table, **not confirmed by Nexon**; corrections welcome). The level is the one whose table total fits the EXP and % readings; a level read from the screen is used only when its table total fits them too.
 - **UI.** The UI only talks to the backend through Tauri commands and one event (`tracker-tick`, once a second). Every payload is validated with Zod in `lib/ipc.ts`. The reset button on the Live chart saves the last 2 hours as a snapshot (a copy of its minutes, listed in History, renamable and deletable) and starts a new session. Its look follows [`docs/STYLE.md`](docs/STYLE.md); the backdrops in `public/` are MapleStory wallpapers, chosen in the side nav (or none).
-- **Logs.** A text log in `%LOCALAPPDATA%\com.mapleexp.tracker\logs\` (5 files of up to 1 MB) records reader failures with the partially read text, map and session changes, tracker decisions (level-up, death, rejected misreads), capture restarts and database errors, plus one summary line per minute. It contains text only, never images.
+- **Logs.** A text log in `%LOCALAPPDATA%\com.classicexp.tracker\logs\` (5 files of up to 1 MB) records reader failures with the partially read text, map and session changes, tracker decisions (level-up, death, rejected misreads), capture restarts and database errors, plus one summary line per minute. It contains text only, never images.
 - **Dev tool.** `src/bin/glyph_collect.rs` is a developer-only tool that records the EXP box as text, replays recordings through the reader, and prints glyphs the reader rejects. It is built only with the `dev-tools` feature and is not part of the release build.
 
 ## Development
@@ -72,3 +112,13 @@ pnpm tauri dev                                  # run the app
 cargo test --manifest-path src-tauri/Cargo.toml # reader + tracker tests
 pnpm tauri build                                # NSIS installer
 ```
+
+Needs Node.js 20.19+ or 22.12+, pnpm, the Rust toolchain (stable, MSVC) and the [Tauri prerequisites for Windows](https://tauri.app/start/prerequisites/). The installer is written to `src-tauri/target/release/bundle/nsis/`.
+
+To release, set the same version in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`, run `pnpm tauri build`, and attach the installer to a GitHub release.
+
+## Credits and license
+
+The backgrounds in `public/` are official MapleStory wallpapers; MapleStory and its artwork are © Nexon. This project isn't affiliated with or endorsed by Nexon.
+
+Copyright © 2026 Kwuasimoto. All rights reserved. The source is published for review and transparency; no license is granted to reuse it.

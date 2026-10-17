@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    maple_exp_tracker_lib::run()
+    classic_exp_tracker_lib::run()
 }

@@ -35,7 +35,7 @@ export function TitleBar() {
     <header className="titlebar" data-tauri-drag-region>
       <AppIcon />
       <span className="titlebar-name" data-tauri-drag-region>
-        MAPLE EXP TRACKER
+        CLASSIC EXP TRACKER
       </span>
       {error && <span className="error titlebar-error" data-tauri-drag-region>{error}</span>}
       <div className="window-controls">
