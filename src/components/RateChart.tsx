@@ -7,6 +7,7 @@ const tick = (v: unknown) => (typeof v === "number" ? formatExp(v) : String(v));
 const axisText = { fill: "var(--muted)", fontSize: 12 };
 
 /** EXP per 10 min (bars, left axis) and the 60-min EXP/hr (orange line, right axis).
+ *  No animation: the live chart reloads every second.
  *  `fill` makes the panel take the remaining height; `actions` sit at the legend's right. */
 export function RateChart({ bars, fill = false, actions }: { bars: Bar[]; fill?: boolean; actions?: ReactNode }) {
   const data = bars.map((b) => ({ label: formatClock(b.start), exp: b.expGained, rate: b.ratePerHour }));
@@ -31,7 +32,7 @@ export function RateChart({ bars, fill = false, actions }: { bars: Bar[]; fill?:
               contentStyle={{ background: "#141416", border: 0, borderRadius: 10, boxShadow: "var(--shadow)" }}
               labelStyle={{ color: "var(--muted)" }}
             />
-            <BarMark yAxisId="exp" dataKey="exp" name="EXP per 10 min" fill="var(--bar)" radius={[4, 4, 0, 0]} />
+            <BarMark yAxisId="exp" dataKey="exp" name="EXP per 10 min" fill="var(--bar)" radius={[4, 4, 0, 0]} isAnimationActive={false} />
             <Line
               yAxisId="rate"
               dataKey="rate"
@@ -41,6 +42,7 @@ export function RateChart({ bars, fill = false, actions }: { bars: Bar[]; fill?:
               dot={{ r: 4, fill: "var(--accent)", strokeWidth: 0 }}
               activeDot={{ r: 5 }}
               connectNulls={false}
+              isAnimationActive={false}
             />
           </ComposedChart>
         </ResponsiveContainer>

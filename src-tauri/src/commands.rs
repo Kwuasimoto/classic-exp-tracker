@@ -37,11 +37,13 @@ pub fn get_live_chart(state: AppStateRef<'_>, window_minutes: u32) -> Result<Vec
         return Err(AppError::Invalid(format!("window must be 120 or 180 minutes, got {window_minutes}")));
     }
     let (first, last) = rates::live_range(now_unix(), window_minutes);
-    let rows = state
+    let mut rows = state
         .store
         .lock()
         .expect("store lock poisoned")
         .minutes_between(rates::rows_from(first), last + rates::BUCKET_SECS)?;
+    // The minute in progress isn't stored until it ends; count it so the rate is live.
+    rows.extend(*state.live_minute.read().expect("live minute lock poisoned"));
     Ok(rates::bars_range(&rows, first, last))
 }
 

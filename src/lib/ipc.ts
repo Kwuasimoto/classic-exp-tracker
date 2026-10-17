@@ -123,4 +123,3 @@ export const onTick = (cb: (tick: Result<Tick, AppError>) => void) =>
     cb(parsed.success ? ok(parsed.data) : err({ kind: "ipc", message: `unexpected tick: ${parsed.error.message}` }));
   });
 
-export const onMinute = (cb: () => void) => subscribe("tracker-minute", () => cb());

@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 
 use log::{info, warn};
 
+use crate::rates::MinuteRow;
 use crate::read::exp::ExpReading;
 
 pub type MapId = i64;
@@ -250,6 +251,14 @@ impl Tracker {
         }
     }
 
+    /// The minute in progress (not yet flushed as `Minute` effects), summed over
+    /// sessions, so live rates can count it before it ends.
+    pub fn current_minute(&self) -> Option<MinuteRow> {
+        let minute_start = self.minute?;
+        let (exp_gained, training_secs) = self.acc.values().fold((0, 0), |(e, s), &(de, ds)| (e + de, s + ds));
+        (exp_gained > 0 || training_secs > 0).then_some(MinuteRow { minute_start, exp_gained, training_secs })
+    }
+
     fn flush(&mut self, minute_start: i64, fx: &mut Vec<Effect>) {
         for (key, (exp_gained, training_secs)) in std::mem::take(&mut self.acc) {
             if exp_gained > 0 || training_secs > 0 {
@@ -292,6 +301,17 @@ mod tests {
         tr.on_sample(Sample { t: 1, exp: reading(1_000, 28), map: MAP });
         assert_eq!(tr.level(), Some(42));
         assert_eq!(total_exp(&tr.finish()), 324_240 - 291_000 + 1_000);
+    }
+
+    #[test]
+    fn current_minute_counts_gains_before_the_minute_ends() {
+        let mut tr = Tracker::new();
+        tr.on_sample(Sample { t: 60, exp: reading(10_000, 1_000), map: MAP });
+        tr.on_sample(Sample { t: 61, exp: reading(10_050, 1_005), map: MAP });
+        assert_eq!(tr.current_minute(), Some(MinuteRow { minute_start: 60, exp_gained: 50, training_secs: 1 }));
+        let fx = tr.on_sample(Sample { t: 120, exp: None, map: TOWN });
+        assert_eq!(total_exp(&fx), 50);
+        assert_eq!(tr.current_minute(), None);
     }
 
     #[test]

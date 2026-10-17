@@ -19,11 +19,11 @@ use crate::read::exp::{read_exp, Glyph};
 use crate::read::level::{self, LevelGlyph};
 use crate::read::map_strip::{read_strip, Signature};
 use crate::read::ocr::MapOcr;
+use crate::rates::MinuteRow;
 use crate::store::{Store, StoreError};
 use crate::tracker::{ConfirmOutcome, Effect, MapConfirmer, MapId, Sample, SessionKey, Tracker};
 
 pub const TICK_EVENT: &str = "tracker-tick";
-pub const MINUTE_EVENT: &str = "tracker-minute";
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -62,6 +62,8 @@ pub struct AppState {
     /// Last full frame grabbed for the calibration screen (memory only).
     pub calibration_frame: Mutex<Option<Crop>>,
     pub live: RwLock<Tick>,
+    /// The tracker's minute in progress, added to the live chart (see commands::get_live_chart).
+    pub live_minute: RwLock<Option<MinuteRow>>,
     shutdown: AtomicBool,
     thread: Mutex<Option<JoinHandle<()>>>,
 }
@@ -73,6 +75,7 @@ impl AppState {
             capture: Arc::new(Shared::default()),
             calibration_frame: Mutex::new(None),
             live: RwLock::new(Tick::default()),
+            live_minute: RwLock::new(None),
             shutdown: AtomicBool::new(false),
             thread: Mutex::new(None),
         }
@@ -307,14 +310,10 @@ impl Pipeline {
         if let Some(level) = self.screen_level {
             self.tracker.use_screen_level(level);
         }
-        let minute_written = fx.iter().any(|e| matches!(e, Effect::Minute { .. }));
         self.apply(fx);
+        // Before the tick goes out: the UI reloads the live chart when it receives one.
+        *self.state.live_minute.write().expect("live minute lock poisoned") = self.tracker.current_minute();
         self.publish(reader);
-        if minute_written
-            && let Err(e) = self.app.emit(MINUTE_EVENT, ()) {
-                warn!("sending {MINUTE_EVENT} to the UI failed: {e}");
-                self.notify_error = Some(e.to_string());
-            }
     }
 
     fn read_level_box(&mut self, crop: Option<Crop>) {

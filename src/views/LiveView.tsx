@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { RateChart } from "../components/RateChart";
 import { formatHours, formatPct } from "../lib/format";
-import { getLiveChart, onMinute, type AppError, type Bar, type Tick } from "../lib/ipc";
+import { getLiveChart, type AppError, type Bar, type Tick } from "../lib/ipc";
 import { expToLevel, liveRates } from "../lib/live";
 
 type WindowMinutes = 120 | 180;
@@ -18,23 +18,10 @@ export function LiveView({ tick, onCalibrate }: { tick: Tick | null; onCalibrate
     else setError(res.error);
   }, [windowMinutes]);
 
+  // Reload with every tick (once a second): the chart includes the minute in progress.
   useEffect(() => {
     void refreshChart();
-  }, [refreshChart]);
-
-  useEffect(() => {
-    let disposed = false;
-    let unlisten: (() => void) | null = null;
-    void onMinute(() => void refreshChart()).then((res) => {
-      if (!res.success) return setError(res.error);
-      if (disposed) res.data();
-      else unlisten = res.data;
-    });
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, [refreshChart]);
+  }, [tick, refreshChart]);
 
   const rates = liveRates(bars, tick);
   const toLevel = expToLevel(tick);
