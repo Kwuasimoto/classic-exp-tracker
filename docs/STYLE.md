@@ -44,6 +44,8 @@ Titillium Web (bundled from `@fontsource/titillium-web`, open licence), tabular 
 - Radius: 10 px panels, 999 px (pill) for buttons, toggles and the level badge.
 - Panels: `--panel` + 10 px backdrop blur + the MapleStory shadow
   (`--shadow`: `0 7px 8px -4px`, `0 12px 17px 2px`, `0 5px 22px 4px` in black at 40 / 28 / 24 %).
+- Shadows need room: a scroll or `overflow` container clips its children's shadows into a hard-edged
+  dark box. Give such a container 20 px of padding (with matching negative margin), as `.content` does.
 - Spacing: 20 px around and between the nav and content, 12–14 px between panels; 12 px inside the nav,
   and every nav item's content at a 14 px inset.
 
