@@ -59,7 +59,7 @@ export type Session = z.infer<typeof SessionSchema>;
 
 export const RectSchema = z.object({ x: count, y: count, w: count, h: count });
 export type Rect = z.infer<typeof RectSchema>;
-export const CalibrationSchema = z.object({ exp: RectSchema, map: RectSchema });
+export const CalibrationSchema = z.object({ exp: RectSchema, map: RectSchema, level: RectSchema.nullable() });
 export type Calibration = z.infer<typeof CalibrationSchema>;
 
 export const CalibrationFrameSchema = z.object({
@@ -78,6 +78,7 @@ const previewOf = <T extends z.ZodType>(value: T) =>
 export const RegionPreviewSchema = z.object({
   exp: previewOf(z.object({ exp: count, pctBp: count })),
   map: previewOf(z.string()),
+  level: previewOf(count).nullable(),
 });
 export type RegionPreview = z.infer<typeof RegionPreviewSchema>;
 

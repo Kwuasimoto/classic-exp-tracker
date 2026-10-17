@@ -3,7 +3,7 @@
 
 use serde::Serialize;
 
-use super::glyphs::{Reference, REFERENCES};
+use super::glyphs::REFERENCES;
 use super::ReadError;
 use crate::geom::Crop;
 
@@ -113,31 +113,46 @@ pub fn centred(glyph: &Glyph) -> Vec<Vec<f32>> {
         .collect()
 }
 
+/// Ink levels of the ASCII art used for references: ' ' = 0/9 … '@' = 9/9.
+const ART_LEVELS: &[u8; 10] = b" .:-=+*#%@";
+
+/// Centred ink as ASCII art, the format of every stored reference.
+pub fn to_art(centred: &[Vec<f32>]) -> Vec<String> {
+    centred
+        .iter()
+        .map(|row| row.iter().map(|v| ART_LEVELS[(v * 9.0).round().clamp(0.0, 9.0) as usize] as char).collect())
+        .collect()
+}
+
 /// Sum of squared ink differences; `None` if the line heights differ.
-fn distance(centred: &[Vec<f32>], reference: &Reference) -> Option<f32> {
-    if centred.len() != reference.rows.len() {
+fn distance(centred: &[Vec<f32>], art: &[impl AsRef<str>]) -> Option<f32> {
+    if centred.len() != art.len() {
         return None;
     }
-    let level = |b: u8| b" .:-=+*#%@".iter().position(|&l| l == b).unwrap_or(0) as f32 / 9.0;
+    let level = |b: u8| ART_LEVELS.iter().position(|&l| l == b).unwrap_or(0) as f32 / 9.0;
     Some(
         centred
             .iter()
-            .zip(reference.rows)
-            .flat_map(|(a, r)| a.iter().zip(r.bytes()).map(move |(a, r)| (a - level(r)) * (a - level(r))))
+            .zip(art)
+            .flat_map(|(a, r)| a.iter().zip(r.as_ref().bytes()).map(move |(a, r)| (a - level(r)) * (a - level(r))))
             .sum(),
     )
 }
 
 /// The nearest reference's character, if it is close and clearly closer than
 /// any other character's. Otherwise `None`, and the read fails.
-pub fn classify(glyph: &Glyph, references: &[Reference]) -> Option<char> {
+pub fn nearest<'a, R: AsRef<str> + 'a>(glyph: &Glyph, references: impl IntoIterator<Item = (char, &'a [R])>) -> Option<char> {
     let centred = centred(glyph);
-    let mut nearest: Vec<(f32, char)> =
-        references.iter().filter_map(|r| distance(&centred, r).map(|d| (d, r.ch))).collect();
-    nearest.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let &(best, ch) = nearest.first()?;
-    let runner_up = nearest.iter().find(|(_, c)| *c != ch).map_or(f32::INFINITY, |&(d, _)| d);
+    let mut ranked: Vec<(f32, char)> =
+        references.into_iter().filter_map(|(ch, art)| distance(&centred, art).map(|d| (d, ch))).collect();
+    ranked.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let &(best, ch) = ranked.first()?;
+    let runner_up = ranked.iter().find(|(_, c)| *c != ch).map_or(f32::INFINITY, |&(d, _)| d);
     (best <= MAX_DISTANCE && runner_up >= MIN_MARGIN * best).then_some(ch)
+}
+
+pub fn classify(glyph: &Glyph) -> Option<char> {
+    nearest(glyph, REFERENCES.iter().map(|r| (r.ch, r.rows)))
 }
 
 /// Parse `<digits/commas>[<int>.<2 digits>%]`.
@@ -163,7 +178,7 @@ pub fn parse(text: &str) -> Result<ExpReading, ReadError> {
 
 pub fn read_exp(crop: &Crop) -> Result<ExpReading, ReadError> {
     let glyphs = segment(crop)?;
-    let chars: Vec<Option<char>> = glyphs.iter().map(|g| classify(g, REFERENCES)).collect();
+    let chars: Vec<Option<char>> = glyphs.iter().map(classify).collect();
     if let Some(i) = chars.iter().position(Option::is_none) {
         let line = chars.iter().map(|c| c.unwrap_or('?')).collect();
         return Err(ReadError::UnknownGlyph { column: glyphs[i].x, line });

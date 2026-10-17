@@ -52,8 +52,11 @@ struct ActiveSession {
 pub struct Tracker {
     baseline: Option<ExpReading>,
     bounds: Option<TotalBounds>,
-    /// The player's level, once the bounds fit exactly one table total.
+    /// The player's level, once the bounds fit exactly one table total (or a
+    /// level read from the screen fits them).
     level: Option<u32>,
+    /// Last screen level that did not fit the readings, so it is logged once.
+    unfit_screen_level: Option<u32>,
     rejections: u32,
     last_gain_t: Option<i64>,
     last_t: Option<i64>,
@@ -184,6 +187,27 @@ impl Tracker {
         self.rejections = 0;
         self.baseline = Some(r);
         r.exp.saturating_sub(base.exp)
+    }
+
+    /// A level read from the screen (OCR). Used only if its table total fits the
+    /// EXP readings, so a misread can't change the totals.
+    pub fn use_screen_level(&mut self, level: u32) {
+        if self.level == Some(level) {
+            return;
+        }
+        let total = exp_to_next(level);
+        match self.bounds {
+            Some(bounds) if total.is_some_and(|t| bounds.contains(t)) => {
+                info!("screen shows level {level}; its table total {total:?} fits readings {bounds:?}");
+                self.level = Some(level);
+                self.unfit_screen_level = None;
+            }
+            Some(bounds) if self.unfit_screen_level != Some(level) => {
+                warn!("screen shows level {level}, but its table total {total:?} doesn't fit readings {bounds:?}; ignored");
+                self.unfit_screen_level = Some(level);
+            }
+            _ => {}
+        }
     }
 
     /// Learn the level once the bounds fit exactly one table total; forget it

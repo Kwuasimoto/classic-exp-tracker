@@ -2,6 +2,7 @@
 
 pub mod exp;
 pub mod glyphs;
+pub mod level;
 pub mod map_strip;
 pub mod ocr;
 

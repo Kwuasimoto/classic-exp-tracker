@@ -17,22 +17,16 @@ use std::time::{Duration, Instant};
 
 use maple_exp_tracker_lib::capture::{self, CaptureMsg, Regions, Shared};
 use maple_exp_tracker_lib::geom::{Calibration, Crop, Rect};
-use maple_exp_tracker_lib::read::exp::{centred, classify, read_exp, segment};
-use maple_exp_tracker_lib::read::glyphs::REFERENCES;
+use maple_exp_tracker_lib::read::exp::{centred, classify, read_exp, segment, to_art};
 
 /// Rejected glyphs, keyed by their greyscale art, with a count and the line they were in.
 type Rejected = BTreeMap<Vec<String>, (usize, String)>;
 
-fn art(rows: &[Vec<f32>]) -> Vec<String> {
-    let levels = b" .:-=+*#%@";
-    rows.iter().map(|r| r.iter().map(|v| levels[(v * 9.0).round().clamp(0.0, 9.0) as usize] as char).collect()).collect()
-}
-
 fn collect_rejected(crop: &Crop, rejected: &mut Rejected) {
     let Ok(glyphs) = segment(crop) else { return };
-    let line: String = glyphs.iter().map(|g| classify(g, REFERENCES).unwrap_or('?')).collect();
-    for g in glyphs.iter().filter(|g| classify(g, REFERENCES).is_none()) {
-        rejected.entry(art(&centred(g))).or_insert((0, line.clone())).0 += 1;
+    let line: String = glyphs.iter().map(|g| classify(g).unwrap_or('?')).collect();
+    for g in glyphs.iter().filter(|g| classify(g).is_none()) {
+        rejected.entry(to_art(&centred(g))).or_insert((0, line.clone())).0 += 1;
     }
 }
 
@@ -104,7 +98,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             *shared.regions.write().map_err(|_| "regions lock poisoned")? = Some(Regions {
                 width: monitor.width()?,
                 height: monitor.height()?,
-                calibration: Calibration { exp: rect, map: rect },
+                calibration: Calibration { exp: rect, map: rect, level: None },
             });
             let (tx, rx) = sync_channel(4);
             let control = capture::start(tx, shared)?;

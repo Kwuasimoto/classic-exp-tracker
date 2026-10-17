@@ -38,7 +38,7 @@ pub struct Shared {
 
 #[derive(Debug)]
 pub enum CaptureMsg {
-    Regions { t: i64, exp: Crop, map: Crop },
+    Regions { t: i64, exp: Crop, map: Crop, level: Option<Crop> },
     Uncalibrated { width: u32, height: u32 },
     Closed,
 }
@@ -107,12 +107,14 @@ impl GraphicsCaptureApiHandler for Handler {
                 if r.width == width
                     && r.height == height
                     && r.calibration.exp.fits_in(width, height)
-                    && r.calibration.map.fits_in(width, height) =>
+                    && r.calibration.map.fits_in(width, height)
+                    && r.calibration.level.is_none_or(|l| l.fits_in(width, height)) =>
             {
                 CaptureMsg::Regions {
                     t: now_unix(),
                     exp: copy_region(frame, r.calibration.exp)?,
                     map: copy_region(frame, r.calibration.map)?,
+                    level: r.calibration.level.map(|l| copy_region(frame, l)).transpose()?,
                 }
             }
             _ => CaptureMsg::Uncalibrated { width, height },

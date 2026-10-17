@@ -25,6 +25,8 @@ impl Rect {
 pub struct Calibration {
     pub exp: Rect,
     pub map: Rect,
+    /// The "LV." number. Optional: the level is also worked out from the EXP readings.
+    pub level: Option<Rect>,
 }
 
 pub fn resolution_key(width: u32, height: u32) -> String {

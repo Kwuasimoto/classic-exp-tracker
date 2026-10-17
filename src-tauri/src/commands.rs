@@ -17,6 +17,7 @@ use crate::pipeline::{AppState, Tick};
 use crate::rates::{self, Bar};
 use crate::read::exp::{read_exp, ExpReading};
 use crate::read::map_strip::read_strip;
+use crate::read::level;
 use crate::read::ocr::MapOcr;
 use crate::store::SessionRecord;
 use crate::tracker::MapId;
@@ -146,6 +147,8 @@ pub enum Preview<T> {
 pub struct RegionPreview {
     exp: Preview<ExpReading>,
     map: Preview<String>,
+    /// `None` when no level box is drawn.
+    level: Option<Preview<u32>>,
 }
 
 fn grabbed_frame(state: &AppState) -> Result<Crop, AppError> {
@@ -158,7 +161,7 @@ fn grabbed_frame(state: &AppState) -> Result<Crop, AppError> {
 }
 
 #[tauri::command(async)]
-pub fn preview_regions(state: AppStateRef<'_>, exp: Rect, map: Rect) -> Result<RegionPreview, AppError> {
+pub fn preview_regions(state: AppStateRef<'_>, exp: Rect, map: Rect, level: Option<Rect>) -> Result<RegionPreview, AppError> {
     let frame = grabbed_frame(&state)?;
     let outside = || "box is outside the frame".to_string();
     let exp = match frame.sub(exp).ok_or_else(outside).and_then(|c| read_exp(&c).map_err(|e| e.to_string())) {
@@ -175,17 +178,29 @@ pub fn preview_regions(state: AppStateRef<'_>, exp: Rect, map: Rect) -> Result<R
         Ok(value) => Preview::Ok { value },
         Err(reason) => Preview::Failed { reason },
     };
-    Ok(RegionPreview { exp, map })
+    let learned = state.store.lock().expect("store lock poisoned").level_glyphs()?;
+    let level_preview = level.map(|rect| {
+        match frame.sub(rect).ok_or_else(outside).and_then(|c| {
+            let glyphs = level::segment(&c).map_err(|e| e.to_string())?;
+            level::read_level(&glyphs, &learned).ok_or_else(|| {
+                format!("{} digit(s) found, not all learned yet; the app learns them while you play", glyphs.len())
+            })
+        }) {
+            Ok(value) => Preview::Ok { value },
+            Err(reason) => Preview::Failed { reason },
+        }
+    });
+    Ok(RegionPreview { exp, map, level: level_preview })
 }
 
 #[tauri::command(async)]
-pub fn save_calibration(state: AppStateRef<'_>, exp: Rect, map: Rect) -> Result<(), AppError> {
+pub fn save_calibration(state: AppStateRef<'_>, exp: Rect, map: Rect, level: Option<Rect>) -> Result<(), AppError> {
     let frame = grabbed_frame(&state)?;
     let (width, height) = (frame.width, frame.height);
-    if !exp.fits_in(width, height) || !map.fits_in(width, height) {
+    if !exp.fits_in(width, height) || !map.fits_in(width, height) || level.is_some_and(|l| !l.fits_in(width, height)) {
         return Err(AppError::Invalid(format!("boxes must lie inside the {width}x{height} frame")));
     }
-    let calibration = Calibration { exp, map };
+    let calibration = Calibration { exp, map, level };
     state.store.lock().expect("store lock poisoned").save_calibration(&resolution_key(width, height), &calibration)?;
     log::info!("calibration saved for {width}x{height}: {calibration:?}");
     *state.capture.regions.write().expect("regions lock poisoned") = Some(Regions { width, height, calibration });

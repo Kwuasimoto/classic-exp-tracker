@@ -15,7 +15,8 @@ use tauri::{AppHandle, Emitter};
 
 use crate::capture::{self, CaptureMsg, Control, Regions, Shared};
 use crate::geom::{resolution_key, Crop};
-use crate::read::exp::read_exp;
+use crate::read::exp::{read_exp, Glyph};
+use crate::read::level::{self, LevelGlyph};
 use crate::read::map_strip::{read_strip, Signature};
 use crate::read::ocr::MapOcr;
 use crate::store::{Store, StoreError};
@@ -115,6 +116,15 @@ struct Pipeline {
     capture_error: Option<String>,
     storage_error: Option<String>,
     notify_error: Option<String>,
+    /// The level box's last pixels, its digits, and the level they read as.
+    /// Re-read only when the pixels change (about once per level).
+    level_crop: Option<Crop>,
+    level_glyphs: Vec<Glyph>,
+    screen_level: Option<u32>,
+    /// Level digits learned so far (also in the database), and whether the
+    /// current level box was already tried for learning.
+    learned_digits: Vec<LevelGlyph>,
+    learn_tried: bool,
     /// Whether the previous frame's readers failed; failures are logged when this flips.
     exp_failing: bool,
     map_failing: bool,
@@ -153,6 +163,11 @@ impl Pipeline {
             capture_error: None,
             storage_error: None,
             notify_error: None,
+            level_crop: None,
+            level_glyphs: Vec::new(),
+            screen_level: None,
+            learned_digits: Vec::new(),
+            learn_tried: false,
             exp_failing: false,
             map_failing: false,
             minute: MinuteStats::default(),
@@ -160,10 +175,18 @@ impl Pipeline {
     }
 
     fn run(mut self) {
+        let learned = self.state.store.lock().expect("store lock poisoned").level_glyphs();
+        match learned {
+            Ok(digits) => {
+                info!("{} learned level digit(s) loaded", digits.len());
+                self.learned_digits = digits;
+            }
+            Err(e) => self.storage_failed("loading learned level digits", e),
+        }
         while !self.state.shutdown.load(Ordering::Acquire) {
             self.ensure_capture();
             match self.rx.recv_timeout(Duration::from_millis(500)) {
-                Ok(CaptureMsg::Regions { t, exp, map }) => self.on_regions(t, exp, map),
+                Ok(CaptureMsg::Regions { t, exp, map, level }) => self.on_regions(t, exp, map, level),
                 Ok(CaptureMsg::Uncalibrated { width, height }) => self.on_uncalibrated(width, height),
                 Ok(CaptureMsg::Closed) => {}
                 Err(RecvTimeoutError::Timeout) => {}
@@ -235,7 +258,7 @@ impl Pipeline {
         self.publish(ReaderStatus::NotCalibrated);
     }
 
-    fn on_regions(&mut self, t: i64, exp_crop: Crop, map_crop: Crop) {
+    fn on_regions(&mut self, t: i64, exp_crop: Crop, map_crop: Crop, level_crop: Option<Crop>) {
         self.frames_flowing();
         self.count_frame(t);
         let exp = match read_exp(&exp_crop) {
@@ -278,7 +301,12 @@ impl Pipeline {
                 }
             }
         }
+        self.read_level_box(level_crop);
         let fx = self.tracker.on_sample(Sample { t, exp, map: self.current_map });
+        self.learn_level_digits();
+        if let Some(level) = self.screen_level {
+            self.tracker.use_screen_level(level);
+        }
         let minute_written = fx.iter().any(|e| matches!(e, Effect::Minute { .. }));
         self.apply(fx);
         self.publish(reader);
@@ -287,6 +315,50 @@ impl Pipeline {
                 warn!("sending {MINUTE_EVENT} to the UI failed: {e}");
                 self.notify_error = Some(e.to_string());
             }
+    }
+
+    fn read_level_box(&mut self, crop: Option<Crop>) {
+        if crop == self.level_crop {
+            return;
+        }
+        self.level_glyphs = crop.as_ref().and_then(|c| level::segment(c).ok()).unwrap_or_default();
+        let read = level::read_level(&self.level_glyphs, &self.learned_digits);
+        if read.is_some() && read != self.screen_level {
+            info!("level box reads {read:?}");
+        }
+        self.screen_level = read;
+        self.level_crop = crop;
+        self.learn_tried = false;
+    }
+
+    /// Self-teaching level reader: when the level box shows digits it can't read
+    /// yet but the tracker knows the level from the EXP readings, store the new
+    /// digits labelled from that level.
+    fn learn_level_digits(&mut self) {
+        let Some(level) = self.tracker.level() else { return };
+        if self.screen_level.is_some() || self.level_glyphs.is_empty() || self.learn_tried {
+            return;
+        }
+        self.learn_tried = true;
+        let new = match level::learn(&self.level_glyphs, &self.learned_digits, level) {
+            Ok(new) => new,
+            Err(why) => {
+                warn!("not learning level digits: {why}");
+                return;
+            }
+        };
+        for glyph in new {
+            let saved = self.state.store.lock().expect("store lock poisoned").add_level_glyph(&glyph);
+            match saved {
+                Ok(()) => {
+                    info!("learned level digit {:?} from level {level}", glyph.ch);
+                    self.learned_digits.push(glyph);
+                }
+                Err(e) => return self.storage_failed("saving a learned level digit", e),
+            }
+        }
+        self.screen_level = level::read_level(&self.level_glyphs, &self.learned_digits);
+        info!("level box reads {:?} after learning", self.screen_level);
     }
 
     /// Count a frame; at each new wall-clock minute, log the previous minute's counts

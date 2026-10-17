@@ -8,10 +8,11 @@ use serde::Serialize;
 
 use crate::geom::{Calibration, Rect};
 use crate::rates::MinuteRow;
+use crate::read::level::LevelGlyph;
 use crate::read::map_strip::Signature;
 use crate::tracker::MapId;
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 const SCHEMA: &str = "
 BEGIN;
 CREATE TABLE maps (
@@ -41,6 +42,22 @@ CREATE TABLE calibration (
     map_x INTEGER NOT NULL, map_y INTEGER NOT NULL, map_w INTEGER NOT NULL, map_h INTEGER NOT NULL
 );
 PRAGMA user_version = 1;
+COMMIT;
+";
+/// Version 2: optional level box in the calibration, and the level digits the
+/// app has learned (ASCII art rows joined by newlines; see read/level.rs).
+const MIGRATION_2: &str = "
+BEGIN;
+CREATE TABLE level_glyphs (
+    id INTEGER PRIMARY KEY,
+    ch TEXT NOT NULL,
+    art TEXT NOT NULL
+);
+ALTER TABLE calibration ADD COLUMN level_x INTEGER;
+ALTER TABLE calibration ADD COLUMN level_y INTEGER;
+ALTER TABLE calibration ADD COLUMN level_w INTEGER;
+ALTER TABLE calibration ADD COLUMN level_h INTEGER;
+PRAGMA user_version = 2;
 COMMIT;
 ";
 
@@ -120,10 +137,14 @@ impl Store {
     fn init(conn: Connection) -> Result<Self, StoreError> {
         conn.execute_batch("PRAGMA foreign_keys = ON;")?;
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        match version {
-            0 => conn.execute_batch(SCHEMA)?,
-            SCHEMA_VERSION => {}
-            newer => return Err(StoreError::NewerSchema(newer)),
+        if version > SCHEMA_VERSION {
+            return Err(StoreError::NewerSchema(version));
+        }
+        if version < 1 {
+            conn.execute_batch(SCHEMA)?;
+        }
+        if version < 2 {
+            conn.execute_batch(MIGRATION_2)?;
         }
         Ok(Self { conn })
     }
@@ -260,22 +281,54 @@ impl Store {
         Ok(self
             .conn
             .query_row(
-                "SELECT exp_x, exp_y, exp_w, exp_h, map_x, map_y, map_w, map_h FROM calibration WHERE resolution = ?1",
+                "SELECT exp_x, exp_y, exp_w, exp_h, map_x, map_y, map_w, map_h, level_x, level_y, level_w, level_h
+                 FROM calibration WHERE resolution = ?1",
                 [resolution],
-                |r| Ok(Calibration { exp: rect_at(r, 0)?, map: rect_at(r, 4)? }),
+                |r| {
+                    let level = match r.get::<_, Option<i64>>(8)? {
+                        Some(_) => Some(rect_at(r, 8)?),
+                        None => None,
+                    };
+                    Ok(Calibration { exp: rect_at(r, 0)?, map: rect_at(r, 4)?, level })
+                },
             )
             .optional()?)
     }
 
     pub fn save_calibration(&self, resolution: &str, c: &Calibration) -> Result<(), StoreError> {
         self.conn.execute(
-            "INSERT INTO calibration (resolution, exp_x, exp_y, exp_w, exp_h, map_x, map_y, map_w, map_h)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            "INSERT INTO calibration (resolution, exp_x, exp_y, exp_w, exp_h, map_x, map_y, map_w, map_h,
+                                      level_x, level_y, level_w, level_h)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
              ON CONFLICT (resolution) DO UPDATE SET
                exp_x = excluded.exp_x, exp_y = excluded.exp_y, exp_w = excluded.exp_w, exp_h = excluded.exp_h,
-               map_x = excluded.map_x, map_y = excluded.map_y, map_w = excluded.map_w, map_h = excluded.map_h",
-            params![resolution, c.exp.x, c.exp.y, c.exp.w, c.exp.h, c.map.x, c.map.y, c.map.w, c.map.h],
+               map_x = excluded.map_x, map_y = excluded.map_y, map_w = excluded.map_w, map_h = excluded.map_h,
+               level_x = excluded.level_x, level_y = excluded.level_y, level_w = excluded.level_w, level_h = excluded.level_h",
+            params![
+                resolution,
+                c.exp.x, c.exp.y, c.exp.w, c.exp.h,
+                c.map.x, c.map.y, c.map.w, c.map.h,
+                c.level.map(|l| l.x), c.level.map(|l| l.y), c.level.map(|l| l.w), c.level.map(|l| l.h),
+            ],
         )?;
+        Ok(())
+    }
+
+    pub fn level_glyphs(&self) -> Result<Vec<LevelGlyph>, StoreError> {
+        let mut stmt = self.conn.prepare("SELECT ch, art FROM level_glyphs ORDER BY id")?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.into_iter()
+            .map(|(ch, art)| match ch.chars().next() {
+                Some(ch) => Ok(LevelGlyph { ch, rows: art.lines().map(str::to_string).collect() }),
+                None => Err(StoreError::Range("empty level glyph character")),
+            })
+            .collect()
+    }
+
+    pub fn add_level_glyph(&self, glyph: &LevelGlyph) -> Result<(), StoreError> {
+        self.conn.execute("INSERT INTO level_glyphs (ch, art) VALUES (?1, ?2)", params![glyph.ch.to_string(), glyph.rows.join("\n")])?;
         Ok(())
     }
 }

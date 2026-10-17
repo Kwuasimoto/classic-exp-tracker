@@ -2,13 +2,17 @@ import { useRef, useState, type MouseEvent } from "react";
 import { formatPct } from "../lib/format";
 import { getCalibrationFrame, previewRegions, saveCalibration, type AppError, type CalibrationFrame, type Rect, type RegionPreview } from "../lib/ipc";
 
-type Target = "exp" | "map";
+type Target = "exp" | "map" | "level";
+const TARGETS: readonly Target[] = ["exp", "map", "level"];
+const LABELS: Record<Target, string> = { exp: "EXP box", map: "map box", level: "level box" };
+// Presets for 1920x1080 (measured 2026-10-15/16); adjust if they miss.
 const DEFAULT_MAP: Rect = { x: 62, y: 36, w: 240, h: 44 };
-const COLORS: Record<Target, string> = { exp: "#2f6fde", map: "#e0742f" };
+const DEFAULT_LEVEL: Rect = { x: 457, y: 1045, w: 50, h: 21 };
+const COLORS: Record<Target, string> = { exp: "#2f6fde", map: "#e0742f", level: "#2fa86f" };
 
 export function CalibrateView() {
   const [frame, setFrame] = useState<CalibrationFrame | null>(null);
-  const [rects, setRects] = useState<Record<Target, Rect | null>>({ exp: null, map: DEFAULT_MAP });
+  const [rects, setRects] = useState<Record<Target, Rect | null>>({ exp: null, map: DEFAULT_MAP, level: DEFAULT_LEVEL });
   const [target, setTarget] = useState<Target>("exp");
   const [drag, setDrag] = useState<{ x: number; y: number } | null>(null);
   const [preview, setPreview] = useState<RegionPreview | null>(null);
@@ -22,7 +26,11 @@ export function CalibrateView() {
     const res = await getCalibrationFrame();
     if (!res.success) return setError(res.error);
     setFrame(res.data);
-    setRects({ exp: res.data.current?.exp ?? null, map: res.data.current?.map ?? DEFAULT_MAP });
+    setRects({
+      exp: res.data.current?.exp ?? null,
+      map: res.data.current?.map ?? DEFAULT_MAP,
+      level: res.data.current?.level ?? DEFAULT_LEVEL,
+    });
   };
 
   const toImage = (e: MouseEvent) => {
@@ -49,18 +57,18 @@ export function CalibrateView() {
     setRects((r) => ({ ...r, [target]: { ...current, [key]: n } }));
   };
 
-  const both = rects.exp && rects.map ? { exp: rects.exp, map: rects.map } : null;
+  const boxes = rects.exp && rects.map ? { exp: rects.exp, map: rects.map, level: rects.level } : null;
 
   const runPreview = async () => {
-    if (!both) return;
-    const res = await previewRegions(both);
+    if (!boxes) return;
+    const res = await previewRegions(boxes);
     if (res.success) setPreview(res.data);
     else setError(res.error);
   };
 
   const save = async () => {
-    if (!both) return;
-    const res = await saveCalibration(both);
+    if (!boxes) return;
+    const res = await saveCalibration(boxes);
     if (res.success) setMessage("Saved. Tracking uses these boxes from now on.");
     else setError(res.error);
   };
@@ -72,17 +80,18 @@ export function CalibrateView() {
         <p className="status">
           Open MapleStory, then grab a frame. Draw the <b style={{ color: COLORS.exp }}>EXP box</b> tightly around the numbers after
           "EXP." (leave room on the right for longer numbers). Check that the <b style={{ color: COLORS.map }}>map box</b> covers the
-          street and map name under the minimap title.
+          street and map name under the minimap title, and that the <b style={{ color: COLORS.level }}>level box</b> covers only
+          the number after "LV." (not the "LV." itself). The app learns the level digits by itself while you play.
         </p>
         <div className="row">
           <button className="primary" onClick={() => void grab()}>Grab frame</button>
-          {(["exp", "map"] as const).map((t) => (
+          {TARGETS.map((t) => (
             <button key={t} className={t === target ? "primary" : ""} onClick={() => setTarget(t)}>
-              Edit {t === "exp" ? "EXP box" : "map box"}
+              Edit {LABELS[t]}
             </button>
           ))}
-          <button disabled={!both || !frame} onClick={() => void runPreview()}>Preview</button>
-          <button className="primary" disabled={!both || !frame} onClick={() => void save()}>Save</button>
+          <button disabled={!boxes || !frame} onClick={() => void runPreview()}>Preview</button>
+          <button className="primary" disabled={!boxes || !frame} onClick={() => void save()}>Save</button>
         </div>
         {active && (
           <div className="row" style={{ marginTop: 8 }}>
@@ -100,6 +109,12 @@ export function CalibrateView() {
             EXP: {preview.exp.kind === "ok" ? `${preview.exp.value.exp} (${formatPct(preview.exp.value.pctBp)})` : `✗ ${preview.exp.reason}`}
             <br />
             Map: {preview.map.kind === "ok" ? preview.map.value : `✗ ${preview.map.reason}`}
+            {preview.level && (
+              <>
+                <br />
+                Level: {preview.level.kind === "ok" ? preview.level.value : `✗ ${preview.level.reason}`}
+              </>
+            )}
           </p>
         )}
       </div>
@@ -113,7 +128,7 @@ export function CalibrateView() {
           onMouseLeave={() => setDrag(null)}
         >
           <img ref={imgRef} src={frame.pngDataUrl} alt="Captured frame" draggable={false} style={{ width: "100%", display: "block" }} />
-          {(["exp", "map"] as const).map((t) => {
+          {TARGETS.map((t) => {
             const r = rects[t];
             return (
               r && (
