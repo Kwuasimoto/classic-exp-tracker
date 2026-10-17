@@ -57,6 +57,19 @@ export const SessionSchema = z.object({
 });
 export type Session = z.infer<typeof SessionSchema>;
 
+export const SnapshotSchema = z.object({
+  id: z.number().int(),
+  name: z.string(),
+  createdAt: z.number().int(),
+  mapName: z.string().nullable(),
+  level: count.nullable(),
+  from: z.number().int().nullable(),
+  to: z.number().int().nullable(),
+  expGained: count,
+  trainingSecs: count,
+});
+export type Snapshot = z.infer<typeof SnapshotSchema>;
+
 export const RectSchema = z.object({ x: count, y: count, w: count, h: count });
 export type Rect = z.infer<typeof RectSchema>;
 export const CalibrationSchema = z.object({ exp: RectSchema, map: RectSchema, level: RectSchema.nullable() });
@@ -108,6 +121,13 @@ export const getSessionChart = (sessionId: number) => call("get_session_chart", 
 export const getCalibrationFrame = () => call("get_calibration_frame", CalibrationFrameSchema);
 export const previewRegions = (c: Calibration) => call("preview_regions", RegionPreviewSchema, c);
 export const saveCalibration = (c: Calibration) => call("save_calibration", z.null(), c);
+export const forgetLevelDigits = () => call("forget_level_digits", z.null());
+/** Saves the last 2 h as a snapshot (id, or null if there was nothing) and starts a fresh session. */
+export const resetSession = (name: string) => call("reset_session", z.number().int().nullable(), { name });
+export const getSnapshots = () => call("get_snapshots", z.array(SnapshotSchema));
+export const getSnapshotChart = (snapshotId: number) => call("get_snapshot_chart", z.array(BarSchema), { snapshotId });
+export const renameSnapshot = (snapshotId: number, name: string) => call("rename_snapshot", z.null(), { snapshotId, name });
+export const deleteSnapshot = (snapshotId: number) => call("delete_snapshot", z.null(), { snapshotId });
 
 async function subscribe(event: string, handler: (payload: unknown) => void): Promise<Result<UnlistenFn, AppError>> {
   try {

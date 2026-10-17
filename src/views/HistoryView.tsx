@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { RateChart } from "../components/RateChart";
+import { SnapshotsPanel } from "../components/SnapshotsPanel";
 import { formatDateTime, formatExp, formatHours } from "../lib/format";
 import { getMapSummaries, getSessionChart, getSessions, renameMap, type AppError, type Bar, type MapSummary, type Session } from "../lib/ipc";
 
@@ -44,7 +45,13 @@ export function HistoryView() {
 
   return (
     <>
-      {error && <p className="panel error">{error.message}</p>}
+      {error && (
+        <p className="panel row error">
+          <span style={{ flex: 1 }}>{error.message}</span>
+          <button className="btn" onClick={() => setError(null)}>Dismiss</button>
+        </p>
+      )}
+      <SnapshotsPanel onError={setError} />
       <section className="panel">
         <h2>Maps</h2>
         <table>

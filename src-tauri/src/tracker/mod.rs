@@ -134,6 +134,11 @@ impl Tracker {
         fx
     }
 
+    /// End the open session now (the user reset it); the next EXP gain starts a new one.
+    pub fn end_session(&mut self) -> Vec<Effect> {
+        self.session.take().map(|s| vec![Effect::SessionEnded { key: s.key, t: s.last_on_map }]).unwrap_or_default()
+    }
+
     fn session_for(&mut self, map: MapId, t: i64, fx: &mut Vec<Effect>) -> SessionKey {
         if let Some(sess) = self.session {
             if sess.map == map {
@@ -155,7 +160,7 @@ impl Tracker {
             self.check_level();
             return 0;
         };
-        if base.pct_bp >= LEVEL_UP_FROM_BP && r.pct_bp < LEVEL_UP_TO_BP && r.exp < base.exp {
+        if r.exp < base.exp && (base.pct_bp >= LEVEL_UP_FROM_BP && r.pct_bp < LEVEL_UP_TO_BP || self.fits_next_level_only(r)) {
             let total = self.total_estimate().unwrap_or(base.exp);
             info!("level-up: {base:?} -> {r:?}, old level total {total} (level {:?})", self.level);
             self.level = self.level.map(|l| l + 1);
@@ -190,8 +195,17 @@ impl Tracker {
         r.exp.saturating_sub(base.exp)
     }
 
-    /// A level read from the screen (OCR). Used only if its table total fits the
-    /// EXP readings, so a misread can't change the totals.
+    /// With the level known, a reading that fits the next level's table total but
+    /// not the current one is a level-up, even when the last good reading was
+    /// below LEVEL_UP_FROM_BP (e.g. the readout was covered before levelling).
+    fn fits_next_level_only(&self, r: ExpReading) -> bool {
+        let (Some(level), Some(implied)) = (self.level, TotalBounds::from_reading(r)) else { return false };
+        let fits = |l: u32| exp_to_next(l).is_some_and(|t| implied.contains(t));
+        fits(level + 1) && !fits(level)
+    }
+
+    /// A level read from the level box (digits learned from the EXP readings). Used
+    /// only if its table total fits the EXP readings, so a misread can't change the totals.
     pub fn use_screen_level(&mut self, level: u32) {
         if self.level == Some(level) {
             return;
@@ -301,6 +315,18 @@ mod tests {
         tr.on_sample(Sample { t: 1, exp: reading(1_000, 28), map: MAP });
         assert_eq!(tr.level(), Some(42));
         assert_eq!(total_exp(&tr.finish()), 324_240 - 291_000 + 1_000);
+    }
+
+    #[test]
+    fn level_up_below_80_percent_is_caught_by_the_table() {
+        let mut tr = Tracker::new();
+        // 200,000 EXP at 61.68% fits only level 41 (324,240).
+        tr.on_sample(Sample { t: 0, exp: reading(200_000, 6_168), map: MAP });
+        assert_eq!(tr.level(), Some(41));
+        // 1,000 EXP at 0.28% fits level 42 (356,916), not 41: a level-up, not a death.
+        tr.on_sample(Sample { t: 1, exp: reading(1_000, 28), map: MAP });
+        assert_eq!(tr.level(), Some(42));
+        assert_eq!(total_exp(&tr.finish()), 324_240 - 200_000 + 1_000);
     }
 
     #[test]

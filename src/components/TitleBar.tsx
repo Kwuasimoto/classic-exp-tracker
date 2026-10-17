@@ -25,7 +25,10 @@ export function TitleBar() {
   }, []);
 
   const run = (action: () => Promise<void>, what: string) => () =>
-    void action().catch((e: unknown) => setError(`${what}: ${String(e)}`));
+    void action().then(
+      () => setError(null),
+      (e: unknown) => setError(`${what}: ${String(e)}`),
+    );
   const win = getCurrentWindow();
 
   return (

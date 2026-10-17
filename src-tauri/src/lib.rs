@@ -58,7 +58,8 @@ pub fn run() {
             log::info!("Maple EXP Tracker {} starting, database {}", app.package_info().version, db.display());
             let store = store::Store::open(&db)?;
             store.close_open_sessions()?;
-            let state = Arc::new(pipeline::AppState::new(store));
+            let live_since = store.live_since()?;
+            let state = Arc::new(pipeline::AppState::new(store, live_since));
             app.manage(Arc::clone(&state));
             pipeline::spawn(app.handle().clone(), state)?;
             // The window starts hidden (tauri.conf.json) so it doesn't flash on the game's monitor.
@@ -79,6 +80,12 @@ pub fn run() {
             commands::get_calibration_frame,
             commands::preview_regions,
             commands::save_calibration,
+            commands::forget_level_digits,
+            commands::reset_session,
+            commands::get_snapshots,
+            commands::get_snapshot_chart,
+            commands::rename_snapshot,
+            commands::delete_snapshot,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

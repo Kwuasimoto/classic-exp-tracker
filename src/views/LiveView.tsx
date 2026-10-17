@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { RateChart } from "../components/RateChart";
-import { formatHours, formatPct } from "../lib/format";
-import { getLiveChart, type AppError, type Bar, type Tick } from "../lib/ipc";
+import { formatDateTime, formatHours, formatPct } from "../lib/format";
+import { getLiveChart, resetSession, type AppError, type Bar, type Tick } from "../lib/ipc";
 import { expToLevel, liveRates } from "../lib/live";
 
 type WindowMinutes = 120 | 180;
@@ -11,12 +11,31 @@ export function LiveView({ tick, onCalibrate }: { tick: Tick | null; onCalibrate
   const [bars, setBars] = useState<Bar[]>([]);
   const [windowMinutes, setWindowMinutes] = useState<WindowMinutes>(120);
   const [error, setError] = useState<AppError | null>(null);
+  const [confirmingReset, setConfirmingReset] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  // Chart requests go out every second and can finish out of order: keep only the newest.
+  const latestRequest = useRef(0);
 
   const refreshChart = useCallback(async () => {
+    const request = ++latestRequest.current;
     const res = await getLiveChart(windowMinutes);
-    if (res.success) setBars(res.data);
-    else setError(res.error);
+    if (request !== latestRequest.current) return;
+    if (res.success) {
+      setBars(res.data);
+      setError(null);
+    } else {
+      setError(res.error);
+    }
   }, [windowMinutes]);
+
+  const reset = async () => {
+    setConfirmingReset(false);
+    const name = `${tick?.mapName ?? "Session"} · ${formatDateTime(Date.now() / 1000)}`;
+    const res = await resetSession(name);
+    if (!res.success) return setError(res.error);
+    setNotice(res.data === null ? "Session reset. There was nothing to save." : `Session reset. Saved "${name}" to History.`);
+    void refreshChart();
+  };
 
   // Reload with every tick (once a second): the chart includes the minute in progress.
   useEffect(() => {
@@ -38,6 +57,12 @@ export function LiveView({ tick, onCalibrate }: { tick: Tick | null; onCalibrate
         {level !== null && <div className="badge">LV. {level}</div>}
       </section>
       {error && <p className="panel error">{error.message}</p>}
+      {notice && (
+        <p className="panel row caption" style={{ fontSize: 14 }}>
+          <span style={{ flex: 1 }}>{notice}</span>
+          <button className="btn" onClick={() => setNotice(null)}>OK</button>
+        </p>
+      )}
 
       <div className="stats">
         <Stat label="EXP / hr" accent value={rates.expPerHour === null ? "—" : whole(rates.expPerHour)} caption="last 60 min of training" />
@@ -58,12 +83,28 @@ export function LiveView({ tick, onCalibrate }: { tick: Tick | null; onCalibrate
         bars={bars}
         fill
         actions={
-          <div className="segmented" role="group" aria-label="Chart window">
-            {([120, 180] as const).map((m) => (
-              <button key={m} className={m === windowMinutes ? "current" : ""} aria-pressed={m === windowMinutes} onClick={() => setWindowMinutes(m)}>
-                {m / 60}H
+          <div className="row" style={{ gap: 8, flexWrap: "nowrap" }}>
+            {confirmingReset ? (
+              <div className="row" style={{ flexWrap: "nowrap" }}>
+                <span className="caption">Save the last 2 h and start a new session?</span>
+                <button className="btn primary" onClick={() => void reset()}>Save &amp; reset</button>
+                <button className="btn" onClick={() => setConfirmingReset(false)}>Cancel</button>
+              </div>
+            ) : (
+              <button className="icon-btn" aria-label="Reset session" title="Save the last 2 hours as a snapshot and start a new session" onClick={() => setConfirmingReset(true)}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M3 12a9 9 0 1 0 3-6.7" />
+                  <polyline points="3 3 3 9 9 9" />
+                </svg>
               </button>
-            ))}
+            )}
+            <div className="segmented" role="group" aria-label="Chart window">
+              {([120, 180] as const).map((m) => (
+                <button key={m} className={m === windowMinutes ? "current" : ""} aria-pressed={m === windowMinutes} onClick={() => setWindowMinutes(m)}>
+                  {m / 60}H
+                </button>
+              ))}
+            </div>
           </div>
         }
       />

@@ -1,9 +1,11 @@
 //! Level readout reader: the number after "LV." in the status bar, white digits
 //! on orange tiles. There are no built-in references, because only the digits of
 //! the current level are ever on screen. Instead the app learns: when the level
-//! box shows a digit it doesn't know while the level is already known from the
-//! EXP readings, that digit is labelled from the level and stored (as ASCII art,
-//! like the EXP references) for next time. See `learn` and pipeline.rs.
+//! box shows a digit it doesn't know while the level is known from the EXP
+//! readings, that digit is labelled from the level and stored (as ASCII art, like
+//! the EXP references) for next time. `learn` checks the shapes; pipeline.rs only
+//! calls it once the box and the level have been steady across several accepted
+//! EXP readings, so a box that changed before the tracker caught up isn't learned.
 
 use super::exp::{centred, nearest, to_art, Glyph};
 use super::ReadError;
@@ -62,12 +64,18 @@ pub fn read_level(glyphs: &[Glyph], learned: &[LevelGlyph]) -> Option<u32> {
 }
 
 /// New digits to store, labelled from `level` (known from the EXP readings).
-/// Learns nothing if the digit count differs or a glyph already reads as a
-/// different digit, since then the box isn't showing `level`.
+/// Learns nothing if the digit count differs, a glyph's height differs from the
+/// digits already learned (something else is in the box), or a glyph already
+/// reads as a different digit (the box isn't showing `level`).
 pub fn learn(glyphs: &[Glyph], learned: &[LevelGlyph], level: u32) -> Result<Vec<LevelGlyph>, String> {
     let digits: Vec<char> = level.to_string().chars().collect();
     if digits.len() != glyphs.len() {
         return Err(format!("level box has {} glyph(s), level {level} has {} digit(s)", glyphs.len(), digits.len()));
+    }
+    if let Some(known) = learned.first()
+        && glyphs.iter().any(|g| g.ink.len() != known.rows.len())
+    {
+        return Err(format!("glyphs aren't {} px tall like the digits already learned", known.rows.len()));
     }
     let mut new = Vec::new();
     for (glyph, &ch) in glyphs.iter().zip(&digits) {

@@ -1,11 +1,12 @@
 import { useRef, useState, type MouseEvent } from "react";
 import { formatPct } from "../lib/format";
-import { getCalibrationFrame, previewRegions, saveCalibration, type AppError, type CalibrationFrame, type Rect, type RegionPreview } from "../lib/ipc";
+import { forgetLevelDigits, getCalibrationFrame, previewRegions, saveCalibration, type AppError, type CalibrationFrame, type Rect, type RegionPreview } from "../lib/ipc";
 
 type Target = "exp" | "map" | "level";
 const TARGETS: readonly Target[] = ["exp", "map", "level"];
 const LABELS: Record<Target, string> = { exp: "EXP box", map: "map box", level: "level box" };
-// Presets for 1920x1080 (measured 2026-10-15/16); adjust if they miss.
+// Presets for 1920x1080 (measured 2026-10-15/16); adjust if they miss. The level
+// preset is only offered at that resolution: elsewhere it would point at the wrong spot.
 const DEFAULT_MAP: Rect = { x: 62, y: 36, w: 240, h: 44 };
 const DEFAULT_LEVEL: Rect = { x: 457, y: 1045, w: 50, h: 21 };
 // Box outlines; orange is reserved for EXP/hr (docs/STYLE.md).
@@ -21,16 +22,24 @@ export function CalibrateView() {
   const [error, setError] = useState<AppError | null>(null);
   const imgRef = useRef<HTMLImageElement>(null);
 
-  const grab = async () => {
+  /** Clear the last outcome before a new action. */
+  const begin = () => {
     setError(null);
+    setMessage(null);
+  };
+
+  const grab = async () => {
+    begin();
     setPreview(null);
     const res = await getCalibrationFrame();
     if (!res.success) return setError(res.error);
+    const { current, width, height } = res.data;
     setFrame(res.data);
     setRects({
-      exp: res.data.current?.exp ?? null,
-      map: res.data.current?.map ?? DEFAULT_MAP,
-      level: res.data.current?.level ?? DEFAULT_LEVEL,
+      exp: current?.exp ?? null,
+      map: current?.map ?? DEFAULT_MAP,
+      // A saved calibration without a level box stays without one.
+      level: current ? current.level : width === 1920 && height === 1080 ? DEFAULT_LEVEL : null,
     });
   };
 
@@ -62,6 +71,7 @@ export function CalibrateView() {
 
   const runPreview = async () => {
     if (!boxes) return;
+    begin();
     const res = await previewRegions(boxes);
     if (res.success) setPreview(res.data);
     else setError(res.error);
@@ -69,8 +79,16 @@ export function CalibrateView() {
 
   const save = async () => {
     if (!boxes) return;
+    begin();
     const res = await saveCalibration(boxes);
     if (res.success) setMessage("Saved. Tracking uses these boxes from now on.");
+    else setError(res.error);
+  };
+
+  const forgetDigits = async () => {
+    begin();
+    const res = await forgetLevelDigits();
+    if (res.success) setMessage("Learned level digits forgotten. They're relearned from your EXP readings as you play.");
     else setError(res.error);
   };
 
@@ -96,6 +114,16 @@ export function CalibrateView() {
           <button className="btn" disabled={!boxes || !frame} onClick={() => void runPreview()}>Preview</button>
           <button className="btn primary" disabled={!boxes || !frame} onClick={() => void save()}>Save</button>
         </div>
+        {target === "level" && (
+          <div className="row" style={{ marginTop: 10 }}>
+            {rects.level ? (
+              <button className="btn" onClick={() => setRects((r) => ({ ...r, level: null }))}>No level box</button>
+            ) : (
+              <span className="caption">No level box: the level comes from the EXP readings alone. Drag on the frame to add one.</span>
+            )}
+            <button className="btn" onClick={() => void forgetDigits()}>Forget learned digits</button>
+          </div>
+        )}
         {active && (
           <div className="row" style={{ marginTop: 10 }}>
             {(["x", "y", "w", "h"] as const).map((k) => (

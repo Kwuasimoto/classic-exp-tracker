@@ -12,7 +12,7 @@ use crate::read::level::LevelGlyph;
 use crate::read::map_strip::Signature;
 use crate::tracker::MapId;
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 const SCHEMA: &str = "
 BEGIN;
 CREATE TABLE maps (
@@ -60,6 +60,29 @@ ALTER TABLE calibration ADD COLUMN level_h INTEGER;
 PRAGMA user_version = 2;
 COMMIT;
 ";
+/// Version 3: whether a map's signature was cut by the map box; saved session
+/// snapshots (a copy of their minutes); where the live view starts (moved by a reset).
+const MIGRATION_3: &str = "
+BEGIN;
+ALTER TABLE maps ADD COLUMN cut_by_box INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE snapshots (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    map_name TEXT,
+    level INTEGER
+);
+CREATE TABLE snapshot_minutes (
+    snapshot_id INTEGER NOT NULL REFERENCES snapshots(id) ON DELETE CASCADE,
+    minute_start INTEGER NOT NULL,
+    exp_gained INTEGER NOT NULL,
+    training_secs INTEGER NOT NULL,
+    PRIMARY KEY (snapshot_id, minute_start)
+);
+CREATE TABLE settings (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
+PRAGMA user_version = 3;
+COMMIT;
+";
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -95,6 +118,21 @@ pub struct SessionRecord {
     pub map_name: String,
     pub started_at: i64,
     pub ended_at: Option<i64>,
+    pub exp_gained: u64,
+    pub training_secs: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotRecord {
+    pub id: i64,
+    pub name: String,
+    pub created_at: i64,
+    pub map_name: Option<String>,
+    pub level: Option<u32>,
+    /// First and last+1 minute covered; `None` for an empty snapshot.
+    pub from: Option<i64>,
+    pub to: Option<i64>,
     pub exp_gained: u64,
     pub training_secs: u64,
 }
@@ -146,13 +184,18 @@ impl Store {
         if version < 2 {
             conn.execute_batch(MIGRATION_2)?;
         }
+        if version < 3 {
+            conn.execute_batch(MIGRATION_3)?;
+        }
         Ok(Self { conn })
     }
 
     pub fn maps(&self) -> Result<Vec<MapRecord>, StoreError> {
-        let mut stmt = self.conn.prepare("SELECT id, name, signature FROM maps ORDER BY id")?;
+        let mut stmt = self.conn.prepare("SELECT id, name, signature, cut_by_box FROM maps ORDER BY id")?;
         let rows = stmt
-            .query_map([], |r| Ok(MapRecord { id: r.get(0)?, name: r.get(1)?, signature: Signature(r.get(2)?) }))?
+            .query_map([], |r| {
+                Ok(MapRecord { id: r.get(0)?, name: r.get(1)?, signature: Signature { counts: r.get(2)?, cut: r.get(3)? } })
+            })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
@@ -163,8 +206,8 @@ impl Store {
 
     pub fn insert_map(&self, name: &str, signature: &Signature, t: i64) -> Result<MapId, StoreError> {
         self.conn.execute(
-            "INSERT INTO maps (name, signature, first_seen) VALUES (?1, ?2, ?3)",
-            params![name, signature.0.as_slice(), t],
+            "INSERT INTO maps (name, signature, cut_by_box, first_seen) VALUES (?1, ?2, ?3, ?4)",
+            params![name, signature.counts.as_slice(), signature.cut, t],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
@@ -330,5 +373,83 @@ impl Store {
     pub fn add_level_glyph(&self, glyph: &LevelGlyph) -> Result<(), StoreError> {
         self.conn.execute("INSERT INTO level_glyphs (ch, art) VALUES (?1, ?2)", params![glyph.ch.to_string(), glyph.rows.join("\n")])?;
         Ok(())
+    }
+
+    pub fn clear_level_glyphs(&self) -> Result<usize, StoreError> {
+        Ok(self.conn.execute("DELETE FROM level_glyphs", [])?)
+    }
+
+    /// Where the live view starts (unix seconds); 0 until the first reset.
+    pub fn live_since(&self) -> Result<i64, StoreError> {
+        Ok(self.conn.query_row("SELECT value FROM settings WHERE key = 'live_since'", [], |r| r.get(0)).optional()?.unwrap_or(0))
+    }
+
+    pub fn set_live_since(&self, t: i64) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('live_since', ?1) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            [t],
+        )?;
+        Ok(())
+    }
+
+    /// Save a snapshot and its own copy of `rows`, in one transaction.
+    pub fn create_snapshot(&self, name: &str, created_at: i64, map_name: Option<&str>, level: Option<u32>, rows: &[MinuteRow]) -> Result<i64, StoreError> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "INSERT INTO snapshots (name, created_at, map_name, level) VALUES (?1, ?2, ?3, ?4)",
+            params![name, created_at, map_name, level],
+        )?;
+        let id = tx.last_insert_rowid();
+        for r in rows {
+            tx.execute(
+                "INSERT INTO snapshot_minutes (snapshot_id, minute_start, exp_gained, training_secs) VALUES (?1, ?2, ?3, ?4)",
+                params![id, r.minute_start, to_i64(r.exp_gained, "exp_gained")?, i64::from(r.training_secs)],
+            )?;
+        }
+        tx.commit()?;
+        Ok(id)
+    }
+
+    pub fn snapshots(&self) -> Result<Vec<SnapshotRecord>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT s.id, s.name, s.created_at, s.map_name, s.level, MIN(m.minute_start), MAX(m.minute_start) + 60,
+                    COALESCE(SUM(m.exp_gained), 0), COALESCE(SUM(m.training_secs), 0)
+             FROM snapshots s LEFT JOIN snapshot_minutes m ON m.snapshot_id = s.id
+             GROUP BY s.id ORDER BY s.created_at DESC",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(SnapshotRecord {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    created_at: r.get(2)?,
+                    map_name: r.get(3)?,
+                    level: r.get(4)?,
+                    from: r.get(5)?,
+                    to: r.get(6)?,
+                    exp_gained: col_u64(r, 7)?,
+                    training_secs: col_u64(r, 8)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn snapshot_minutes(&self, id: i64) -> Result<Vec<MinuteRow>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT minute_start, exp_gained, training_secs FROM snapshot_minutes WHERE snapshot_id = ?1 ORDER BY minute_start",
+        )?;
+        let rows = stmt.query_map([id], minute_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// `false` when no snapshot has that id.
+    pub fn rename_snapshot(&self, id: i64, name: &str) -> Result<bool, StoreError> {
+        Ok(self.conn.execute("UPDATE snapshots SET name = ?2 WHERE id = ?1", params![id, name])? == 1)
+    }
+
+    /// `false` when no snapshot has that id. Its minutes go with it (ON DELETE CASCADE).
+    pub fn delete_snapshot(&self, id: i64) -> Result<bool, StoreError> {
+        Ok(self.conn.execute("DELETE FROM snapshots WHERE id = ?1", [id])? == 1)
     }
 }

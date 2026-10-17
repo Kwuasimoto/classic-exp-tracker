@@ -58,6 +58,8 @@ Titillium Web (bundled from `@fontsource/titillium-web`, open licence), tabular 
   (`src-tauri/icons/app-icon.svg`; regenerate the set with `pnpm tauri icon src-tauri/icons/app-icon.svg`).
 - **Side nav**: uppercase pill links; the current one is a white pill with black text.
 - **Buttons**: `.btn` (dark pill, white text); `.btn.primary` (white pill, black text) for the one main action on a screen.
+- **Icon button** (`.icon-btn`): 34 px round `--inset` button for an icon-only action, with an `aria-label`.
+- **Danger button** (`.btn.danger`): `#c42b1c`, only as the confirming step of a delete.
 - **Segmented toggle** (`.segmented`): `--inset` track, white pill for the selected option.
 - **Level badge** (`.badge`): white 1.5 px outlined pill, `LV. 41`.
 - **Stat tile**: `.panel` with `.label`, `.value` and an optional caption.

@@ -15,14 +15,23 @@ const EDGE_PROBE_ROW: u32 = 2;
 /// Summed per-column difference still considered the same map.
 const MATCH_TOLERANCE: u32 = 4;
 
-/// Text-pixel count per column, from the start of the background to the minimap's right edge.
+/// Text-pixel count per column, from the start of the background to the minimap's
+/// right edge, or to the map box's edge when the box is narrower (`cut`).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Signature(pub Vec<u8>);
+pub struct Signature {
+    pub counts: Vec<u8>,
+    pub cut: bool,
+}
 
 impl Signature {
+    /// Same map: the columns both signatures cover differ by ≤ MATCH_TOLERANCE, and
+    /// they cover the same width unless the shorter one was cut by its box (so a
+    /// wider or narrower map box still finds the same map).
     pub fn matches(&self, other: &Signature) -> bool {
-        self.0.len() == other.0.len()
-            && self.0.iter().zip(&other.0).map(|(a, b)| u32::from(a.abs_diff(*b))).sum::<u32>() <= MATCH_TOLERANCE
+        let (short, long) = if self.counts.len() <= other.counts.len() { (self, other) } else { (other, self) };
+        let widths_ok = short.counts.len() == long.counts.len() || short.cut;
+        widths_ok
+            && short.counts.iter().zip(&long.counts).map(|(a, b)| u32::from(a.abs_diff(*b))).sum::<u32>() <= MATCH_TOLERANCE
     }
 }
 
@@ -40,7 +49,8 @@ pub fn read_strip(crop: &Crop) -> Result<StripRead, ReadError> {
         (0..3).all(|i| p[i].abs_diff(STRIP_BG[i]) <= BG_TOLERANCE)
     };
     let start = (0..crop.width).find(|&x| is_bg(x)).ok_or(ReadError::Blank)?;
-    let end = (start..crop.width).find(|&x| !is_bg(x)).unwrap_or(crop.width);
+    let edge = (start..crop.width).find(|&x| !is_bg(x));
+    let end = edge.unwrap_or(crop.width);
     let counts: Vec<u8> = (start..end)
         .map(|x| {
             let n = (0..crop.height)
@@ -55,7 +65,7 @@ pub fn read_strip(crop: &Crop) -> Result<StripRead, ReadError> {
     if counts.iter().all(|&c| c == 0) {
         return Err(ReadError::Blank);
     }
-    Ok(StripRead { signature: Signature(counts) })
+    Ok(StripRead { signature: Signature { counts, cut: edge.is_none() } })
 }
 
 #[cfg(test)]
@@ -67,7 +77,19 @@ mod tests {
     fn reads_the_fixture_signature() {
         let read = read_strip(&fixture("map_victoria_road_perion.png")).expect("readable");
         // Measured on 2026-10-15: minimap edge 235 columns in, 514 text pixels.
-        assert_eq!(read.signature.0.len(), 235);
-        assert_eq!(read.signature.0.iter().map(|&c| u32::from(c)).sum::<u32>(), 514);
+        assert_eq!(read.signature.counts.len(), 235);
+        assert_eq!(read.signature.counts.iter().map(|&c| u32::from(c)).sum::<u32>(), 514);
+        assert!(!read.signature.cut);
+    }
+
+    #[test]
+    fn a_narrower_map_box_still_matches_the_same_map() {
+        let full = read_strip(&fixture("map_victoria_road_perion.png")).expect("readable").signature;
+        let image = fixture("map_victoria_road_perion.png");
+        let narrow = image.sub(crate::geom::Rect { x: 0, y: 0, w: image.width - 60, h: image.height }).expect("fits");
+        let cut = read_strip(&narrow).expect("readable").signature;
+        assert!(cut.cut && cut.matches(&full) && full.matches(&cut));
+        let other = Signature { counts: full.counts[..cut.counts.len()].to_vec(), cut: false };
+        assert!(!other.matches(&full), "an uncut signature of a different width is a different map");
     }
 }

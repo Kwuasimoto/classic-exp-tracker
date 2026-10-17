@@ -1,6 +1,7 @@
 //! Tauri commands. Blocking ones run off the main thread via `#[tauri::command(async)]`.
 
 use std::io::Cursor;
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::sync_channel;
 use std::sync::Arc;
 use std::time::Duration;
@@ -19,12 +20,23 @@ use crate::read::exp::{read_exp, ExpReading};
 use crate::read::map_strip::read_strip;
 use crate::read::level;
 use crate::read::ocr::MapOcr;
-use crate::store::SessionRecord;
+use crate::store::{SessionRecord, SnapshotRecord};
 use crate::tracker::MapId;
 
 type AppStateRef<'a> = State<'a, Arc<AppState>>;
 
-const MAX_MAP_NAME_LEN: usize = 80;
+const MAX_NAME_LEN: usize = 80;
+/// A reset saves this much of the live view as a snapshot.
+const SNAPSHOT_SECS: i64 = 2 * 3600;
+
+/// A map or snapshot name: trimmed, 1–MAX_NAME_LEN characters.
+fn valid_name(name: &str) -> Result<&str, AppError> {
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > MAX_NAME_LEN {
+        return Err(AppError::Invalid(format!("name must be 1–{MAX_NAME_LEN} characters")));
+    }
+    Ok(name)
+}
 
 #[tauri::command]
 pub fn get_live_snapshot(state: AppStateRef<'_>) -> Tick {
@@ -37,13 +49,14 @@ pub fn get_live_chart(state: AppStateRef<'_>, window_minutes: u32) -> Result<Vec
         return Err(AppError::Invalid(format!("window must be 120 or 180 minutes, got {window_minutes}")));
     }
     let (first, last) = rates::live_range(now_unix(), window_minutes);
-    let mut rows = state
-        .store
-        .lock()
-        .expect("store lock poisoned")
-        .minutes_between(rates::rows_from(first), last + rates::BUCKET_SECS)?;
-    // The minute in progress isn't stored until it ends; count it so the rate is live.
+    // The live view starts at the last reset.
+    let since = *state.live_since.read().expect("live since lock poisoned");
+    let store = state.store.lock().expect("store lock poisoned");
+    let mut rows = store.minutes_between(rates::rows_from(first).max(since), last + rates::BUCKET_SECS)?;
+    // The minute in progress isn't stored until it ends; count it so the rate is live. Read under
+    // the store lock: the pipeline swaps it for the stored row under the same lock.
     rows.extend(*state.live_minute.read().expect("live minute lock poisoned"));
+    drop(store);
     Ok(rates::bars_range(&rows, first, last))
 }
 
@@ -82,10 +95,7 @@ pub fn get_map_summaries(state: AppStateRef<'_>) -> Result<Vec<MapSummary>, AppE
 
 #[tauri::command(async)]
 pub fn rename_map(state: AppStateRef<'_>, map_id: MapId, name: String) -> Result<(), AppError> {
-    let name = name.trim();
-    if name.is_empty() || name.chars().count() > MAX_MAP_NAME_LEN {
-        return Err(AppError::Invalid(format!("map name must be 1–{MAX_MAP_NAME_LEN} characters")));
-    }
+    let name = valid_name(&name)?;
     if state.store.lock().expect("store lock poisoned").rename_map(map_id, name)? {
         Ok(())
     } else {
@@ -207,4 +217,69 @@ pub fn save_calibration(state: AppStateRef<'_>, exp: Rect, map: Rect, level: Opt
     log::info!("calibration saved for {width}x{height}: {calibration:?}");
     *state.capture.regions.write().expect("regions lock poisoned") = Some(Regions { width, height, calibration });
     Ok(())
+}
+
+/// Forget the learned level digits; the pipeline relearns them while you play.
+#[tauri::command(async)]
+pub fn forget_level_digits(state: AppStateRef<'_>) -> Result<(), AppError> {
+    let removed = state.store.lock().expect("store lock poisoned").clear_level_glyphs()?;
+    state.forget_digits_requested.store(true, Ordering::Release);
+    log::info!("forgot {removed} learned level digit(s)");
+    Ok(())
+}
+
+/// Save the last 2 hours of the live view as a snapshot named `name`, end the current
+/// session and start the live view afresh. The minute in progress stays in the new
+/// live view (it isn't complete). Returns the snapshot's id, or `None` when there was
+/// nothing to save.
+#[tauri::command(async)]
+pub fn reset_session(state: AppStateRef<'_>, name: String) -> Result<Option<i64>, AppError> {
+    let name = valid_name(&name)?;
+    let now = now_unix();
+    let new_since = now.div_euclid(60) * 60;
+    let old_since = *state.live_since.read().expect("live since lock poisoned");
+    let tick = state.live.read().expect("live lock poisoned").clone();
+    let store = state.store.lock().expect("store lock poisoned");
+    let rows = store.minutes_between(old_since.max(new_since - SNAPSHOT_SECS), new_since)?;
+    let id = if rows.is_empty() { None } else { Some(store.create_snapshot(name, now, tick.map_name.as_deref(), tick.level, &rows)?) };
+    store.set_live_since(new_since)?;
+    drop(store);
+    *state.live_since.write().expect("live since lock poisoned") = new_since;
+    state.end_session_requested.store(true, Ordering::Release);
+    log::info!("reset: snapshot {id:?} with {} minute(s); live view starts at {new_since}", rows.len());
+    Ok(id)
+}
+
+#[tauri::command(async)]
+pub fn get_snapshots(state: AppStateRef<'_>) -> Result<Vec<SnapshotRecord>, AppError> {
+    Ok(state.store.lock().expect("store lock poisoned").snapshots()?)
+}
+
+#[tauri::command(async)]
+pub fn get_snapshot_chart(state: AppStateRef<'_>, snapshot_id: i64) -> Result<Vec<Bar>, AppError> {
+    let rows = state.store.lock().expect("store lock poisoned").snapshot_minutes(snapshot_id)?;
+    let (Some(first), Some(last)) = (rows.first(), rows.last()) else {
+        return Ok(Vec::new());
+    };
+    Ok(rates::bars_range(&rows, rates::bucket_start(first.minute_start), rates::bucket_start(last.minute_start)))
+}
+
+#[tauri::command(async)]
+pub fn rename_snapshot(state: AppStateRef<'_>, snapshot_id: i64, name: String) -> Result<(), AppError> {
+    let name = valid_name(&name)?;
+    if state.store.lock().expect("store lock poisoned").rename_snapshot(snapshot_id, name)? {
+        Ok(())
+    } else {
+        Err(AppError::NotFound(format!("snapshot {snapshot_id}")))
+    }
+}
+
+#[tauri::command(async)]
+pub fn delete_snapshot(state: AppStateRef<'_>, snapshot_id: i64) -> Result<(), AppError> {
+    if state.store.lock().expect("store lock poisoned").delete_snapshot(snapshot_id)? {
+        log::info!("deleted snapshot {snapshot_id}");
+        Ok(())
+    } else {
+        Err(AppError::NotFound(format!("snapshot {snapshot_id}")))
+    }
 }

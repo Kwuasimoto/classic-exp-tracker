@@ -25,6 +25,9 @@ use crate::tracker::{ConfirmOutcome, Effect, MapConfirmer, MapId, Sample, Sessio
 
 pub const TICK_EVENT: &str = "tracker-tick";
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
+/// Accepted EXP readings, with the level box and the tracker's level both unchanged,
+/// before an unknown level digit is learned (see read/level.rs).
+const LEARN_AFTER_READS: u32 = 3;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", content = "detail", rename_all = "camelCase")]
@@ -63,19 +66,28 @@ pub struct AppState {
     pub calibration_frame: Mutex<Option<Crop>>,
     pub live: RwLock<Tick>,
     /// The tracker's minute in progress, added to the live chart (see commands::get_live_chart).
+    /// Written and read only while holding `store`, so a minute is never both stored and live.
     pub live_minute: RwLock<Option<MinuteRow>>,
+    /// Where the live view starts (unix seconds); moved forward by a reset. Also in the database.
+    pub live_since: RwLock<i64>,
+    /// Set by commands, handled by the pipeline thread on its next loop.
+    pub end_session_requested: AtomicBool,
+    pub forget_digits_requested: AtomicBool,
     shutdown: AtomicBool,
     thread: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl AppState {
-    pub fn new(store: Store) -> Self {
+    pub fn new(store: Store, live_since: i64) -> Self {
         Self {
             store: Mutex::new(store),
             capture: Arc::new(Shared::default()),
             calibration_frame: Mutex::new(None),
             live: RwLock::new(Tick::default()),
             live_minute: RwLock::new(None),
+            live_since: RwLock::new(live_since),
+            end_session_requested: AtomicBool::new(false),
+            forget_digits_requested: AtomicBool::new(false),
             shutdown: AtomicBool::new(false),
             thread: Mutex::new(None),
         }
@@ -128,6 +140,9 @@ struct Pipeline {
     /// current level box was already tried for learning.
     learned_digits: Vec<LevelGlyph>,
     learn_tried: bool,
+    /// Accepted EXP readings since the level box last changed, all at `steady_level`.
+    steady_reads: u32,
+    steady_level: Option<u32>,
     /// Whether the previous frame's readers failed; failures are logged when this flips.
     exp_failing: bool,
     map_failing: bool,
@@ -171,6 +186,8 @@ impl Pipeline {
             screen_level: None,
             learned_digits: Vec::new(),
             learn_tried: false,
+            steady_reads: 0,
+            steady_level: None,
             exp_failing: false,
             map_failing: false,
             minute: MinuteStats::default(),
@@ -187,6 +204,7 @@ impl Pipeline {
             Err(e) => self.storage_failed("loading learned level digits", e),
         }
         while !self.state.shutdown.load(Ordering::Acquire) {
+            self.handle_requests();
             self.ensure_capture();
             match self.rx.recv_timeout(Duration::from_millis(500)) {
                 Ok(CaptureMsg::Regions { t, exp, map, level }) => self.on_regions(t, exp, map, level),
@@ -202,6 +220,21 @@ impl Pipeline {
             && let Err(e) = control.stop() {
                 error!("stopping capture at shutdown: {e:?}");
             }
+    }
+
+    /// Requests from commands: end the session (a reset), forget learned level digits.
+    fn handle_requests(&mut self) {
+        if self.state.end_session_requested.swap(false, Ordering::AcqRel) {
+            info!("session reset by the user");
+            let fx = self.tracker.end_session();
+            self.apply(fx);
+        }
+        if self.state.forget_digits_requested.swap(false, Ordering::AcqRel) {
+            info!("learned level digits forgotten; relearning from the next steady level");
+            self.learned_digits.clear();
+            self.level_crop = None;
+            self.screen_level = None;
+        }
     }
 
     fn ensure_capture(&mut self) {
@@ -306,13 +339,21 @@ impl Pipeline {
         }
         self.read_level_box(level_crop);
         let fx = self.tracker.on_sample(Sample { t, exp, map: self.current_map });
+        // Accepted readings move the baseline; rejected ones (misreads) don't.
+        if exp.is_some() && self.tracker.baseline() == exp {
+            if self.tracker.level() == self.steady_level {
+                self.steady_reads += 1;
+            } else {
+                self.steady_level = self.tracker.level();
+                self.steady_reads = 1;
+            }
+        }
         self.learn_level_digits();
         if let Some(level) = self.screen_level {
             self.tracker.use_screen_level(level);
         }
+        // Also publishes the minute in progress, before the tick: the UI reloads the chart on each tick.
         self.apply(fx);
-        // Before the tick goes out: the UI reloads the live chart when it receives one.
-        *self.state.live_minute.write().expect("live minute lock poisoned") = self.tracker.current_minute();
         self.publish(reader);
     }
 
@@ -328,14 +369,20 @@ impl Pipeline {
         self.screen_level = read;
         self.level_crop = crop;
         self.learn_tried = false;
+        self.steady_reads = 0;
     }
 
     /// Self-teaching level reader: when the level box shows digits it can't read
     /// yet but the tracker knows the level from the EXP readings, store the new
-    /// digits labelled from that level.
+    /// digits labelled from that level. Only once the box and the level have stayed
+    /// the same over LEARN_AFTER_READS accepted readings: right after a level-up the
+    /// box can show the new level before the EXP readout confirms it.
     fn learn_level_digits(&mut self) {
         let Some(level) = self.tracker.level() else { return };
         if self.screen_level.is_some() || self.level_glyphs.is_empty() || self.learn_tried {
+            return;
+        }
+        if self.steady_reads < LEARN_AFTER_READS || self.steady_level != Some(level) {
             return;
         }
         self.learn_tried = true;
@@ -430,11 +477,9 @@ impl Pipeline {
     }
 
     /// Apply effects in order; on a storage error keep the rest queued for the next call.
+    /// Then publish the minute in progress, under the same store lock.
     fn apply(&mut self, fx: Vec<Effect>) {
         self.pending.extend(fx);
-        if self.pending.is_empty() {
-            return;
-        }
         let store = self.state.store.lock().expect("store lock poisoned");
         let mut done = 0;
         let mut failure = None;
@@ -461,6 +506,7 @@ impl Pipeline {
             }
             done += 1;
         }
+        *self.state.live_minute.write().expect("live minute lock poisoned") = self.tracker.current_minute();
         drop(store);
         if let Some(e) = failure {
             self.storage_failed("saving tracker results (kept queued for retry)", e);
