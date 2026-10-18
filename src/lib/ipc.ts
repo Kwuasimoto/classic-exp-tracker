@@ -35,28 +35,6 @@ export type Tick = z.infer<typeof TickSchema>;
 export const BarSchema = z.object({ start: z.number().int(), expGained: count, ratePerHour: z.number().nonnegative().nullable() });
 export type Bar = z.infer<typeof BarSchema>;
 
-export const MapSummarySchema = z.object({
-  mapId: z.number().int(),
-  name: z.string(),
-  sessions: count,
-  trainingSecs: count,
-  expGained: count,
-  avgRatePerHour: z.number().nullable(),
-  bestHourRate: z.number().nullable(),
-});
-export type MapSummary = z.infer<typeof MapSummarySchema>;
-
-export const SessionSchema = z.object({
-  id: z.number().int(),
-  mapId: z.number().int(),
-  mapName: z.string(),
-  startedAt: z.number().int(),
-  endedAt: z.number().int().nullable(),
-  expGained: count,
-  trainingSecs: count,
-});
-export type Session = z.infer<typeof SessionSchema>;
-
 export const SnapshotSchema = z.object({
   id: z.number().int(),
   name: z.string(),
@@ -114,16 +92,14 @@ async function call<S extends z.ZodType>(cmd: string, schema: S, args?: Record<s
 
 export const getLiveSnapshot = () => call("get_live_snapshot", TickSchema);
 export const getLiveChart = (windowMinutes: 120 | 180) => call("get_live_chart", z.array(BarSchema), { windowMinutes });
-export const getMapSummaries = () => call("get_map_summaries", z.array(MapSummarySchema));
-export const renameMap = (mapId: number, name: string) => call("rename_map", z.null(), { mapId, name });
-export const getSessions = (mapId: number | null) => call("get_sessions", z.array(SessionSchema), { mapId });
-export const getSessionChart = (sessionId: number) => call("get_session_chart", z.array(BarSchema), { sessionId });
 export const getCalibrationFrame = () => call("get_calibration_frame", CalibrationFrameSchema);
 export const previewRegions = (c: Calibration) => call("preview_regions", RegionPreviewSchema, c);
 export const saveCalibration = (c: Calibration) => call("save_calibration", z.null(), c);
 export const forgetLevelDigits = () => call("forget_level_digits", z.null());
-/** Saves the last 2 h as a snapshot (id, or null if there was nothing) and starts a fresh session. */
-export const resetSession = (name: string) => call("reset_session", z.number().int().nullable(), { name });
+/** Saves what the live chart shows as a snapshot: its id, or null if there was nothing to save. */
+export const saveSnapshot = (name: string, windowMinutes: 120 | 180) => call("save_snapshot", z.number().int().nullable(), { name, windowMinutes });
+/** Ends the session and starts the live view afresh; saves nothing. */
+export const resetSession = () => call("reset_session", z.null());
 export const getSnapshots = () => call("get_snapshots", z.array(SnapshotSchema));
 export const getSnapshotChart = (snapshotId: number) => call("get_snapshot_chart", z.array(BarSchema), { snapshotId });
 export const renameSnapshot = (snapshotId: number, name: string) => call("rename_snapshot", z.null(), { snapshotId, name });

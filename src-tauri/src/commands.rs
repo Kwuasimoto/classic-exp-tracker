@@ -20,22 +20,28 @@ use crate::read::exp::{read_exp, ExpReading};
 use crate::read::map_strip::read_strip;
 use crate::read::level;
 use crate::read::ocr::MapOcr;
-use crate::store::{SessionRecord, SnapshotRecord};
-use crate::tracker::MapId;
+use crate::store::SnapshotRecord;
 
 type AppStateRef<'a> = State<'a, Arc<AppState>>;
 
 const MAX_NAME_LEN: usize = 80;
-/// A reset saves this much of the live view as a snapshot.
-const SNAPSHOT_SECS: i64 = 2 * 3600;
 
-/// A map or snapshot name: trimmed, 1–MAX_NAME_LEN characters.
+/// A snapshot name: trimmed, 1–MAX_NAME_LEN characters.
 fn valid_name(name: &str) -> Result<&str, AppError> {
     let name = name.trim();
     if name.is_empty() || name.chars().count() > MAX_NAME_LEN {
         return Err(AppError::Invalid(format!("name must be 1–{MAX_NAME_LEN} characters")));
     }
     Ok(name)
+}
+
+/// The live chart windows: 2H and 3H.
+fn valid_window(window_minutes: u32) -> Result<(), AppError> {
+    if matches!(window_minutes, 120 | rates::MAX_WINDOW_MINUTES) {
+        Ok(())
+    } else {
+        Err(AppError::Invalid(format!("window must be 120 or 180 minutes, got {window_minutes}")))
+    }
 }
 
 #[tauri::command]
@@ -45,9 +51,7 @@ pub fn get_live_snapshot(state: AppStateRef<'_>) -> Tick {
 
 #[tauri::command(async)]
 pub fn get_live_chart(state: AppStateRef<'_>, window_minutes: u32) -> Result<Vec<Bar>, AppError> {
-    if !matches!(window_minutes, 120 | 180) {
-        return Err(AppError::Invalid(format!("window must be 120 or 180 minutes, got {window_minutes}")));
-    }
+    valid_window(window_minutes)?;
     let (first, last) = rates::live_range(now_unix(), window_minutes);
     // The live view starts at the last reset.
     let since = *state.live_since.read().expect("live since lock poisoned");
@@ -58,63 +62,6 @@ pub fn get_live_chart(state: AppStateRef<'_>, window_minutes: u32) -> Result<Vec
     rows.extend(*state.live_minute.read().expect("live minute lock poisoned"));
     drop(store);
     Ok(rates::bars_range(&rows, first, last))
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MapSummary {
-    map_id: MapId,
-    name: String,
-    sessions: u32,
-    training_secs: u64,
-    exp_gained: u64,
-    avg_rate_per_hour: Option<f64>,
-    best_hour_rate: Option<f64>,
-}
-
-#[tauri::command(async)]
-pub fn get_map_summaries(state: AppStateRef<'_>) -> Result<Vec<MapSummary>, AppError> {
-    let store = state.store.lock().expect("store lock poisoned");
-    store
-        .map_totals()?
-        .into_iter()
-        .map(|t| {
-            let rows = store.map_minutes(t.map_id)?;
-            Ok(MapSummary {
-                map_id: t.map_id,
-                name: t.name,
-                sessions: t.sessions,
-                training_secs: t.training_secs,
-                exp_gained: t.exp_gained,
-                avg_rate_per_hour: (t.training_secs > 0).then(|| t.exp_gained as f64 * 3600.0 / t.training_secs as f64),
-                best_hour_rate: rates::best_hour_rate(&rows),
-            })
-        })
-        .collect()
-}
-
-#[tauri::command(async)]
-pub fn rename_map(state: AppStateRef<'_>, map_id: MapId, name: String) -> Result<(), AppError> {
-    let name = valid_name(&name)?;
-    if state.store.lock().expect("store lock poisoned").rename_map(map_id, name)? {
-        Ok(())
-    } else {
-        Err(AppError::NotFound(format!("map {map_id}")))
-    }
-}
-
-#[tauri::command(async)]
-pub fn get_sessions(state: AppStateRef<'_>, map_id: Option<MapId>) -> Result<Vec<SessionRecord>, AppError> {
-    Ok(state.store.lock().expect("store lock poisoned").sessions(map_id)?)
-}
-
-#[tauri::command(async)]
-pub fn get_session_chart(state: AppStateRef<'_>, session_id: i64) -> Result<Vec<Bar>, AppError> {
-    let rows = state.store.lock().expect("store lock poisoned").session_minutes(session_id)?;
-    let (Some(first), Some(last)) = (rows.first(), rows.last()) else {
-        return Ok(Vec::new());
-    };
-    Ok(rates::bars_range(&rows, rates::bucket_start(first.minute_start), rates::bucket_start(last.minute_start)))
 }
 
 #[derive(Serialize)]
@@ -228,26 +175,37 @@ pub fn forget_level_digits(state: AppStateRef<'_>) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Save the last 2 hours of the live view as a snapshot named `name`, end the current
-/// session and start the live view afresh. The minute in progress stays in the new
-/// live view (it isn't complete). Returns the snapshot's id, or `None` when there was
-/// nothing to save.
+/// Save what the live chart shows for `window_minutes` (from the last reset, with the
+/// minute in progress) as a snapshot named `name`. Returns its id, or `None` when there
+/// was nothing to save.
 #[tauri::command(async)]
-pub fn reset_session(state: AppStateRef<'_>, name: String) -> Result<Option<i64>, AppError> {
+pub fn save_snapshot(state: AppStateRef<'_>, name: String, window_minutes: u32) -> Result<Option<i64>, AppError> {
     let name = valid_name(&name)?;
+    valid_window(window_minutes)?;
     let now = now_unix();
-    let new_since = now.div_euclid(60) * 60;
-    let old_since = *state.live_since.read().expect("live since lock poisoned");
+    let (first, _) = rates::live_range(now, window_minutes);
+    let since = *state.live_since.read().expect("live since lock poisoned");
     let tick = state.live.read().expect("live lock poisoned").clone();
     let store = state.store.lock().expect("store lock poisoned");
-    let rows = store.minutes_between(old_since.max(new_since - SNAPSHOT_SECS), new_since)?;
+    let mut rows = store.minutes_between(first.max(since), now)?;
+    // Read under the store lock, as in get_live_chart.
+    rows.extend(*state.live_minute.read().expect("live minute lock poisoned"));
     let id = if rows.is_empty() { None } else { Some(store.create_snapshot(name, now, tick.map_name.as_deref(), tick.level, &rows)?) };
-    store.set_live_since(new_since)?;
-    drop(store);
-    *state.live_since.write().expect("live since lock poisoned") = new_since;
-    state.end_session_requested.store(true, Ordering::Release);
-    log::info!("reset: snapshot {id:?} with {} minute(s); live view starts at {new_since}", rows.len());
+    log::info!("snapshot {id:?} saved with {} minute(s)", rows.len());
     Ok(id)
+}
+
+/// End the current session and start the live view afresh from this minute (the
+/// minute in progress stays in it). Saves nothing; older live data is deleted once
+/// the chart no longer needs it.
+#[tauri::command(async)]
+pub fn reset_session(state: AppStateRef<'_>) -> Result<(), AppError> {
+    let since = now_unix().div_euclid(60) * 60;
+    state.store.lock().expect("store lock poisoned").set_live_since(since)?;
+    *state.live_since.write().expect("live since lock poisoned") = since;
+    state.end_session_requested.store(true, Ordering::Release);
+    log::info!("reset: live view starts at {since}");
+    Ok(())
 }
 
 #[tauri::command(async)]

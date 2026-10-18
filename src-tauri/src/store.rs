@@ -101,27 +101,6 @@ pub struct MapRecord {
     pub signature: Signature,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MapTotals {
-    pub map_id: MapId,
-    pub name: String,
-    pub sessions: u32,
-    pub exp_gained: u64,
-    pub training_secs: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionRecord {
-    pub id: i64,
-    pub map_id: MapId,
-    pub map_name: String,
-    pub started_at: i64,
-    pub ended_at: Option<i64>,
-    pub exp_gained: u64,
-    pub training_secs: u64,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SnapshotRecord {
@@ -212,11 +191,6 @@ impl Store {
         Ok(self.conn.last_insert_rowid())
     }
 
-    /// `false` when no map has that id.
-    pub fn rename_map(&self, id: MapId, name: &str) -> Result<bool, StoreError> {
-        Ok(self.conn.execute("UPDATE maps SET name = ?2 WHERE id = ?1", params![id, name])? == 1)
-    }
-
     pub fn start_session(&self, map_id: MapId, t: i64) -> Result<i64, StoreError> {
         self.conn.execute("INSERT INTO sessions (map_id, started_at) VALUES (?1, ?2)", params![map_id, t])?;
         Ok(self.conn.last_insert_rowid())
@@ -248,6 +222,19 @@ impl Store {
         )?)
     }
 
+    /// Delete minutes from before `before`, and the ended sessions left without any.
+    /// The live view needs only its chart window; History keeps snapshots, which are copies.
+    pub fn prune(&self, before: i64) -> Result<(), StoreError> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM minutes WHERE minute_start < ?1", [before])?;
+        tx.execute(
+            "DELETE FROM sessions WHERE ended_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM minutes WHERE session_id = sessions.id)",
+            [],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Minute totals across all sessions, `from` inclusive to `to` exclusive.
     pub fn minutes_between(&self, from: i64, to: i64) -> Result<Vec<MinuteRow>, StoreError> {
         let mut stmt = self.conn.prepare(
@@ -255,68 +242,6 @@ impl Store {
              WHERE minute_start >= ?1 AND minute_start < ?2 GROUP BY minute_start ORDER BY minute_start",
         )?;
         let rows = stmt.query_map(params![from, to], minute_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
-
-    pub fn session_minutes(&self, session_id: i64) -> Result<Vec<MinuteRow>, StoreError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT minute_start, exp_gained, training_secs FROM minutes WHERE session_id = ?1 ORDER BY minute_start",
-        )?;
-        let rows = stmt.query_map([session_id], minute_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
-
-    pub fn map_minutes(&self, map_id: MapId) -> Result<Vec<MinuteRow>, StoreError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT mi.minute_start, SUM(mi.exp_gained), SUM(mi.training_secs)
-             FROM minutes mi JOIN sessions s ON s.id = mi.session_id
-             WHERE s.map_id = ?1 GROUP BY mi.minute_start ORDER BY mi.minute_start",
-        )?;
-        let rows = stmt.query_map([map_id], minute_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
-
-    pub fn map_totals(&self) -> Result<Vec<MapTotals>, StoreError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT m.id, m.name, COUNT(DISTINCT s.id), COALESCE(SUM(mi.exp_gained), 0), COALESCE(SUM(mi.training_secs), 0)
-             FROM maps m JOIN sessions s ON s.map_id = m.id LEFT JOIN minutes mi ON mi.session_id = s.id
-             GROUP BY m.id ORDER BY 5 DESC",
-        )?;
-        let rows = stmt
-            .query_map([], |r| {
-                Ok(MapTotals {
-                    map_id: r.get(0)?,
-                    name: r.get(1)?,
-                    sessions: col_u32(r, 2)?,
-                    exp_gained: col_u64(r, 3)?,
-                    training_secs: col_u64(r, 4)?,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
-
-    pub fn sessions(&self, map_id: Option<MapId>) -> Result<Vec<SessionRecord>, StoreError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT s.id, s.map_id, m.name, s.started_at, s.ended_at,
-                    COALESCE(SUM(mi.exp_gained), 0), COALESCE(SUM(mi.training_secs), 0)
-             FROM sessions s JOIN maps m ON m.id = s.map_id LEFT JOIN minutes mi ON mi.session_id = s.id
-             WHERE ?1 IS NULL OR s.map_id = ?1
-             GROUP BY s.id ORDER BY s.started_at DESC LIMIT 500",
-        )?;
-        let rows = stmt
-            .query_map([map_id], |r| {
-                Ok(SessionRecord {
-                    id: r.get(0)?,
-                    map_id: r.get(1)?,
-                    map_name: r.get(2)?,
-                    started_at: r.get(3)?,
-                    ended_at: r.get(4)?,
-                    exp_gained: col_u64(r, 5)?,
-                    training_secs: col_u64(r, 6)?,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
 
@@ -392,7 +317,8 @@ impl Store {
         Ok(())
     }
 
-    /// Save a snapshot and its own copy of `rows`, in one transaction.
+    /// Save a snapshot and its own copy of `rows`, in one transaction. Rows for the same
+    /// minute add up: a session that ended mid-minute stored part of the minute in progress.
     pub fn create_snapshot(&self, name: &str, created_at: i64, map_name: Option<&str>, level: Option<u32>, rows: &[MinuteRow]) -> Result<i64, StoreError> {
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
@@ -402,7 +328,10 @@ impl Store {
         let id = tx.last_insert_rowid();
         for r in rows {
             tx.execute(
-                "INSERT INTO snapshot_minutes (snapshot_id, minute_start, exp_gained, training_secs) VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO snapshot_minutes (snapshot_id, minute_start, exp_gained, training_secs) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT (snapshot_id, minute_start) DO UPDATE SET
+                   exp_gained = exp_gained + excluded.exp_gained,
+                   training_secs = training_secs + excluded.training_secs",
                 params![id, r.minute_start, to_i64(r.exp_gained, "exp_gained")?, i64::from(r.training_secs)],
             )?;
         }
@@ -451,5 +380,30 @@ impl Store {
     /// `false` when no snapshot has that id. Its minutes go with it (ON DELETE CASCADE).
     pub fn delete_snapshot(&self, id: i64) -> Result<bool, StoreError> {
         Ok(self.conn.execute("DELETE FROM snapshots WHERE id = ?1", [id])? == 1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prune_keeps_snapshots_recent_minutes_and_the_open_session() {
+        let store = Store::open_in_memory().unwrap();
+        let map = store.insert_map("Map", &Signature { counts: vec![1], cut: false }, 0).unwrap();
+        let old = store.start_session(map, 0).unwrap();
+        store.add_minute(0, old, 100, 60).unwrap();
+        store.end_session(old, 60).unwrap();
+        let open = store.start_session(map, 6_000).unwrap();
+        store.add_minute(6_000, open, 50, 60).unwrap();
+        let row = MinuteRow { minute_start: 0, exp_gained: 100, training_secs: 60 };
+        let snapshot = store.create_snapshot("Saved", 60, None, None, &[row, row]).unwrap();
+
+        store.prune(3_000).unwrap();
+
+        assert_eq!(store.minutes_between(0, 10_000).unwrap(), [MinuteRow { minute_start: 6_000, exp_gained: 50, training_secs: 60 }]);
+        let sessions: i64 = store.conn.query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0)).unwrap();
+        assert_eq!(sessions, 1);
+        assert_eq!(store.snapshot_minutes(snapshot).unwrap(), [MinuteRow { minute_start: 0, exp_gained: 200, training_secs: 120 }]);
     }
 }

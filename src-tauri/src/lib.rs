@@ -5,6 +5,7 @@ pub mod geom;
 mod pipeline;
 pub mod rates;
 pub mod read;
+mod screen;
 pub mod store;
 pub mod tracker;
 
@@ -71,6 +72,7 @@ pub fn run() {
             log::info!("Classic EXP Tracker {} starting, database {}", app.package_info().version, db.display());
             let store = store::Store::open(&db)?;
             store.close_open_sessions()?;
+            store.prune(rates::keep_from(now_unix()))?;
             let live_since = store.live_since()?;
             let state = Arc::new(pipeline::AppState::new(store, live_since));
             app.manage(Arc::clone(&state));
@@ -86,14 +88,11 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_live_snapshot,
             commands::get_live_chart,
-            commands::get_map_summaries,
-            commands::rename_map,
-            commands::get_sessions,
-            commands::get_session_chart,
             commands::get_calibration_frame,
             commands::preview_regions,
             commands::save_calibration,
             commands::forget_level_digits,
+            commands::save_snapshot,
             commands::reset_session,
             commands::get_snapshots,
             commands::get_snapshot_chart,

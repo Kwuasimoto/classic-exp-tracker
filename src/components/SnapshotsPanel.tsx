@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { usePages } from "./Pager";
 import { RateChart } from "./RateChart";
 import { formatClock, formatDateTime, formatExp, formatHours } from "../lib/format";
 import { deleteSnapshot, getSnapshotChart, getSnapshots, renameSnapshot, type AppError, type Bar, type Snapshot } from "../lib/ipc";
@@ -10,6 +11,7 @@ export function SnapshotsPanel({ onError }: { onError: (e: AppError) => void }) 
   const [bars, setBars] = useState<Bar[]>([]);
   const [editing, setEditing] = useState<{ id: number; name: string } | null>(null);
   const [deleting, setDeleting] = useState<number | null>(null);
+  const pages = usePages(snapshots);
 
   const load = useCallback(async () => {
     const res = await getSnapshots();
@@ -58,14 +60,14 @@ export function SnapshotsPanel({ onError }: { onError: (e: AppError) => void }) 
       <section className="panel">
         <h2>Snapshots</h2>
         {snapshots.length === 0 ? (
-          <p className="caption">No snapshots yet. The reset button on the Live chart saves the last 2 hours here.</p>
+          <p className="caption">No snapshots yet. The save button on the Live chart saves what the chart shows here.</p>
         ) : (
           <table>
             <thead>
               <tr><th>Name</th><th>Map</th><th>Level</th><th>Period</th><th>Training</th><th>EXP</th><th>EXP/hr</th><th /></tr>
             </thead>
             <tbody>
-              {snapshots.map((s) => (
+              {pages.rows.map((s) => (
                 <tr key={s.id} className={`selectable ${s.id === selected ? "selected" : ""}`} onClick={() => setSelected(s.id === selected ? null : s.id)}>
                   <td>
                     {editing?.id === s.id ? (
@@ -115,6 +117,7 @@ export function SnapshotsPanel({ onError }: { onError: (e: AppError) => void }) 
             </tbody>
           </table>
         )}
+        {pages.pager}
       </section>
       {selected !== null && <RateChart bars={bars} />}
     </>

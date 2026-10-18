@@ -4,8 +4,6 @@ use serde::Serialize;
 
 pub const BUCKET_SECS: i64 = 600;
 pub const SMA_BUCKETS: usize = 6;
-/// A "best hour" must contain at least this much training time.
-pub const MIN_BEST_WINDOW_SECS: u64 = 1_800;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MinuteRow {
@@ -34,9 +32,17 @@ pub fn live_range(now: i64, window_minutes: u32) -> (i64, i64) {
     (last - (bars - 1) * BUCKET_SECS, last)
 }
 
+/// The longest live chart window, in minutes.
+pub const MAX_WINDOW_MINUTES: u32 = 180;
+
 /// Earliest minute needed to compute the SMA of a bar starting at `first_bar`.
 pub fn rows_from(first_bar: i64) -> i64 {
     first_bar - (SMA_BUCKETS as i64 - 1) * BUCKET_SECS
+}
+
+/// Earliest minute the live chart can still need at `now`; older minutes can be deleted.
+pub fn keep_from(now: i64) -> i64 {
+    rows_from(live_range(now, MAX_WINDOW_MINUTES).0)
 }
 
 /// One bar per bucket from `first_bar` to `last_bar` inclusive (both bucket-aligned).
@@ -70,27 +76,6 @@ pub fn bars_range(rows: &[MinuteRow], first_bar: i64, last_bar: i64) -> Vec<Bar>
             }
         })
         .collect()
-}
-
-/// Highest EXP/hr over any 60-minute window with ≥ MIN_BEST_WINDOW_SECS of training.
-/// `rows` must be sorted by `minute_start`.
-pub fn best_hour_rate(rows: &[MinuteRow]) -> Option<f64> {
-    let mut best: Option<f64> = None;
-    let (mut lo, mut exp, mut secs) = (0usize, 0u64, 0u64);
-    for hi in 0..rows.len() {
-        exp += rows[hi].exp_gained;
-        secs += u64::from(rows[hi].training_secs);
-        while rows[hi].minute_start - rows[lo].minute_start >= 3_600 {
-            exp -= rows[lo].exp_gained;
-            secs -= u64::from(rows[lo].training_secs);
-            lo += 1;
-        }
-        if secs >= MIN_BEST_WINDOW_SECS {
-            let rate = exp as f64 * 3600.0 / secs as f64;
-            best = Some(best.map_or(rate, |b| b.max(rate)));
-        }
-    }
-    best
 }
 
 #[cfg(test)]

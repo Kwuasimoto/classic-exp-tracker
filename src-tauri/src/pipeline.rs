@@ -15,23 +15,16 @@ use tauri::{AppHandle, Emitter};
 
 use crate::capture::{self, CaptureMsg, Control, Regions, Shared};
 use crate::geom::{resolution_key, Crop};
-use crate::read::exp::{read_exp, Glyph};
-use crate::read::level::{self, LevelGlyph};
-use crate::read::map_strip::{read_strip, Signature};
+use crate::read::level::LevelGlyph;
+use crate::read::map_strip::Signature;
 use crate::read::ocr::MapOcr;
-use crate::rates::MinuteRow;
+use crate::rates::{self, MinuteRow};
+use crate::screen::Screen;
 use crate::store::{Store, StoreError};
-use crate::tracker::{ConfirmOutcome, Effect, MapConfirmer, MapId, Sample, SessionKey, Tracker};
+use crate::tracker::{Effect, MapId, Sample, SessionKey, Tracker};
 
 pub const TICK_EVENT: &str = "tracker-tick";
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
-/// Accepted EXP readings, with the level box and the tracker's level both unchanged,
-/// before an unknown level digit is learned (see read/level.rs).
-const LEARN_AFTER_READS: u32 = 3;
-/// A level read from the screen is used once the level box has looked the same for
-/// this many frames: one bad frame (a loading screen, a window passing over the game)
-/// can read as another level.
-const LEVEL_STEADY_FRAMES: u32 = 3;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", content = "detail", rename_all = "camelCase")]
@@ -126,7 +119,7 @@ struct Pipeline {
     retry_at: Instant,
     backoff: Duration,
     ocr: Result<MapOcr, String>,
-    confirmer: MapConfirmer,
+    screen: Screen,
     tracker: Tracker,
     current_map: Option<MapId>,
     keys: HashMap<SessionKey, i64>,
@@ -135,35 +128,6 @@ struct Pipeline {
     capture_error: Option<String>,
     storage_error: Option<String>,
     notify_error: Option<String>,
-    /// The level box's last pixels, its digits, and the level they read as.
-    /// Re-read only when the pixels change (about once per level).
-    level_crop: Option<Crop>,
-    level_glyphs: Vec<Glyph>,
-    screen_level: Option<u32>,
-    /// Consecutive frames the level box has looked the same, including this one.
-    level_box_frames: u32,
-    /// Level digits learned so far (also in the database), and whether the
-    /// current level box was already tried for learning.
-    learned_digits: Vec<LevelGlyph>,
-    learn_tried: bool,
-    /// Accepted EXP readings since the level box last changed, all at `steady_level`.
-    steady_reads: u32,
-    steady_level: Option<u32>,
-    /// Whether the previous frame's readers failed; failures are logged when this flips.
-    exp_failing: bool,
-    map_failing: bool,
-    minute: MinuteStats,
-}
-
-/// Reader counts for one wall-clock minute, logged as one line when the minute ends.
-#[derive(Default)]
-struct MinuteStats {
-    minute: i64,
-    frames: u32,
-    exp_unreadable: u32,
-    map_unreadable: u32,
-    last_exp_error: Option<String>,
-    last_map_error: Option<String>,
 }
 
 impl Pipeline {
@@ -178,7 +142,7 @@ impl Pipeline {
             retry_at: Instant::now(),
             backoff: Duration::from_secs(1),
             ocr: MapOcr::new().map_err(|e| e.to_string()),
-            confirmer: MapConfirmer::new(),
+            screen: Screen::new(),
             tracker: Tracker::new(),
             current_map: None,
             keys: HashMap::new(),
@@ -187,17 +151,6 @@ impl Pipeline {
             capture_error: None,
             storage_error: None,
             notify_error: None,
-            level_crop: None,
-            level_glyphs: Vec::new(),
-            screen_level: None,
-            level_box_frames: 0,
-            learned_digits: Vec::new(),
-            learn_tried: false,
-            steady_reads: 0,
-            steady_level: None,
-            exp_failing: false,
-            map_failing: false,
-            minute: MinuteStats::default(),
         }
     }
 
@@ -206,7 +159,7 @@ impl Pipeline {
         match learned {
             Ok(digits) => {
                 info!("{} learned level digit(s) loaded", digits.len());
-                self.learned_digits = digits;
+                self.screen.set_level_digits(digits);
             }
             Err(e) => self.storage_failed("loading learned level digits", e),
         }
@@ -238,9 +191,7 @@ impl Pipeline {
         }
         if self.state.forget_digits_requested.swap(false, Ordering::AcqRel) {
             info!("learned level digits forgotten; relearning from the next steady level");
-            self.learned_digits.clear();
-            self.level_crop = None;
-            self.screen_level = None;
+            self.screen.set_level_digits(Vec::new());
         }
     }
 
@@ -305,143 +256,36 @@ impl Pipeline {
         self.publish(ReaderStatus::NotCalibrated);
     }
 
-    fn on_regions(&mut self, t: i64, exp_crop: Crop, map_crop: Crop, level_crop: Option<Crop>) {
+    fn on_regions(&mut self, t: i64, exp: Crop, map: Crop, level: Option<Crop>) {
         self.frames_flowing();
-        self.count_frame(t);
-        let exp = match read_exp(&exp_crop) {
-            Ok(r) => {
-                if self.exp_failing {
-                    info!("EXP readable again: {} [{}.{:02}%]", r.exp, r.pct_bp / 100, r.pct_bp % 100);
-                }
-                Some(r)
-            }
-            Err(e) => {
-                if !self.exp_failing {
-                    warn!("EXP unreadable: {e}");
-                }
-                self.minute.exp_unreadable += 1;
-                self.minute.last_exp_error = Some(e.to_string());
-                None
-            }
-        };
-        self.exp_failing = exp.is_none();
-        let mut reader = if exp.is_some() { ReaderStatus::Ok } else { ReaderStatus::ExpUnreadable };
-        match read_strip(&map_crop) {
-            Ok(strip) => {
-                if self.map_failing {
-                    info!("map strip readable again");
-                }
-                self.map_failing = false;
-                if let ConfirmOutcome::Changed { signature, strips } = self.confirmer.feed(strip.signature, map_crop) {
-                    self.resolve_map(t, &signature, &strips);
-                }
-            }
-            Err(e) => {
-                if !self.map_failing {
-                    warn!("map strip unreadable: {e}");
-                }
-                self.map_failing = true;
-                self.minute.map_unreadable += 1;
-                self.minute.last_map_error = Some(e.to_string());
-                if reader == ReaderStatus::Ok {
-                    reader = ReaderStatus::MapUnreadable;
-                }
-            }
+        let read = self.screen.read(t, &exp, map, level);
+        if let Some((signature, strips)) = &read.new_map {
+            self.resolve_map(t, signature, strips);
         }
-        self.read_level_box(level_crop);
-        let fx = self.tracker.on_sample(Sample { t, exp, map: self.current_map });
-        // Accepted readings move the baseline; rejected ones (misreads) don't.
-        if exp.is_some() && self.tracker.baseline() == exp {
-            if self.tracker.level() == self.steady_level {
-                self.steady_reads += 1;
-            } else {
-                self.steady_level = self.tracker.level();
-                self.steady_reads = 1;
-            }
-        }
-        self.learn_level_digits();
-        if let Some(level) = self.screen_level.filter(|_| self.level_box_frames >= LEVEL_STEADY_FRAMES) {
-            self.tracker.use_screen_level(level);
-        }
+        let fx = self.tracker.on_sample(Sample { t, exp: read.exp, map: self.current_map });
+        let learned = self.screen.sync_level(&mut self.tracker, read.exp);
+        self.save_level_digits(&learned);
         // Also publishes the minute in progress, before the tick: the UI reloads the chart on each tick.
         self.apply(fx);
-        self.publish(reader);
+        self.publish(match (read.exp, read.map_readable) {
+            (None, _) => ReaderStatus::ExpUnreadable,
+            (Some(_), false) => ReaderStatus::MapUnreadable,
+            (Some(_), true) => ReaderStatus::Ok,
+        });
     }
 
-    fn read_level_box(&mut self, crop: Option<Crop>) {
-        if crop == self.level_crop {
-            self.level_box_frames = self.level_box_frames.saturating_add(1);
+    /// The digits are already in use; if saving fails, they're relearned next run.
+    fn save_level_digits(&mut self, digits: &[LevelGlyph]) {
+        if digits.is_empty() {
             return;
         }
-        self.level_box_frames = 1;
-        self.level_glyphs = crop.as_ref().and_then(|c| level::segment(c).ok()).unwrap_or_default();
-        let read = level::read_level(&self.level_glyphs, &self.learned_digits);
-        if read.is_some() && read != self.screen_level {
-            info!("level box reads {read:?}");
-        }
-        self.screen_level = read;
-        self.level_crop = crop;
-        self.learn_tried = false;
-        self.steady_reads = 0;
-    }
-
-    /// Self-teaching level reader: when the level box shows digits it can't read
-    /// yet but the tracker knows the level from the EXP readings, store the new
-    /// digits labelled from that level. Only once the box and the level have stayed
-    /// the same over LEARN_AFTER_READS accepted readings: right after a level-up the
-    /// box can show the new level before the EXP readout confirms it.
-    fn learn_level_digits(&mut self) {
-        let Some(level) = self.tracker.level() else { return };
-        if self.screen_level.is_some() || self.level_glyphs.is_empty() || self.learn_tried {
-            return;
-        }
-        if self.steady_reads < LEARN_AFTER_READS || self.steady_level != Some(level) {
-            return;
-        }
-        self.learn_tried = true;
-        let new = match level::learn(&self.level_glyphs, &self.learned_digits, level) {
-            Ok(new) => new,
-            Err(why) => {
-                warn!("not learning level digits: {why}");
-                return;
-            }
+        let saved = {
+            let store = self.state.store.lock().expect("store lock poisoned");
+            digits.iter().try_for_each(|glyph| store.add_level_glyph(glyph))
         };
-        for glyph in new {
-            let saved = self.state.store.lock().expect("store lock poisoned").add_level_glyph(&glyph);
-            match saved {
-                Ok(()) => {
-                    info!("learned level digit {:?} from level {level}", glyph.ch);
-                    self.learned_digits.push(glyph);
-                }
-                Err(e) => return self.storage_failed("saving a learned level digit", e),
-            }
+        if let Err(e) = saved {
+            self.storage_failed("saving a learned level digit", e);
         }
-        self.screen_level = level::read_level(&self.level_glyphs, &self.learned_digits);
-        info!("level box reads {:?} after learning", self.screen_level);
-    }
-
-    /// Count a frame; at each new wall-clock minute, log the previous minute's counts
-    /// and its latest reader errors.
-    fn count_frame(&mut self, t: i64) {
-        let minute = t.div_euclid(60);
-        if minute != self.minute.minute {
-            let m = &self.minute;
-            if m.frames > 0 {
-                let mut line = format!(
-                    "minute summary: {} frames, EXP unreadable {}, map unreadable {}",
-                    m.frames, m.exp_unreadable, m.map_unreadable
-                );
-                if let Some(e) = &m.last_exp_error {
-                    line += &format!("; last EXP error: {e}");
-                }
-                if let Some(e) = &m.last_map_error {
-                    line += &format!("; last map error: {e}");
-                }
-                info!("{line}");
-            }
-            self.minute = MinuteStats { minute, ..MinuteStats::default() };
-        }
-        self.minute.frames += 1;
     }
 
     fn storage_failed(&mut self, doing: &str, e: impl Display) {
@@ -467,7 +311,7 @@ impl Pipeline {
             Err(e) => {
                 self.storage_failed("looking up or saving a map", e);
                 // Re-confirm on upcoming frames so the lookup is retried.
-                self.confirmer = MapConfirmer::new();
+                self.screen.reconfirm_map();
             }
         }
     }
@@ -477,7 +321,7 @@ impl Pipeline {
         Ok(maps.into_iter().find(|m| m.signature.matches(signature)).map(|m| m.id))
     }
 
-    /// OCR label for a new map. Failures produce a visible, renameable name.
+    /// OCR label for a new map. Failures produce a visible name.
     fn label(&self, strips: &[Crop]) -> String {
         match &self.ocr {
             Ok(ocr) => match ocr.label(strips) {
@@ -524,6 +368,9 @@ impl Pipeline {
             done += 1;
         }
         *self.state.live_minute.write().expect("live minute lock poisoned") = self.tracker.current_minute();
+        // Only the live chart reads stored minutes: delete those it can no longer show.
+        let saved_minute = self.pending[..done].iter().any(|e| matches!(e, Effect::Minute { .. }));
+        let pruned = if saved_minute { store.prune(rates::keep_from(crate::now_unix())) } else { Ok(()) };
         drop(store);
         if let Some(e) = failure {
             self.storage_failed("saving tracker results (kept queued for retry)", e);
@@ -531,6 +378,9 @@ impl Pipeline {
         self.pending.drain(..done);
         if self.pending.is_empty() {
             self.storage_error = None;
+        }
+        if let Err(e) = pruned {
+            self.storage_failed("deleting live data the chart no longer shows", e);
         }
     }
 

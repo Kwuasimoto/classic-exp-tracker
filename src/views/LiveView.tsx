@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RateChart } from "../components/RateChart";
 import { formatDateTime, formatHours, formatPct } from "../lib/format";
-import { getLiveChart, resetSession, type AppError, type Bar, type Tick } from "../lib/ipc";
+import { getLiveChart, resetSession, saveSnapshot, type AppError, type Bar, type Tick } from "../lib/ipc";
 import { expToLevel, liveRates } from "../lib/live";
 
 type WindowMinutes = 120 | 180;
@@ -35,11 +35,17 @@ export function LiveView({ tick, onCalibrate }: { tick: Tick | null; onCalibrate
     return () => clearTimeout(timer);
   }, [toast]);
 
-  const reset = async () => {
+  const save = async () => {
     const name = `${tick?.mapName ?? "Session"} · ${formatDateTime(Date.now() / 1000)}`;
-    const res = await resetSession(name);
+    const res = await saveSnapshot(name, windowMinutes);
     if (!res.success) return setError(res.error);
-    setToast(res.data === null ? "Session reset" : "Session reset · last 2 hours saved to History");
+    setToast(res.data === null ? "Nothing to save yet" : "Saved to History");
+  };
+
+  const reset = async () => {
+    const res = await resetSession();
+    if (!res.success) return setError(res.error);
+    setToast("Session reset");
     void refreshChart();
   };
 
@@ -85,7 +91,14 @@ export function LiveView({ tick, onCalibrate }: { tick: Tick | null; onCalibrate
         fill
         actions={
           <div className="row" style={{ gap: 8, flexWrap: "nowrap" }}>
-            <button className="icon-btn" aria-label="Reset session" title="Save the last 2 hours to History and start a new session" onClick={() => void reset()}>
+            <button className="icon-btn" aria-label="Save to History" title={`Save the last ${windowMinutes / 60} hours to History`} onClick={() => void save()}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                <polyline points="17 21 17 13 7 13 7 21" />
+                <polyline points="7 3 7 8 15 8" />
+              </svg>
+            </button>
+            <button className="icon-btn" aria-label="Reset session" title="Start a new session (saves nothing)" onClick={() => void reset()}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M3 12a9 9 0 1 0 3-6.7" />
                 <polyline points="3 3 3 9 9 9" />
