@@ -23,7 +23,16 @@ export function SnapshotsPanel({ onError }: { onError: (e: AppError) => void }) 
 
   useEffect(() => {
     if (selected === null) return setBars([]);
-    void getSnapshotChart(selected).then((res) => (res.success ? setBars(res.data) : onError(res.error)));
+    // Drop a response superseded by a newer selection.
+    let stale = false;
+    void getSnapshotChart(selected).then((res) => {
+      if (stale) return;
+      if (res.success) setBars(res.data);
+      else onError(res.error);
+    });
+    return () => {
+      stale = true;
+    };
   }, [selected, onError]);
 
   const saveRename = async () => {

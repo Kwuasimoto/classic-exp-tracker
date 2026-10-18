@@ -25,14 +25,31 @@ export function HistoryView() {
     void loadMaps();
   }, [loadMaps]);
 
+  // Responses can arrive out of order when the selection changes quickly: drop superseded ones.
   useEffect(() => {
-    void getSessions(mapId).then((res) => (res.success ? setSessions(res.data) : setError(res.error)));
+    let stale = false;
+    void getSessions(mapId).then((res) => {
+      if (stale) return;
+      if (res.success) setSessions(res.data);
+      else setError(res.error);
+    });
     setSessionId(null);
+    return () => {
+      stale = true;
+    };
   }, [mapId]);
 
   useEffect(() => {
     if (sessionId === null) return setSessionBars([]);
-    void getSessionChart(sessionId).then((res) => (res.success ? setSessionBars(res.data) : setError(res.error)));
+    let stale = false;
+    void getSessionChart(sessionId).then((res) => {
+      if (stale) return;
+      if (res.success) setSessionBars(res.data);
+      else setError(res.error);
+    });
+    return () => {
+      stale = true;
+    };
   }, [sessionId]);
 
   const saveRename = async () => {

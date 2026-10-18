@@ -41,7 +41,20 @@ fn move_off_primary_monitor(window: &tauri::WebviewWindow) -> tauri::Result<()> 
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Release builds abort on panic with no console, so a crash would leave no trace: log it first.
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        log::error!("panic: {info}");
+        default_hook(info);
+    }));
     tauri::Builder::default()
+        // Registered first so a second launch exits before it opens the database or starts a capture.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            let shown = app.get_webview_window("main").map(|w| w.unminimize().and_then(|()| w.set_focus()));
+            if let Some(Err(e)) = shown {
+                log::warn!("could not bring the window forward for a second launch: {e}");
+            }
+        }))
         // Text log for debugging: %LOCALAPPDATA%\com.classicexp.tracker\logs, 5 files of 1 MB.
         .plugin(
             tauri_plugin_log::Builder::new()

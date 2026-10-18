@@ -286,15 +286,19 @@ impl Pipeline {
     fn on_uncalibrated(&mut self, width: u32, height: u32) {
         self.frames_flowing();
         if self.tried_resolution != Some((width, height)) {
-            self.tried_resolution = Some((width, height));
             let found = self.state.store.lock().expect("store lock poisoned").calibration(&resolution_key(width, height));
             match found {
                 Ok(Some(calibration)) => {
                     info!("loaded calibration for {width}x{height}: {calibration:?}");
                     *self.state.capture.regions.write().expect("regions lock poisoned") =
                         Some(Regions { width, height, calibration });
+                    self.tried_resolution = Some((width, height));
                 }
-                Ok(None) => info!("no calibration saved for {width}x{height}; waiting for the Calibrate tab"),
+                Ok(None) => {
+                    info!("no calibration saved for {width}x{height}; waiting for the Calibrate tab");
+                    self.tried_resolution = Some((width, height));
+                }
+                // Not marked as tried, so the next frame retries the lookup.
                 Err(e) => self.storage_failed("loading calibration", e),
             }
         }

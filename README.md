@@ -28,6 +28,7 @@ The level digits aren't built in: the app learns them by itself while you play, 
 
 - **Live** shows your EXP/hr over the last 60 minutes of training, %/hr, time to level and EXP to level, with a chart of EXP per 10 minutes. Time in town or AFK doesn't lower the rate.
 - The **reset** button left of 2H/3H saves the last 2 hours to History as a snapshot and starts a new session.
+- Only one copy of the app runs at a time; opening it again brings the open window forward.
 - **History** lists snapshots, maps and sessions. Maps and snapshots can be renamed; snapshots can be deleted.
 - The status line at the bottom of the side nav says whether reading works. If it doesn't:
   - **EXP not readable:** the status bar is hidden or covered, or the EXP box moved. Recalibrate.
