@@ -343,7 +343,10 @@ impl Pipeline {
         for effect in &self.pending {
             let result = match *effect {
                 Effect::SessionStarted { key, map, t } => store.start_session(map, t).map(|id| {
-                    info!("session #{id} started on map #{map}");
+                    match map {
+                        Some(map) => info!("session #{id} started on map #{map}"),
+                        None => info!("session #{id} started before a map was confirmed"),
+                    }
                     self.keys.insert(key, id);
                 }),
                 Effect::SessionEnded { key, t } => {

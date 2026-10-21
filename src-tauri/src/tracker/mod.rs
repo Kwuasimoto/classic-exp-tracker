@@ -24,7 +24,8 @@ pub struct SessionKey(pub u64);
 pub struct Sample {
     pub t: i64,
     pub exp: Option<ExpReading>,
-    /// The currently confirmed map, if any.
+    /// The currently confirmed map: `None` until one is confirmed. EXP counts either
+    /// way, in a session without a map until then.
     pub map: Option<MapId>,
 }
 
@@ -32,7 +33,7 @@ pub struct Sample {
 /// A session's effects come in order: `SessionStarted`, its `Minute`s, `SessionEnded`.
 /// Nothing refers to a session after it ends.
 pub enum Effect {
-    SessionStarted { key: SessionKey, map: MapId, t: i64 },
+    SessionStarted { key: SessionKey, map: Option<MapId>, t: i64 },
     SessionEnded { key: SessionKey, t: i64 },
     Minute { minute_start: i64, key: SessionKey, exp_gained: u64, training_secs: u32 },
 }
@@ -47,7 +48,7 @@ pub const MAX_CONSECUTIVE_REJECTIONS: u32 = 5;
 #[derive(Clone, Copy, Debug)]
 struct ActiveSession {
     key: SessionKey,
-    map: MapId,
+    map: Option<MapId>,
     last_on_map: i64,
 }
 
@@ -95,7 +96,7 @@ impl Tracker {
         let gain = s.exp.map_or(0, |r| self.accept(r));
 
         if let Some(sess) = self.session.as_mut()
-            && s.map == Some(sess.map) {
+            && s.map == sess.map {
                 sess.last_on_map = s.t;
             }
         if let Some(sess) = self.session
@@ -105,17 +106,15 @@ impl Tracker {
 
         if gain > 0 {
             self.last_gain_t = Some(s.t);
-            if let Some(map) = s.map {
-                let key = self.session_for(map, s.t, &mut fx);
-                self.acc.entry(key).or_default().0 += gain;
-            }
+            let key = self.session_for(s.map, s.t, &mut fx);
+            self.acc.entry(key).or_default().0 += gain;
         }
 
         let dt = self.last_t.map_or(0, |prev| (s.t - prev).clamp(0, MAX_SAMPLE_GAP_SECS));
         self.last_t = Some(s.t);
-        if let (Some(sess), Some(map)) = (self.session, s.map) {
+        if let Some(sess) = self.session {
             let recently_gained = self.last_gain_t.is_some_and(|g| s.t - g <= TRAINING_GRACE_SECS);
-            if sess.map == map && recently_gained && dt > 0 {
+            if sess.map == s.map && recently_gained && dt > 0 {
                 // dt ≤ MAX_SAMPLE_GAP_SECS, so the cast cannot truncate.
                 self.acc.entry(sess.key).or_default().1 += dt as u32;
             }
@@ -155,7 +154,7 @@ impl Tracker {
         self.session = None;
     }
 
-    fn session_for(&mut self, map: MapId, t: i64, fx: &mut Vec<Effect>) -> SessionKey {
+    fn session_for(&mut self, map: Option<MapId>, t: i64, fx: &mut Vec<Effect>) -> SessionKey {
         if let Some(sess) = self.session {
             if sess.map == map {
                 return sess.key;
@@ -222,22 +221,25 @@ impl Tracker {
 
     /// A level read from the level box (digits learned from the EXP readings). Used
     /// only if its table total fits the EXP readings, so a misread can't change the totals.
+    /// With no EXP readings to check it against, it's used as is: the level shows even
+    /// while the EXP box can't be read, and check_level drops it if later readings disagree.
     pub fn use_screen_level(&mut self, level: u32) {
         if self.level == Some(level) {
             return;
         }
         let total = exp_to_next(level);
-        match self.bounds {
-            Some(bounds) if total.is_some_and(|t| bounds.contains(t)) => {
-                info!("screen shows level {level}; its table total {total:?} fits readings {bounds:?}");
-                self.level = Some(level);
-                self.unfit_screen_level = None;
-            }
-            Some(bounds) if self.unfit_screen_level != Some(level) => {
-                warn!("screen shows level {level}, but its table total {total:?} doesn't fit readings {bounds:?}; ignored");
-                self.unfit_screen_level = Some(level);
-            }
-            _ => {}
+        let Some(bounds) = self.bounds else {
+            info!("screen shows level {level}; no EXP readings to check it against yet");
+            self.level = Some(level);
+            return;
+        };
+        if total.is_some_and(|t| bounds.contains(t)) {
+            info!("screen shows level {level}; its table total {total:?} fits readings {bounds:?}");
+            self.level = Some(level);
+            self.unfit_screen_level = None;
+        } else if self.unfit_screen_level != Some(level) {
+            warn!("screen shows level {level}, but its table total {total:?} doesn't fit readings {bounds:?}; ignored");
+            self.unfit_screen_level = Some(level);
         }
     }
 
@@ -245,21 +247,20 @@ impl Tracker {
     /// (and say so) if the readings stop fitting its total.
     fn check_level(&mut self) {
         let Some(bounds) = self.bounds else { return };
-        match self.level {
-            Some(level) if exp_to_next(level).is_some_and(|t| bounds.contains(t)) => {}
-            Some(level) => {
-                warn!(
-                    "readings imply a level total in {bounds:?}, but the table says level {level} needs {:?}; level unknown until the readings fit one level",
-                    exp_to_next(level)
-                );
-                self.level = None;
-            }
-            None => {
-                if let Some(level) = bounds.matching_level() {
-                    info!("level {level} identified: table total {:?} fits readings {bounds:?}", exp_to_next(level));
-                    self.level = Some(level);
-                }
-            }
+        if let Some(level) = self.level
+            && !exp_to_next(level).is_some_and(|t| bounds.contains(t))
+        {
+            warn!(
+                "readings imply a level total in {bounds:?}, but the table says level {level} needs {:?}; level unknown until the readings fit one level",
+                exp_to_next(level)
+            );
+            self.level = None;
+        }
+        if self.level.is_none()
+            && let Some(level) = bounds.matching_level()
+        {
+            info!("level {level} identified: table total {:?} fits readings {bounds:?}", exp_to_next(level));
+            self.level = Some(level);
         }
     }
 
@@ -354,6 +355,30 @@ mod tests {
         let fx = tr.on_sample(Sample { t: 120, exp: None, map: TOWN });
         assert_eq!(total_exp(&fx), 50);
         assert_eq!(tr.current_minute(), None);
+    }
+
+    #[test]
+    fn exp_counts_before_any_map_is_confirmed() {
+        let mut tr = Tracker::new();
+        let mut fx = Vec::new();
+        for t in 0..=2 {
+            fx.extend(tr.on_sample(Sample { t, exp: reading(10_000 + 10 * t as u64, 1_000 + t as u32), map: None }));
+        }
+        // Once the map is confirmed, its gains go to a session on that map.
+        fx.extend(tr.on_sample(Sample { t: 3, exp: reading(10_030, 1_003), map: MAP }));
+        fx.extend(tr.finish());
+        let maps: Vec<_> = fx.iter().filter_map(|f| if let Effect::SessionStarted { map, .. } = f { Some(*map) } else { None }).collect();
+        assert_eq!((maps, total_exp(&fx)), (vec![None, MAP], 30));
+    }
+
+    #[test]
+    fn screen_level_shows_without_exp_readings_until_they_disagree() {
+        let mut tr = Tracker::new();
+        tr.use_screen_level(40);
+        assert_eq!(tr.level(), Some(40));
+        // 291,000 EXP at 89.75% fits only level 41's table total, so 40 was a misread.
+        tr.on_sample(Sample { t: 0, exp: reading(291_000, 8_975), map: MAP });
+        assert_eq!(tr.level(), Some(41));
     }
 
     #[test]

@@ -12,7 +12,7 @@ use crate::read::level::LevelGlyph;
 use crate::read::map_strip::Signature;
 use crate::tracker::MapId;
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 const SCHEMA: &str = "
 BEGIN;
 CREATE TABLE maps (
@@ -82,6 +82,26 @@ CREATE TABLE snapshot_minutes (
 CREATE TABLE settings (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
 PRAGMA user_version = 3;
 COMMIT;
+";
+/// Version 4: a session's map is optional, so EXP counts before a map is confirmed.
+/// SQLite can't drop NOT NULL in place, so the table is rebuilt; foreign keys are off
+/// meanwhile so dropping the old table leaves `minutes` alone.
+const MIGRATION_4: &str = "
+PRAGMA foreign_keys = OFF;
+BEGIN;
+CREATE TABLE sessions_new (
+    id INTEGER PRIMARY KEY,
+    map_id INTEGER REFERENCES maps(id),
+    started_at INTEGER NOT NULL,
+    ended_at INTEGER
+);
+INSERT INTO sessions_new (id, map_id, started_at, ended_at) SELECT id, map_id, started_at, ended_at FROM sessions;
+DROP TABLE sessions;
+ALTER TABLE sessions_new RENAME TO sessions;
+CREATE INDEX sessions_map ON sessions(map_id);
+PRAGMA user_version = 4;
+COMMIT;
+PRAGMA foreign_keys = ON;
 ";
 
 #[derive(Debug, thiserror::Error)]
@@ -166,6 +186,9 @@ impl Store {
         if version < 3 {
             conn.execute_batch(MIGRATION_3)?;
         }
+        if version < 4 {
+            conn.execute_batch(MIGRATION_4)?;
+        }
         Ok(Self { conn })
     }
 
@@ -191,7 +214,7 @@ impl Store {
         Ok(self.conn.last_insert_rowid())
     }
 
-    pub fn start_session(&self, map_id: MapId, t: i64) -> Result<i64, StoreError> {
+    pub fn start_session(&self, map_id: Option<MapId>, t: i64) -> Result<i64, StoreError> {
         self.conn.execute("INSERT INTO sessions (map_id, started_at) VALUES (?1, ?2)", params![map_id, t])?;
         Ok(self.conn.last_insert_rowid())
     }
@@ -391,10 +414,10 @@ mod tests {
     fn prune_keeps_snapshots_recent_minutes_and_the_open_session() {
         let store = Store::open_in_memory().unwrap();
         let map = store.insert_map("Map", &Signature { counts: vec![1], cut: false }, 0).unwrap();
-        let old = store.start_session(map, 0).unwrap();
+        let old = store.start_session(Some(map), 0).unwrap();
         store.add_minute(0, old, 100, 60).unwrap();
         store.end_session(old, 60).unwrap();
-        let open = store.start_session(map, 6_000).unwrap();
+        let open = store.start_session(None, 6_000).unwrap();
         store.add_minute(6_000, open, 50, 60).unwrap();
         let row = MinuteRow { minute_start: 0, exp_gained: 100, training_secs: 60 };
         let snapshot = store.create_snapshot("Saved", 60, None, None, &[row, row]).unwrap();
