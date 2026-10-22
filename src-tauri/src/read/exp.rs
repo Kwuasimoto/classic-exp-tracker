@@ -18,6 +18,13 @@ pub const HALF_WIDTH: i32 = 6;
 pub const MIN_MARGIN: f32 = 1.5;
 /// …and closer than this (sum of squared ink differences).
 pub const MAX_DISTANCE: f32 = 8.0;
+/// A run of text columns wider than this many line heights is glyphs that touch: on a
+/// friend's screen (2026-10-21) the two decimals of `47.08%` had no dark column between
+/// them and came out as one 16-column run. The widest glyph, '%', is 10 columns on an
+/// 11-row line; relative to the height, so it holds where the game is drawn larger.
+const MAX_GLYPH_WIDTH_PER_ROW: f32 = 1.2;
+/// Columns kept on each side when splitting touching glyphs, so no part is a sliver.
+const MIN_SPLIT_PART: u32 = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,6 +40,8 @@ pub struct ExpReading {
 pub struct Glyph {
     pub x: u32,
     pub ink: Vec<Vec<f32>>,
+    /// Cut from a run of glyphs that touched (see MAX_GLYPH_WIDTH_PER_ROW); logged.
+    pub split: bool,
 }
 
 fn lum(px: [u8; 4]) -> u32 {
@@ -40,8 +49,9 @@ fn lum(px: [u8; 4]) -> u32 {
     (299 * r + 587 * g + 114 * b) / 1000
 }
 
-/// Trim the line to its text rows, split it at columns without text, and keep
-/// one extra column on each side of a glyph for its anti-aliased edge.
+/// Trim the line to its text rows, split it at columns without text (and runs too wide
+/// for one glyph at their darkest column, where glyphs touch), and keep one extra
+/// column on each side of a glyph for its anti-aliased edge.
 pub fn segment(crop: &Crop) -> Result<Vec<Glyph>, ReadError> {
     let (w, h) = (crop.width, crop.height);
     let lums: Vec<Vec<u32>> = (0..h).map(|y| (0..w).map(|x| lum(crop.px(x, y))).collect()).collect();
@@ -65,7 +75,9 @@ pub fn segment(crop: &Crop) -> Result<Vec<Glyph>, ReadError> {
         (above / INK_RANGE).clamp(0.0, 1.0)
     };
 
-    let mut glyphs = Vec::new();
+    let max_width = ((bottom - top + 1) as f32 * MAX_GLYPH_WIDTH_PER_ROW) as u32;
+    let peak = |x: u32| (top..=bottom).map(|y| lums[y as usize][x as usize]).max().unwrap_or(0);
+    let mut runs = Vec::new();
     let mut x = 0;
     while x < w {
         if !column_has_text(x) {
@@ -76,11 +88,30 @@ pub fn segment(crop: &Crop) -> Result<Vec<Glyph>, ReadError> {
         while x < w && column_has_text(x) {
             x += 1;
         }
-        let columns = start.saturating_sub(1)..(x + 1).min(w);
-        let ink = (top..=bottom).map(|y| columns.clone().map(|gx| ink(gx, y)).collect()).collect();
-        glyphs.push(Glyph { x: start, ink });
+        // Left part first, so the runs stay in reading order. `true`: cut from a wider run.
+        let mut pending = Vec::new();
+        pending.push((start..x, false));
+        while let Some((run, split)) = pending.pop() {
+            let width = run.end - run.start;
+            if width <= max_width || width <= 2 * MIN_SPLIT_PART {
+                runs.push((run, split));
+                continue;
+            }
+            let gap = (run.start + MIN_SPLIT_PART..run.end - MIN_SPLIT_PART)
+                .min_by_key(|&c| peak(c))
+                .expect("a run wider than 2 × MIN_SPLIT_PART has interior columns");
+            pending.push((gap + 1..run.end, true));
+            pending.push((run.start..gap, true));
+        }
     }
-    Ok(glyphs)
+    Ok(runs
+        .into_iter()
+        .map(|(run, split)| {
+            let columns = run.start.saturating_sub(1)..(run.end + 1).min(w);
+            let ink = (top..=bottom).map(|y| columns.clone().map(|gx| ink(gx, y)).collect()).collect();
+            Glyph { x: run.start, ink, split }
+        })
+        .collect())
 }
 
 /// The glyph resampled at its centre of brightness −HALF_WIDTH … +HALF_WIDTH
@@ -138,7 +169,7 @@ pub fn to_art(centred: &[Vec<f32>]) -> Vec<String> {
 
 /// A glyph back from its ASCII art, so stored shapes can be compared like screen glyphs.
 pub fn from_art(rows: &[String]) -> Glyph {
-    Glyph { x: 0, ink: rows.iter().map(|r| r.bytes().map(art_level).collect()).collect() }
+    Glyph { x: 0, ink: rows.iter().map(|r| r.bytes().map(art_level).collect()).collect(), split: false }
 }
 
 /// Sum of squared ink differences; `None` if the line heights differ.
@@ -254,6 +285,20 @@ mod tests {
     fn reads_the_fixture() {
         let reading = read_exp(&fixture("exp_326_0.10.png"), &starter_glyphs()).expect("fixture is readable");
         assert_eq!(reading, ExpReading { exp: 326, pct_bp: 10 });
+    }
+
+    #[test]
+    fn glyphs_that_touch_are_split() {
+        // Bridge the gap between '3' and '2' with a dim column, as the game drew the
+        // decimals of `47.08%` on a friend's screen: no dark column between them.
+        let mut crop = fixture("exp_326_0.10.png");
+        let text_rows: Vec<u32> = (0..crop.height).filter(|&y| (0..crop.width).any(|x| lum(crop.px(x, y)) >= TEXT_LUM_MIN)).collect();
+        let middle = text_rows[text_rows.len() / 2];
+        let gap = segment(&crop).expect("text found")[1].x - 1;
+        let i = (middle * crop.width + gap) as usize * 4;
+        crop.rgba[i..i + 3].copy_from_slice(&[170, 170, 170]);
+        assert_eq!(segment(&crop).expect("text found").len(), 10, "split back into 10 glyphs");
+        assert_eq!(read_exp(&crop, &starter_glyphs()), Ok(ExpReading { exp: 326, pct_bp: 10 }));
     }
 
     #[test]

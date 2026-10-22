@@ -44,7 +44,7 @@ pub fn segment(crop: &Crop) -> Result<Vec<Glyph>, ReadError> {
         }
         let columns = start.saturating_sub(1)..(x + 1).min(w);
         let ink = (top..=bottom).map(|y| columns.clone().map(|gx| ink(gx, y)).collect()).collect();
-        glyphs.push(Glyph { x: start, ink });
+        glyphs.push(Glyph { x: start, ink, split: false });
     }
     Ok(glyphs)
 }

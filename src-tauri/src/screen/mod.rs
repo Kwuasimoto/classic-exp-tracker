@@ -10,7 +10,7 @@ use std::ops::RangeInclusive;
 use log::{info, warn};
 
 use crate::geom::Crop;
-use crate::read::exp::{centred, closest, read_exp, read_line, reading, to_art, ExpReading, Glyph, MAX_DISTANCE, MIN_MARGIN};
+use crate::read::exp::{centred, closest, distance_to, read_exp, read_line, reading, to_art, ExpReading, Glyph, MAX_DISTANCE, MIN_MARGIN};
 use crate::read::map_strip::{read_strip, Signature};
 use crate::read::{GlyphKind, LearnedGlyph, ReadError};
 use crate::tracker::{ConfirmOutcome, MapConfirmer, Tracker};
@@ -23,8 +23,9 @@ const EXP_STEADY_FRAMES: u32 = 3;
 /// the box (a window over it) isn't learned from or reported.
 const READOUT_GLYPHS: RangeInclusive<usize> = 8..=21;
 
-/// Unrecognised EXP glyph shapes logged per run (each distinct shape once), so a
-/// user's log shows exactly what failed without flooding it.
+/// Unrecognised EXP glyph shapes logged per run (each distinct shape once: a shape
+/// within half the match limit of a logged one counts as the same), so a user's log
+/// shows exactly what failed without flooding it.
 const MAX_LOGGED_UNKNOWN: usize = 40;
 
 /// One frame's regions, read.
@@ -63,6 +64,10 @@ pub struct Screen {
     exp_still: u32,
     /// Unrecognised EXP glyph shapes already logged this run.
     logged_unknown: Vec<Vec<String>>,
+    /// Frames this minute whose EXP readout had touching glyphs split apart, and
+    /// whether a split line was logged this run.
+    minute_splits: u32,
+    split_logged: bool,
     confirmer: MapConfirmer,
     level_box: LevelBox,
     exp_log: ReadLog,
@@ -79,6 +84,8 @@ impl Screen {
             exp_crop: None,
             exp_still: 0,
             logged_unknown: Vec::new(),
+            minute_splits: 0,
+            split_logged: false,
             confirmer: MapConfirmer::new(),
             level_box: LevelBox::default(),
             exp_log: ReadLog::new("EXP"),
@@ -119,6 +126,14 @@ impl Screen {
             Ok(line) => line,
             Err(e) => return ExpBox::read(Err(e)),
         };
+        if line.iter().any(|(g, _)| g.split) {
+            self.minute_splits += 1;
+            if !self.split_logged {
+                let text: String = line.iter().map(|(g, ch)| format!("{}{}", if g.split { "|" } else { "" }, ch.unwrap_or('?'))).collect();
+                info!("EXP readout had touching glyphs, split apart (marked |): {text:?}; counted per minute from now on");
+                self.split_logged = true;
+            }
+        }
         let has_unknown = line.iter().any(|(_, ch)| ch.is_none());
         if has_unknown {
             self.log_unknown(&line);
@@ -158,7 +173,7 @@ impl Screen {
                 return;
             }
             let art = to_art(&centred(glyph));
-            if self.logged_unknown.contains(&art) {
+            if self.logged_unknown.iter().any(|seen| distance_to(glyph, seen).is_some_and(|d| d <= MAX_DISTANCE / 2.0)) {
                 continue;
             }
             let near = closest(glyph, &self.exp_glyphs, 3);
@@ -169,9 +184,10 @@ impl Screen {
                 format!("closest {} (a match needs ≤ {MAX_DISTANCE:.2} and {MIN_MARGIN}× closer than any other character)", list.join(", "))
             };
             let width = glyph.ink.first().map_or(0, Vec::len);
+            let split = if glyph.split { ", cut from touching glyphs" } else { "" };
             let shape: String = art.iter().map(|row| format!("\n    |{row}|")).collect();
             warn!(
-                "EXP glyph {} of {} not recognised in {text:?} (column {}, {width}x{} px): {nearest}{shape}",
+                "EXP glyph {} of {} not recognised in {text:?} (column {}, {width}x{} px{split}): {nearest}{shape}",
                 i + 1,
                 line.len(),
                 glyph.x,
@@ -217,10 +233,17 @@ impl Screen {
         let minute = t.div_euclid(60);
         if minute != self.minute {
             if self.minute_frames > 0 {
-                info!("minute summary: {} frames, {}, {}", self.minute_frames, self.exp_log.end_minute(), self.map_log.end_minute());
+                info!(
+                    "minute summary: {} frames, {}, {}, EXP touching glyphs split in {} frame(s)",
+                    self.minute_frames,
+                    self.exp_log.end_minute(),
+                    self.map_log.end_minute(),
+                    self.minute_splits
+                );
             }
             self.minute = minute;
             self.minute_frames = 0;
+            self.minute_splits = 0;
         }
         self.minute_frames += 1;
     }
