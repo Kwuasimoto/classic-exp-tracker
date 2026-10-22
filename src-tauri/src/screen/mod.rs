@@ -115,7 +115,7 @@ impl Screen {
                     info!("EXP font: {} px text line, {:.2} px per font pixel", line.text_height, line.font_px());
                     self.logged_text_height = Some(line.text_height);
                 }
-                (read, line.glyphs.iter().any(|g| g.split))
+                (read, line.is_readout() && line.glyphs.iter().any(|g| g.split))
             }
             Err(e) => (Err(e), false),
         };
@@ -125,8 +125,13 @@ impl Screen {
     }
 
     /// Log the first readout with touching glyphs (counted per minute after that) and
-    /// glyphs not recognised.
+    /// glyphs not recognised. Only for the readout (Line::is_readout): a line drawn over
+    /// the box gets the one-line failure from ReadLog, and doesn't use up the glyph log
+    /// meant for the readout's own failures.
     fn log_line(&mut self, line: &Line) {
+        if !line.is_readout() {
+            return;
+        }
         if !self.split_logged && line.glyphs.iter().any(|g| g.split) {
             let text: String = line.glyphs.iter().map(|g| format!("{}{}", if g.split { "|" } else { "" }, g.ch.unwrap_or('?'))).collect();
             info!("EXP readout had touching glyphs, split apart (marked |): {text:?}; counted per minute from now on");

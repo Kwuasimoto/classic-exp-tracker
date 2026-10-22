@@ -57,6 +57,12 @@ impl Line {
         self.text_height as f32 / font::ROWS as f32
     }
 
+    /// Whether any glyph was recognised. A line with none isn't the readout: something
+    /// else is drawn over the box.
+    pub fn is_readout(&self) -> bool {
+        self.glyphs.iter().any(|g| g.ch.is_some())
+    }
+
     /// The text read, with '?' for each glyph not recognised.
     pub fn text(&self) -> String {
         self.glyphs.iter().map(|g| g.ch.unwrap_or('?')).collect()
