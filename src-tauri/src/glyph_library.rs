@@ -1,17 +1,18 @@
 //! A resolution's setup as a file, exported and imported on the Glyphs page: its
-//! calibration boxes and learned glyphs, so another PC with the same screen setup reads
-//! the same way. Each glyph is its character and centred ink as ASCII art (see
-//! read::exp::to_art), as the database stores it. Never pixels from a screenshot.
+//! calibration boxes and learned level digits, so another PC with the same screen
+//! setup reads the same way. Each glyph is its character and centred ink as ASCII art
+//! (see read::level::to_art), as the database stores it. Never pixels from a screenshot.
 
 use serde::{Deserialize, Serialize};
 
 use crate::geom::Calibration;
-use crate::read::exp::valid_art;
+use crate::read::level::valid_art;
 use crate::read::{GlyphKind, LearnedGlyph};
 
 const FORMAT: &str = "classic-exp-tracker-glyphs";
-/// Version 2 added the calibration; version 1 files (glyphs only) still import.
-const VERSION: u32 = 2;
+/// Version 2 added the calibration; version 3 (0.3.0) has no EXP glyphs, since EXP is
+/// read from the game's font. Older files still import (their EXP glyphs are skipped).
+const VERSION: u32 = 3;
 /// Far more than a library holds (15 + 10 characters, a few shapes each).
 const MAX_GLYPHS: usize = 1_000;
 /// Files larger than this aren't read.
@@ -123,7 +124,9 @@ mod tests {
         assert!(Library::parse(&short_row).is_err(), "rows must be glyph art width");
         assert!(Library::parse(&json.replace("1920x1080", "1920x")).is_err());
         assert!(Library::parse("{}").is_err());
-        let newer = json.replace("\"version\":2", "\"version\":3").replace("\"glyphs\"", "\"future\":1,\"glyphs\"");
+        let newer = json.replace("\"version\":3", "\"version\":4").replace("\"glyphs\"", "\"future\":1,\"glyphs\"");
         assert!(Library::parse(&newer).unwrap_err().contains("newer version"), "a newer app's file says so");
+        let older = json.replace("\"version\":3", "\"version\":2");
+        assert_eq!(Library::parse(&older).expect("an older file imports").glyphs[0].kind, GlyphKind::Exp);
     }
 }

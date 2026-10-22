@@ -8,7 +8,6 @@ use serde::Serialize;
 
 use crate::geom::{Calibration, Rect};
 use crate::rates::MinuteRow;
-use crate::read::glyphs::{starter_glyphs, STARTER_RESOLUTION};
 use crate::read::{GlyphKind, LearnedGlyph};
 use crate::read::map_strip::Signature;
 use crate::tracker::MapId;
@@ -270,17 +269,9 @@ impl Store {
             conn.execute_batch(MIGRATION_6)?;
         }
         if version < 7 {
-            // Version 7: the starter EXP glyphs join the 1920x1080 library as ordinary
-            // learned glyphs (until now they were matched from the code alongside it).
-            let tx = conn.unchecked_transaction()?;
-            for glyph in starter_glyphs() {
-                tx.execute(
-                    "INSERT INTO glyphs (resolution, kind, ch, art) VALUES (?1, 'exp', ?2, ?3)",
-                    params![STARTER_RESOLUTION, glyph.ch.to_string(), glyph.rows.join("\n")],
-                )?;
-            }
-            tx.execute_batch("PRAGMA user_version = 7;")?;
-            tx.commit()?;
+            // Version 7 seeded starter EXP glyphs at 1920x1080. Since 0.3.0 the EXP reader
+            // matches the game's font and reads no EXP glyphs, so new databases skip it.
+            conn.execute_batch("PRAGMA user_version = 7;")?;
         }
         Ok(Self { conn })
     }
@@ -398,9 +389,11 @@ impl Store {
         Ok(())
     }
 
-    /// The glyphs learned at `resolution`, oldest first.
+    /// The level digits learned at `resolution`, oldest first. EXP glyphs from before
+    /// 0.3.0 stay in the table unread (see read::GlyphKind), here and below.
     pub fn glyphs(&self, resolution: &str) -> Result<Vec<StoredGlyph>, StoreError> {
-        let mut stmt = self.conn.prepare("SELECT id, kind, ch, art FROM glyphs WHERE resolution = ?1 ORDER BY id")?;
+        let mut stmt =
+            self.conn.prepare("SELECT id, kind, ch, art FROM glyphs WHERE resolution = ?1 AND kind = 'level' ORDER BY id")?;
         let rows = stmt
             .query_map([resolution], |r| {
                 Ok(StoredGlyph { id: r.get(0)?, kind: kind_at(r, 1)?, glyph: LearnedGlyph { ch: char_at(r, 2)?, rows: art_at(r, 3)? } })
@@ -425,7 +418,7 @@ impl Store {
     pub fn glyph_resolutions(&self) -> Result<Vec<String>, StoreError> {
         let mut stmt = self
             .conn
-            .prepare("SELECT resolution FROM glyphs UNION SELECT resolution FROM unknown_glyphs WHERE NOT dismissed")?;
+            .prepare("SELECT resolution FROM glyphs WHERE kind = 'level' UNION SELECT resolution FROM unknown_glyphs WHERE kind = 'level' AND NOT dismissed")?;
         let rows = stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<Vec<String>>>()?;
         Ok(rows)
     }
@@ -450,7 +443,7 @@ impl Store {
 
     /// Which readout a learned glyph belongs to; `None` when no learned glyph has that id.
     pub fn glyph_kind(&self, id: i64) -> Result<Option<GlyphKind>, StoreError> {
-        Ok(self.conn.query_row("SELECT kind FROM glyphs WHERE id = ?1", [id], |r| kind_at(r, 0)).optional()?)
+        Ok(self.conn.query_row("SELECT kind FROM glyphs WHERE id = ?1 AND kind = 'level'", [id], |r| kind_at(r, 0)).optional()?)
     }
 
     /// Change a learned glyph's character (it was learned or named wrongly).
@@ -461,12 +454,12 @@ impl Store {
 
     /// `false` when no learned glyph has that id.
     pub fn forget_glyph(&self, id: i64) -> Result<bool, StoreError> {
-        Ok(self.conn.execute("DELETE FROM glyphs WHERE id = ?1", [id])? == 1)
+        Ok(self.conn.execute("DELETE FROM glyphs WHERE id = ?1 AND kind = 'level'", [id])? == 1)
     }
 
     /// Waiting and dismissed alike.
     pub fn unknown_glyphs(&self, resolution: &str) -> Result<Vec<UnknownGlyph>, StoreError> {
-        let mut stmt = self.conn.prepare("SELECT id, kind, art, dismissed FROM unknown_glyphs WHERE resolution = ?1 ORDER BY id")?;
+        let mut stmt = self.conn.prepare("SELECT id, kind, art, dismissed FROM unknown_glyphs WHERE resolution = ?1 AND kind = 'level' ORDER BY id")?;
         let rows = stmt
             .query_map([resolution], |r| {
                 Ok(UnknownGlyph { id: r.get(0)?, kind: kind_at(r, 1)?, rows: art_at(r, 2)?, dismissed: r.get(3)? })
@@ -479,7 +472,7 @@ impl Store {
     pub fn unknown_glyph(&self, id: i64) -> Result<Option<UnknownGlyph>, StoreError> {
         Ok(self
             .conn
-            .query_row("SELECT id, kind, art, dismissed FROM unknown_glyphs WHERE id = ?1 AND NOT dismissed", [id], |r| {
+            .query_row("SELECT id, kind, art, dismissed FROM unknown_glyphs WHERE id = ?1 AND kind = 'level' AND NOT dismissed", [id], |r| {
                 Ok(UnknownGlyph { id: r.get(0)?, kind: kind_at(r, 1)?, rows: art_at(r, 2)?, dismissed: r.get(3)? })
             })
             .optional()?)
@@ -497,7 +490,7 @@ impl Store {
     /// Hide a waiting unknown glyph; it's kept so the shape isn't recorded again.
     /// `false` when no waiting unknown glyph has that id.
     pub fn dismiss_unknown_glyph(&self, id: i64) -> Result<bool, StoreError> {
-        Ok(self.conn.execute("UPDATE unknown_glyphs SET dismissed = 1 WHERE id = ?1 AND NOT dismissed", [id])? == 1)
+        Ok(self.conn.execute("UPDATE unknown_glyphs SET dismissed = 1 WHERE id = ?1 AND kind = 'level' AND NOT dismissed", [id])? == 1)
     }
 
     /// Delete an unknown glyph that a learned glyph now reads.

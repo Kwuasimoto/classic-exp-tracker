@@ -7,9 +7,8 @@
 use log::{info, warn};
 
 use crate::geom::Crop;
-use crate::read::exp::Glyph;
-use crate::read::level;
-use crate::read::{GlyphKind, LearnedGlyph};
+use crate::read::level::{self, classify, Glyph};
+use crate::read::LearnedGlyph;
 
 const STEADY_FRAMES: u32 = 3;
 /// Accepted EXP readings, with the box and the tracker's level both unchanged,
@@ -108,7 +107,7 @@ impl LevelBox {
             return Vec::new();
         }
         self.unknown_reported = true;
-        self.glyphs.iter().filter(|g| !GlyphKind::recognises(g, &self.learned)).cloned().collect()
+        self.glyphs.iter().filter(|g| classify(g, &self.learned).is_none()).cloned().collect()
     }
 
     /// The level the box shows, once it has held still.

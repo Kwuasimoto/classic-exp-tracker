@@ -1,69 +1,63 @@
-//! What the screen shows, frame by frame: reads the calibrated regions, learns EXP
-//! glyphs it doesn't know yet, debounces map changes, follows the level box, and logs
-//! reader failures. No I/O apart from log lines; pipeline.rs saves what this module finds.
+//! What the screen shows, frame by frame: reads the calibrated regions, debounces map
+//! changes, follows the level box, and logs reader failures. No I/O apart from log
+//! lines; pipeline.rs saves what this module finds.
 
-mod exp_learner;
 mod level_box;
-
-use std::ops::RangeInclusive;
 
 use log::{info, warn};
 
 use crate::geom::Crop;
-use crate::read::exp::{centred, closest, distance_to, read_exp, read_line, reading, to_art, ExpReading, Glyph, MAX_DISTANCE, MIN_MARGIN};
+use crate::read::exp::{read_line, reading, ExpReading, Glyph, Line};
+use crate::read::font::{ncc, MIN_LEAD, MIN_SCORE};
+use crate::read::level::Glyph as LevelGlyph;
 use crate::read::map_strip::{read_strip, Signature};
-use crate::read::{GlyphKind, LearnedGlyph, ReadError};
+use crate::read::{LearnedGlyph, ReadError};
 use crate::tracker::{ConfirmOutcome, MapConfirmer, Tracker};
 use level_box::LevelBox;
 
-/// Frames the EXP box must look the same before its unknown glyphs are learned or
-/// reported, so a readout caught mid-change isn't.
-const EXP_STEADY_FRAMES: u32 = 3;
-/// Glyphs in a real readout, `0[0.00%]` … `9,999,999,999[99.99%]`; anything else in
-/// the box (a window over it) isn't learned from or reported.
-const READOUT_GLYPHS: RangeInclusive<usize> = 8..=21;
-
-/// Unrecognised EXP glyph shapes logged per run (each distinct shape once: a shape
-/// within half the match limit of a logged one counts as the same), so a user's log
-/// shows exactly what failed without flooding it.
+/// Unrecognised EXP glyphs logged per run (each distinct look once: one that
+/// correlates this well with a logged one, at the same size, counts as the same), so
+/// a user's log shows exactly what failed without flooding it.
 const MAX_LOGGED_UNKNOWN: usize = 40;
+const SAME_LOOK: f32 = 0.9;
+
+/// The EXP box's pixels on the last frame, what they read as, and whether touching
+/// glyphs were split apart in them.
+struct LastExp {
+    crop: Crop,
+    read: Result<ExpReading, ReadError>,
+    split: bool,
+}
+
+/// A glyph's brightness for the log, one line per row, darkest to brightest as
+/// " .:-=+*#%@".
+fn brightness_art(glyph: &Glyph) -> String {
+    const LEVELS: &[u8; 10] = b" .:-=+*#%@";
+    let lums = &glyph.patch.lums;
+    let (lo, hi) = lums.iter().fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), &v| (lo.min(v), hi.max(v)));
+    let level = |v: f32| if hi > lo { ((v - lo) / (hi - lo) * 9.0).round() as usize } else { 0 };
+    lums.chunks(glyph.patch.width.max(1))
+        .map(|row| format!("\n    |{}|", row.iter().map(|&v| LEVELS[level(v)] as char).collect::<String>()))
+        .collect()
+}
 
 /// One frame's regions, read.
 pub struct FrameRead {
     pub exp: Option<ExpReading>,
-    /// The EXP readout has glyphs that no known glyph matches.
-    pub exp_unknown: bool,
     pub map_readable: bool,
     /// A map confirmed on this frame, with the strips that confirmed it (for OCR).
     pub new_map: Option<(Signature, Vec<Crop>)>,
-    /// EXP glyphs learned on this frame (already in use), to save.
-    pub learned_exp: Vec<LearnedGlyph>,
-    /// Shapes no glyph matches, for the Glyphs page.
-    pub unknown: Vec<(GlyphKind, Glyph)>,
-}
-
-/// The EXP box on one frame: its reading, the glyphs learned from it, and the
-/// glyphs reported as unknown.
-struct ExpBox {
-    read: Result<ExpReading, ReadError>,
-    learned: Vec<LearnedGlyph>,
-    unknown: Vec<(GlyphKind, Glyph)>,
-}
-
-impl ExpBox {
-    fn read(read: Result<ExpReading, ReadError>) -> Self {
-        Self { read, learned: Vec::new(), unknown: Vec::new() }
-    }
+    /// Level digits no learned digit matches, for the Glyphs page.
+    pub unknown: Vec<LevelGlyph>,
 }
 
 pub struct Screen {
-    /// EXP glyphs learned at this resolution.
-    exp_glyphs: Vec<LearnedGlyph>,
-    /// The EXP box's pixels and how many frames in a row they've looked the same.
-    exp_crop: Option<Crop>,
-    exp_still: u32,
-    /// Unrecognised EXP glyph shapes already logged this run.
-    logged_unknown: Vec<Vec<String>>,
+    /// The EXP box last frame: an unchanged box isn't read again.
+    exp_last: Option<LastExp>,
+    /// Unrecognised EXP glyphs already logged this run.
+    logged_unknown: Vec<Glyph>,
+    /// The text height of the last readout that read, logged when it changes (a new scale).
+    logged_text_height: Option<u32>,
     /// Frames this minute whose EXP readout had touching glyphs split apart, and
     /// whether a split line was logged this run.
     minute_splits: u32,
@@ -80,10 +74,9 @@ pub struct Screen {
 impl Screen {
     pub fn new() -> Self {
         Self {
-            exp_glyphs: Vec::new(),
-            exp_crop: None,
-            exp_still: 0,
+            exp_last: None,
             logged_unknown: Vec::new(),
+            logged_text_height: None,
             minute_splits: 0,
             split_logged: false,
             confirmer: MapConfirmer::new(),
@@ -95,12 +88,10 @@ impl Screen {
         }
     }
 
-    /// Read this frame's regions; `tracker` (before this frame's sample) tells which
-    /// characters an unknown EXP glyph could be.
-    pub fn read(&mut self, t: i64, exp: &Crop, map: Crop, level: Option<Crop>, tracker: &Tracker) -> FrameRead {
+    /// Read this frame's regions.
+    pub fn read(&mut self, t: i64, exp: &Crop, map: Crop, level: Option<Crop>) -> FrameRead {
         self.count_frame(t);
-        let ExpBox { read, learned: learned_exp, mut unknown } = self.read_exp_box(exp, tracker);
-        let exp_unknown = matches!(read, Err(ReadError::UnknownGlyph { .. }));
+        let read = self.read_exp_box(exp);
         let exp = self.exp_log.record(t, read);
         let signature = self.map_log.record(t, read_strip(&map).map(|strip| strip.signature));
         let map_readable = signature.is_some();
@@ -109,94 +100,86 @@ impl Screen {
             ConfirmOutcome::Unchanged => None,
         });
         self.level_box.observe(level);
-        unknown.extend(self.level_box.take_unknown().into_iter().map(|g| (GlyphKind::Level, g)));
-        FrameRead { exp, exp_unknown, map_readable, new_map, learned_exp, unknown }
+        let unknown = self.level_box.take_unknown();
+        FrameRead { exp, map_readable, new_map, unknown }
     }
 
-    /// The EXP readout, and once the box has held still with glyphs it can't read:
-    /// those glyphs learned (when only one character fits), or else reported.
-    fn read_exp_box(&mut self, exp: &Crop, tracker: &Tracker) -> ExpBox {
-        if self.exp_crop.as_ref() == Some(exp) {
-            self.exp_still = self.exp_still.saturating_add(1);
-        } else {
-            self.exp_crop = Some(exp.clone());
-            self.exp_still = 1;
+    /// The EXP readout. A box that looks as it did last frame reads as it did then;
+    /// a changed one is read, and what's notable about it logged.
+    fn read_exp_box(&mut self, exp: &Crop) -> Result<ExpReading, ReadError> {
+        if let Some(last) = &self.exp_last
+            && last.crop == *exp
+        {
+            self.minute_splits += u32::from(last.split);
+            return last.read.clone();
         }
-        let line = match read_line(exp, &self.exp_glyphs) {
-            Ok(line) => line,
-            Err(e) => return ExpBox::read(Err(e)),
-        };
-        if line.iter().any(|(g, _)| g.split) {
-            self.minute_splits += 1;
-            if !self.split_logged {
-                let text: String = line.iter().map(|(g, ch)| format!("{}{}", if g.split { "|" } else { "" }, ch.unwrap_or('?'))).collect();
-                info!("EXP readout had touching glyphs, split apart (marked |): {text:?}; counted per minute from now on");
-                self.split_logged = true;
-            }
-        }
-        let has_unknown = line.iter().any(|(_, ch)| ch.is_none());
-        if has_unknown {
-            self.log_unknown(&line);
-        }
-        if !has_unknown || self.exp_still != EXP_STEADY_FRAMES || !READOUT_GLYPHS.contains(&line.len()) {
-            return ExpBox::read(reading(&line));
-        }
-        match exp_learner::learn(&line, |r| tracker.plausible(r)) {
-            Some(learned) => {
-                for glyph in &learned {
-                    info!("learned EXP glyph {:?}", glyph.ch);
-                }
-                self.exp_glyphs.extend(learned.iter().cloned());
-                ExpBox { read: read_exp(exp, &self.exp_glyphs), learned, unknown: Vec::new() }
-            }
-            None => {
+        let (read, split) = match read_line(exp) {
+            Ok(line) => {
+                self.log_line(&line);
                 let read = reading(&line);
-                let unknown = line.into_iter().filter(|(_, ch)| ch.is_none()).map(|(g, _)| (GlyphKind::Exp, g)).collect();
-                ExpBox { read, learned: Vec::new(), unknown }
+                if read.is_ok() && self.logged_text_height != Some(line.text_height) {
+                    info!("EXP font: {} px text line, {:.2} px per font pixel", line.text_height, line.font_px());
+                    self.logged_text_height = Some(line.text_height);
+                }
+                (read, line.glyphs.iter().any(|g| g.split))
             }
+            Err(e) => (Err(e), false),
+        };
+        self.minute_splits += u32::from(split);
+        self.exp_last = Some(LastExp { crop: exp.clone(), read: read.clone(), split });
+        read
+    }
+
+    /// Log the first readout with touching glyphs (counted per minute after that) and
+    /// glyphs not recognised.
+    fn log_line(&mut self, line: &Line) {
+        if !self.split_logged && line.glyphs.iter().any(|g| g.split) {
+            let text: String = line.glyphs.iter().map(|g| format!("{}{}", if g.split { "|" } else { "" }, g.ch.unwrap_or('?'))).collect();
+            info!("EXP readout had touching glyphs, split apart (marked |): {text:?}; counted per minute from now on");
+            self.split_logged = true;
+        }
+        if line.glyphs.iter().any(|g| g.ch.is_none()) {
+            self.log_unknown(line);
         }
     }
 
-    /// Log each unrecognised glyph shape of `line` not logged yet this run: the line it
-    /// was in, its height, the closest characters with their distances against the
-    /// acceptance limits, and the shape itself (ink levels " .:-=+*#%@", as stored).
-    fn log_unknown(&mut self, line: &[(Glyph, Option<char>)]) {
-        let text: String = line.iter().map(|(_, ch)| ch.unwrap_or('?')).collect();
-        let heights: Vec<usize> = {
-            let mut h: Vec<usize> = self.exp_glyphs.iter().map(|g| g.rows.len()).collect();
-            h.sort_unstable();
-            h.dedup();
-            h
-        };
-        for (i, (glyph, _)) in line.iter().enumerate().filter(|(_, (_, ch))| ch.is_none()) {
+    /// Log each unrecognised glyph of `line` that doesn't look like one logged this
+    /// run: the line it was in, where it is and its size, the closest characters with
+    /// their scores against the acceptance limits, and its brightness.
+    fn log_unknown(&mut self, line: &Line) {
+        let text = line.text();
+        for (i, glyph) in line.glyphs.iter().enumerate().filter(|(_, g)| g.ch.is_none()) {
             if self.logged_unknown.len() >= MAX_LOGGED_UNKNOWN {
                 return;
             }
-            let art = to_art(&centred(glyph));
-            if self.logged_unknown.iter().any(|seen| distance_to(glyph, seen).is_some_and(|d| d <= MAX_DISTANCE / 2.0)) {
+            let seen = |g: &Glyph| {
+                (g.patch.width, g.patch.height) == (glyph.patch.width, glyph.patch.height)
+                    && ncc(&g.patch.lums, &glyph.patch.lums) >= SAME_LOOK
+            };
+            if self.logged_unknown.iter().any(seen) {
                 continue;
             }
-            let near = closest(glyph, &self.exp_glyphs, 3);
+            let near: Vec<String> = glyph.ranked.iter().take(3).map(|(ch, score)| format!("{ch:?} {score:.3}")).collect();
             let nearest = if near.is_empty() {
-                format!("no glyph is {} rows tall (glyphs here are {heights:?} rows)", art.len())
+                format!("no font character is {} px wide at this scale", glyph.width)
             } else {
-                let list: Vec<String> = near.iter().map(|(ch, d)| format!("{ch:?} {d:.2}")).collect();
-                format!("closest {} (a match needs ≤ {MAX_DISTANCE:.2} and {MIN_MARGIN}× closer than any other character)", list.join(", "))
+                format!("closest {} (a match needs ≥ {MIN_SCORE} and a lead of {MIN_LEAD})", near.join(", "))
             };
-            let width = glyph.ink.first().map_or(0, Vec::len);
             let split = if glyph.split { ", cut from touching glyphs" } else { "" };
-            let shape: String = art.iter().map(|row| format!("\n    |{row}|")).collect();
             warn!(
-                "EXP glyph {} of {} not recognised in {text:?} (column {}, {width}x{} px{split}): {nearest}{shape}",
+                "EXP glyph {} of {} not recognised in {text:?} (column {}, {} px wide, {} px text line, {:.2} px per font pixel{split}): {nearest}{}",
                 i + 1,
-                line.len(),
+                line.glyphs.len(),
                 glyph.x,
-                art.len()
+                glyph.width,
+                line.text_height,
+                line.font_px(),
+                brightness_art(glyph)
             );
-            self.logged_unknown.push(art);
+            self.logged_unknown.push(glyph.clone());
         }
         if self.logged_unknown.len() >= MAX_LOGGED_UNKNOWN {
-            warn!("{MAX_LOGGED_UNKNOWN} unrecognised EXP glyph shapes logged; not logging more this run");
+            warn!("{MAX_LOGGED_UNKNOWN} unrecognised EXP glyphs logged; not logging more this run");
         }
     }
 
@@ -215,11 +198,9 @@ impl Screen {
         learned
     }
 
-    /// Use the glyphs learned at the current resolution. The EXP and level boxes are
-    /// read afresh with them.
-    pub fn set_glyphs(&mut self, exp: Vec<LearnedGlyph>, level: Vec<LearnedGlyph>) {
-        self.exp_glyphs = exp;
-        self.exp_crop = None;
+    /// Use the level digits learned at the current resolution; the level box is read
+    /// afresh with them.
+    pub fn set_level_glyphs(&mut self, level: Vec<LearnedGlyph>) {
         self.level_box.set_learned(level);
     }
 

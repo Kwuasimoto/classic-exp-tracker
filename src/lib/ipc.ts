@@ -14,7 +14,6 @@ export type AppError = z.infer<typeof AppErrorSchema> | { kind: "ipc"; message: 
 export const ReaderStatusSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("ok") }),
   z.object({ kind: z.literal("expUnreadable") }),
-  z.object({ kind: z.literal("expNeedsGlyphs") }),
   z.object({ kind: z.literal("mapUnreadable") }),
   z.object({ kind: z.literal("notCalibrated") }),
   z.object({ kind: z.literal("captureFailed"), detail: z.string() }),
@@ -89,7 +88,6 @@ export const GlyphsSchema = z.object({
   calibrated: z.boolean(),
   learned: z.array(z.object({ id: z.number().int(), kind: GlyphKindSchema, ch: z.string().length(1), art: ArtSchema })),
   unknown: z.array(z.object({ id: z.number().int(), kind: GlyphKindSchema, art: ArtSchema })),
-  missingExp: z.string(),
   missingLevel: z.string(),
 });
 export type Glyphs = z.infer<typeof GlyphsSchema>;

@@ -14,9 +14,10 @@ import {
 } from "../lib/ipc";
 
 type Section = "unknown" | "learned";
-/** Ink levels of glyph art, as in read/exp.rs: ' ' = 0/9 … '@' = 9/9. */
+/** Ink levels of glyph art, as in read/level.rs: ' ' = 0/9 … '@' = 9/9. */
 const ART_LEVELS = " .:-=+*#%@";
-const KINDS: readonly GlyphKind[] = ["exp", "level"];
+/** EXP is read from the game's font; only level digits are learned. */
+const KINDS: readonly GlyphKind[] = ["level"];
 const KIND_LABEL: Record<GlyphKind, string> = { exp: "EXP", level: "Level" };
 const ALPHABET: Record<GlyphKind, string> = { exp: "0123456789,.[]%", level: "0123456789" };
 
@@ -30,8 +31,8 @@ function GlyphShape({ art, scale }: { art: string[]; scale: number }) {
   );
 }
 
-/** Characters the app reads, one library per resolution (the one in use is shown first):
- *  shapes it couldn't read wait under Unknown for the user to name; everything it knows
+/** Level digits the app reads, one library per resolution (the one in use is shown first):
+ *  digits it couldn't read wait under Unknown for the user to name; everything it knows
  *  is under Learned. Libraries can be exported to a file and imported again. */
 export function GlyphsView({ tick }: { tick: Tick | null }) {
   const [glyphs, setGlyphs] = useState<Glyphs | null>(null);
@@ -113,10 +114,10 @@ export function GlyphsView({ tick }: { tick: Tick | null }) {
         <div className="row" style={{ justifyContent: "space-between" }}>
           <h2 style={{ margin: 0 }}>Glyphs</h2>
           <div className="row" style={{ gap: 8 }}>
-            <button className="btn" disabled={!shown || !canExport} title="Save this resolution's calibration boxes and learned glyphs to a file" onClick={() => shown && void exportLibrary(shown)}>
+            <button className="btn" disabled={!shown || !canExport} title="Save this resolution's calibration boxes and learned level digits to a file" onClick={() => shown && void exportLibrary(shown)}>
               Export
             </button>
-            <button className="btn" title="Load an exported setup: its boxes replace yours for that resolution, its glyphs are added" onClick={() => void importLibrary()}>Import</button>
+            <button className="btn" title="Load an exported setup: its boxes replace yours for that resolution, its level digits are added" onClick={() => void importLibrary()}>Import</button>
           </div>
         </div>
         {glyphs && glyphs.resolutions.length > 0 && (
@@ -139,9 +140,9 @@ export function GlyphsView({ tick }: { tick: Tick | null }) {
           </div>
         </div>
         <p className="caption" style={{ marginBottom: 0 }}>
-          The app reads your EXP and level by matching each character against the glyphs for your screen resolution, picked
-          automatically. It learns new ones by itself while you play; a shape it can't place waits under Unknown for you to
-          type which character it is. Glyphs are stored character shapes, never screenshots.
+          EXP is read from the game's own pixel font at any screen size, with nothing to learn. Level digits are learned per
+          screen resolution, picked automatically: the app learns them by itself while you play, and a digit it can't place
+          waits under Unknown for you to type which one it is. Glyphs are stored character shapes, never screenshots.
         </p>
         {message && <p className="caption" style={{ marginBottom: 0 }}>{message}</p>}
       </section>
@@ -157,7 +158,7 @@ export function GlyphsView({ tick }: { tick: Tick | null }) {
           {shown === null ? (
             <p className="caption">Waiting for the first screen capture…</p>
           ) : unknown.length === 0 ? (
-            <p className="caption">Nothing unrecognised. Shapes the app can't read on your EXP or level show up here.</p>
+            <p className="caption">Nothing unrecognised. Level digits the app can't read show up here.</p>
           ) : (
             <div className="glyph-list">
               {unknown.map((u) => (
@@ -191,7 +192,7 @@ export function GlyphsView({ tick }: { tick: Tick | null }) {
           const entries = learned
             .filter((g) => g.kind === kind)
             .sort((a, b) => ALPHABET[kind].indexOf(a.ch) - ALPHABET[kind].indexOf(b.ch));
-          const missing = kind === "exp" ? glyphs?.missingExp : glyphs?.missingLevel;
+          const missing = glyphs?.missingLevel;
           return (
             <section key={kind} className="panel">
               <div className="row" style={{ justifyContent: "space-between" }}>

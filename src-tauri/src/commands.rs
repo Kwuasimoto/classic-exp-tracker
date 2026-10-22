@@ -127,9 +127,8 @@ pub fn preview_regions(state: AppStateRef<'_>, exp: Rect, map: Rect, level: Opti
     let frame = grabbed_frame(&state)?;
     let outside = || "box is outside the frame".to_string();
     let glyphs = state.store.lock().expect("store lock poisoned").glyphs(&resolution_key(frame.width, frame.height))?;
-    let learned = |kind: GlyphKind| glyphs.iter().filter(|g| g.kind == kind).map(|g| g.glyph.clone()).collect::<Vec<_>>();
-    let (learned_exp, learned_level) = (learned(GlyphKind::Exp), learned(GlyphKind::Level));
-    let exp = match frame.sub(exp).ok_or_else(outside).and_then(|c| read_exp(&c, &learned_exp).map_err(|e| e.to_string())) {
+    let learned_level: Vec<LearnedGlyph> = glyphs.into_iter().map(|g| g.glyph).collect();
+    let exp = match frame.sub(exp).ok_or_else(outside).and_then(|c| read_exp(&c).map_err(|e| e.to_string())) {
         Ok(value) => Preview::Ok { value },
         Err(reason) => Preview::Failed { reason },
     };
@@ -201,8 +200,7 @@ pub struct Glyphs {
     calibrated: bool,
     learned: Vec<LearnedEntry>,
     unknown: Vec<UnknownEntry>,
-    /// Characters of each readout with no glyph yet, e.g. "479".
-    missing_exp: String,
+    /// Level digits with no glyph yet, e.g. "479".
     missing_level: String,
 }
 
@@ -240,12 +238,11 @@ pub fn get_glyphs(state: AppStateRef<'_>, resolution: Option<String>) -> Result<
             store.unknown_glyphs(resolution)?.into_iter().filter(|u| !u.dismissed).map(|u| UnknownEntry { id: u.id, kind: u.kind, art: u.rows }),
         );
     }
-    let missing = |kind: GlyphKind| kind.alphabet().chars().filter(|&c| !learned.iter().any(|g| g.kind == kind && g.ch == c)).collect();
-    let (missing_exp, missing_level) = (missing(GlyphKind::Exp), missing(GlyphKind::Level));
-    Ok(Glyphs { resolution, in_use, resolutions, calibrated, learned, unknown, missing_exp, missing_level })
+    let missing_level = GlyphKind::Level.alphabet().chars().filter(|&c| !learned.iter().any(|g| g.ch == c)).collect();
+    Ok(Glyphs { resolution, in_use, resolutions, calibrated, learned, unknown, missing_level })
 }
 
-/// Save `resolution`'s setup (calibration boxes and every glyph in its library) to a
+/// Save `resolution`'s setup (calibration boxes and its learned level digits) to a
 /// file the user picks. Returns its path, or `None` if the user cancelled.
 #[tauri::command(async)]
 pub fn export_glyphs(window: WebviewWindow, state: AppStateRef<'_>, resolution: String) -> Result<Option<String>, AppError> {
@@ -288,7 +285,7 @@ pub struct Imported {
 
 /// Import a setup file the user picks into its resolution: its calibration boxes
 /// replace the ones saved there (in use at once if it's the current resolution), and
-/// its glyphs are added. `None` if the user cancelled.
+/// its level digits are added. `None` if the user cancelled.
 #[tauri::command(async)]
 pub fn import_glyphs(window: WebviewWindow, state: AppStateRef<'_>) -> Result<Option<Imported>, AppError> {
     let picked = window
@@ -306,8 +303,9 @@ pub fn import_glyphs(window: WebviewWindow, state: AppStateRef<'_>) -> Result<Op
     }
     let json = std::fs::read_to_string(&path).map_err(|e| AppError::File(format!("reading {}: {e}", path.display())))?;
     let library = Library::parse(&json).map_err(AppError::Invalid)?;
-    let glyphs: Vec<(GlyphKind, LearnedGlyph)> =
-        library.glyphs.into_iter().map(|g| (g.kind, LearnedGlyph { ch: g.ch, rows: g.art })).collect();
+    // EXP glyphs in files from before 0.3.0 are skipped: EXP is read from the game's font.
+    let (glyphs, exp_glyphs): (Vec<_>, Vec<_>) = library.glyphs.into_iter().partition(|g| g.kind == GlyphKind::Level);
+    let glyphs: Vec<(GlyphKind, LearnedGlyph)> = glyphs.into_iter().map(|g| (g.kind, LearnedGlyph { ch: g.ch, rows: g.art })).collect();
     let (width, height) = valid_resolution(&library.resolution)?;
     let added = {
         let store = state.store.lock().expect("store lock poisoned");
@@ -325,7 +323,13 @@ pub fn import_glyphs(window: WebviewWindow, state: AppStateRef<'_>) -> Result<Op
             *state.capture.regions.write().expect("regions lock poisoned") = Some(Regions { width, height, calibration });
         }
     }
-    log::info!("imported {added} of {} glyph(s) for {} from {}", glyphs.len(), library.resolution, path.display());
+    log::info!(
+        "imported {added} of {} level glyph(s) for {} from {} ({} EXP glyph(s) from an older version skipped)",
+        glyphs.len(),
+        library.resolution,
+        path.display(),
+        exp_glyphs.len()
+    );
     state.glyphs_changed.store(true, Ordering::Release);
     Ok(Some(Imported { resolution: library.resolution, added, total: glyphs.len(), calibration: library.calibration.is_some() }))
 }

@@ -1,7 +1,7 @@
 //! Pure screen readers: in-memory crop in, parsed value out.
 
 pub mod exp;
-pub mod glyphs;
+pub mod font;
 pub mod level;
 pub mod map_strip;
 pub mod ocr;
@@ -20,15 +20,17 @@ pub enum ReadError {
     Parse(String),
 }
 
-/// A glyph learned on this PC (by the app or from the user): its character and
-/// centred ink as ASCII art (see exp::to_art).
+/// A level digit learned on this PC (by the app or from the user): its character and
+/// centred ink as ASCII art (see level::to_art).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LearnedGlyph {
     pub ch: char,
     pub rows: Vec<String>,
 }
 
-/// Which readout a glyph belongs to.
+/// Which readout a glyph belongs to. Only level digits are learned now; EXP glyphs
+/// (learned before the EXP reader matched the game's font, 0.3.0) stay in old
+/// databases and config files, and are skipped.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum GlyphKind {
@@ -58,10 +60,5 @@ impl GlyphKind {
             Self::Exp => "0123456789,.[]%",
             Self::Level => "0123456789",
         }
-    }
-
-    /// Whether `glyph` reads as a character with these learned glyphs.
-    pub fn recognises(glyph: &exp::Glyph, learned: &[LearnedGlyph]) -> bool {
-        exp::classify(glyph, learned).is_some()
     }
 }

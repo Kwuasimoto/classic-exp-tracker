@@ -210,21 +210,6 @@ impl Tracker {
         r.exp.saturating_sub(base.exp)
     }
 
-    /// Whether `r` could follow the readings so far: the same level's total with no
-    /// less EXP, or a level-up. Used to tell which character an unknown glyph is, so
-    /// a reading counts only when its level total can be checked: with no earlier
-    /// readings, or a percentage too small to imply a total (0.00%, 0.01%), any
-    /// digit would pass and a wrong one could be learned.
-    pub fn plausible(&self, r: ExpReading) -> bool {
-        let (Some(base), Some(known), Some(implied)) = (self.baseline, self.bounds, TotalBounds::from_reading(r)) else {
-            return false;
-        };
-        if r.exp < base.exp {
-            return base.pct_bp >= LEVEL_UP_FROM_BP && r.pct_bp < LEVEL_UP_TO_BP || self.fits_next_level_only(r);
-        }
-        known.intersect(implied).is_some()
-    }
-
     /// With the level known, a reading that fits the next level's table total but
     /// not the current one is a level-up, even when the last good reading was
     /// below LEVEL_UP_FROM_BP (e.g. the readout was covered before levelling).
@@ -394,18 +379,6 @@ mod tests {
         // 291,000 EXP at 89.75% fits only level 41's table total, so 40 was a misread.
         tr.on_sample(Sample { t: 0, exp: reading(291_000, 8_975), map: MAP });
         assert_eq!(tr.level(), Some(41));
-    }
-
-    #[test]
-    fn only_readings_with_a_checkable_total_are_plausible() {
-        let mut tr = Tracker::new();
-        assert!(!tr.plausible(ExpReading { exp: 41_000, pct_bp: 410 }), "nothing to check against yet");
-        tr.on_sample(Sample { t: 0, exp: reading(40_000, 400), map: MAP });
-        assert!(tr.plausible(ExpReading { exp: 41_000, pct_bp: 410 }));
-        // An unseen level-up shows 70,000 at 5.50%; misreading the 5s as 0 gives 0.00%,
-        // which implies no total and must not pass as the only fit.
-        assert!(!tr.plausible(ExpReading { exp: 70_000, pct_bp: 550 }));
-        assert!(!tr.plausible(ExpReading { exp: 70_000, pct_bp: 0 }));
     }
 
     #[test]

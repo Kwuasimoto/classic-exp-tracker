@@ -25,8 +25,6 @@ export function statusText(s: ReaderStatus): string {
       return "Reading OK";
     case "expUnreadable":
       return "EXP not readable — is the status bar visible?";
-    case "expNeedsGlyphs":
-      return "Unknown EXP characters — open Glyphs";
     case "mapUnreadable":
       return "Map name not readable — is the minimap open at the top-left?";
     case "notCalibrated":

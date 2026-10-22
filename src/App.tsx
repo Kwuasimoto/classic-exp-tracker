@@ -59,7 +59,7 @@ export default function App() {
           </div>
         </nav>
         <main className="content">
-          {tab === "live" && <LiveView tick={tick} onCalibrate={() => setTab("calibrate")} onGlyphs={() => setTab("glyphs")} />}
+          {tab === "live" && <LiveView tick={tick} onCalibrate={() => setTab("calibrate")} />}
           {tab === "history" && <HistoryView />}
           {tab === "calibrate" && <CalibrateView />}
           {tab === "glyphs" && <GlyphsView tick={tick} />}

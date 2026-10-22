@@ -1,16 +1,13 @@
-//! DEV ONLY (feature `dev-tools`, never shipped): tools for the EXP glyph references.
+//! DEV ONLY (feature `dev-tools`, never shipped): tools for testing the EXP reader.
 //!
-//! record: print the EXP box's pixels for each frame as text, to build or test references.
+//! record: print the EXP box's pixels for each frame as text, to test the reader with.
 //! replay: run the EXP reader over a recording and print what each frame read as.
-//! live / png: print glyphs the reader rejects, centred, as greyscale ASCII art.
-//! export: print the EXP glyphs of a library file (exported on a user's Glyphs page) as
-//!   `Reference`s, e.g. to replace the starter set in glyphs.rs.
+//! live / png: print the lines the reader can't read, with the closest characters.
 //!
 //!   cargo run --manifest-path src-tauri/Cargo.toml --features dev-tools --bin glyph-collect -- record <x> <y> <w> <h> <seconds> > frames.txt
 //!   cargo run --manifest-path src-tauri/Cargo.toml --features dev-tools --bin glyph-collect -- replay frames.txt
 //!   cargo run --manifest-path src-tauri/Cargo.toml --features dev-tools --bin glyph-collect -- live <x> <y> <w> <h> <seconds>
 //!   cargo run --manifest-path src-tauri/Cargo.toml --features dev-tools --bin glyph-collect -- png <path> <x> <y> <w> <h>
-//!   cargo run --manifest-path src-tauri/Cargo.toml --features dev-tools --bin glyph-collect -- export <classic-exp-tracker-config.json>
 
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -20,20 +17,17 @@ use std::time::{Duration, Instant};
 
 use classic_exp_tracker_lib::capture::{self, CaptureMsg, Regions, Shared};
 use classic_exp_tracker_lib::geom::{Calibration, Crop, Rect};
-use classic_exp_tracker_lib::glyph_library::Library;
-use classic_exp_tracker_lib::read::GlyphKind;
-use classic_exp_tracker_lib::read::exp::{centred, classify, read_exp, segment, to_art};
-use classic_exp_tracker_lib::read::glyphs::starter_glyphs;
+use classic_exp_tracker_lib::read::exp::{read_exp, read_line};
 
-/// Rejected glyphs, keyed by their greyscale art, with a count and the line they were in.
-type Rejected = BTreeMap<Vec<String>, (usize, String)>;
+/// Unreadable lines, keyed by what they read as with the closest characters of each
+/// glyph not recognised, with a count.
+type Rejected = BTreeMap<String, usize>;
 
 fn collect_rejected(crop: &Crop, rejected: &mut Rejected) {
-    let Ok(glyphs) = segment(crop) else { return };
-    let starter = starter_glyphs();
-    let line: String = glyphs.iter().map(|g| classify(g, &starter).unwrap_or('?')).collect();
-    for g in glyphs.iter().filter(|g| classify(g, &starter).is_none()) {
-        rejected.entry(to_art(&centred(g))).or_insert((0, line.clone())).0 += 1;
+    let Ok(line) = read_line(crop) else { return };
+    for g in line.glyphs.iter().filter(|g| g.ch.is_none()) {
+        let near: Vec<String> = g.ranked.iter().take(3).map(|(ch, score)| format!("{ch:?} {score:.3}")).collect();
+        *rejected.entry(format!("{:?} column {}: {}", line.text(), g.x, near.join(", "))).or_default() += 1;
     }
 }
 
@@ -83,23 +77,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {
         Some("replay") => {
             for (t, crop) in load_recording(args.get(1).ok_or("missing recording path")?)? {
-                match read_exp(&crop, &starter_glyphs()) {
+                match read_exp(&crop) {
                     Ok(r) => println!("{t} {} [{}.{:02}%]", r.exp, r.pct_bp / 100, r.pct_bp % 100),
                     Err(e) => println!("{t} unreadable: {e}"),
                 }
-            }
-            return Ok(());
-        }
-        Some("export") => {
-            let library = Library::parse(&std::fs::read_to_string(args.get(1).ok_or("missing library file path")?)?)?;
-            let exp: Vec<_> = library.glyphs.iter().filter(|g| g.kind == GlyphKind::Exp).collect();
-            println!("// {} EXP glyph(s) learned at {}", exp.len(), library.resolution);
-            for glyph in exp {
-                println!("    Reference {{ ch: '{}', rows: &[", glyph.ch);
-                for row in &glyph.art {
-                    println!("        \"{row}\",");
-                }
-                println!("    ] }},");
             }
             return Ok(());
         }
@@ -140,14 +121,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                 return Ok(());
             }
         }
-        _ => return Err("usage: glyph-collect record|live <x> <y> <w> <h> <seconds> | replay <file> | png <path> <x> <y> <w> <h> | export <classic-exp-tracker-config.json>".into()),
+        _ => return Err("usage: glyph-collect record|live <x> <y> <w> <h> <seconds> | replay <file> | png <path> <x> <y> <w> <h>".into()),
     }
-    for (rows, (count, line)) in &rejected {
-        println!("// rejected {count}x; line read as {line:?}");
-        for r in rows {
-            println!("    \"{r}\",");
-        }
+    for (what, count) in &rejected {
+        println!("{count}x {what}");
     }
-    println!("// {} rejected glyph shape(s)", rejected.len());
+    println!("{} kind(s) of unrecognised glyph", rejected.len());
     Ok(())
 }
