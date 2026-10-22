@@ -10,7 +10,7 @@ use std::ops::RangeInclusive;
 use log::{info, warn};
 
 use crate::geom::Crop;
-use crate::read::exp::{read_exp, read_line, reading, ExpReading, Glyph};
+use crate::read::exp::{centred, closest, read_exp, read_line, reading, to_art, ExpReading, Glyph, MAX_DISTANCE, MIN_MARGIN};
 use crate::read::map_strip::{read_strip, Signature};
 use crate::read::{GlyphKind, LearnedGlyph, ReadError};
 use crate::tracker::{ConfirmOutcome, MapConfirmer, Tracker};
@@ -22,6 +22,10 @@ const EXP_STEADY_FRAMES: u32 = 3;
 /// Glyphs in a real readout, `0[0.00%]` … `9,999,999,999[99.99%]`; anything else in
 /// the box (a window over it) isn't learned from or reported.
 const READOUT_GLYPHS: RangeInclusive<usize> = 8..=21;
+
+/// Unrecognised EXP glyph shapes logged per run (each distinct shape once), so a
+/// user's log shows exactly what failed without flooding it.
+const MAX_LOGGED_UNKNOWN: usize = 40;
 
 /// One frame's regions, read.
 pub struct FrameRead {
@@ -57,6 +61,8 @@ pub struct Screen {
     /// The EXP box's pixels and how many frames in a row they've looked the same.
     exp_crop: Option<Crop>,
     exp_still: u32,
+    /// Unrecognised EXP glyph shapes already logged this run.
+    logged_unknown: Vec<Vec<String>>,
     confirmer: MapConfirmer,
     level_box: LevelBox,
     exp_log: ReadLog,
@@ -72,6 +78,7 @@ impl Screen {
             exp_glyphs: Vec::new(),
             exp_crop: None,
             exp_still: 0,
+            logged_unknown: Vec::new(),
             confirmer: MapConfirmer::new(),
             level_box: LevelBox::default(),
             exp_log: ReadLog::new("EXP"),
@@ -113,6 +120,9 @@ impl Screen {
             Err(e) => return ExpBox::read(Err(e)),
         };
         let has_unknown = line.iter().any(|(_, ch)| ch.is_none());
+        if has_unknown {
+            self.log_unknown(&line);
+        }
         if !has_unknown || self.exp_still != EXP_STEADY_FRAMES || !READOUT_GLYPHS.contains(&line.len()) {
             return ExpBox::read(reading(&line));
         }
@@ -129,6 +139,48 @@ impl Screen {
                 let unknown = line.into_iter().filter(|(_, ch)| ch.is_none()).map(|(g, _)| (GlyphKind::Exp, g)).collect();
                 ExpBox { read, learned: Vec::new(), unknown }
             }
+        }
+    }
+
+    /// Log each unrecognised glyph shape of `line` not logged yet this run: the line it
+    /// was in, its height, the closest characters with their distances against the
+    /// acceptance limits, and the shape itself (ink levels " .:-=+*#%@", as stored).
+    fn log_unknown(&mut self, line: &[(Glyph, Option<char>)]) {
+        let text: String = line.iter().map(|(_, ch)| ch.unwrap_or('?')).collect();
+        let heights: Vec<usize> = {
+            let mut h: Vec<usize> = self.exp_glyphs.iter().map(|g| g.rows.len()).collect();
+            h.sort_unstable();
+            h.dedup();
+            h
+        };
+        for (i, (glyph, _)) in line.iter().enumerate().filter(|(_, (_, ch))| ch.is_none()) {
+            if self.logged_unknown.len() >= MAX_LOGGED_UNKNOWN {
+                return;
+            }
+            let art = to_art(&centred(glyph));
+            if self.logged_unknown.contains(&art) {
+                continue;
+            }
+            let near = closest(glyph, &self.exp_glyphs, 3);
+            let nearest = if near.is_empty() {
+                format!("no glyph is {} rows tall (glyphs here are {heights:?} rows)", art.len())
+            } else {
+                let list: Vec<String> = near.iter().map(|(ch, d)| format!("{ch:?} {d:.2}")).collect();
+                format!("closest {} (a match needs ≤ {MAX_DISTANCE:.2} and {MIN_MARGIN}× closer than any other character)", list.join(", "))
+            };
+            let width = glyph.ink.first().map_or(0, Vec::len);
+            let shape: String = art.iter().map(|row| format!("\n    |{row}|")).collect();
+            warn!(
+                "EXP glyph {} of {} not recognised in {text:?} (column {}, {width}x{} px): {nearest}{shape}",
+                i + 1,
+                line.len(),
+                glyph.x,
+                art.len()
+            );
+            self.logged_unknown.push(art);
+        }
+        if self.logged_unknown.len() >= MAX_LOGGED_UNKNOWN {
+            warn!("{MAX_LOGGED_UNKNOWN} unrecognised EXP glyph shapes logged; not logging more this run");
         }
     }
 

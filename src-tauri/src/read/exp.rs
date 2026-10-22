@@ -15,7 +15,7 @@ const INK_RANGE: f32 = 120.0;
 pub const HALF_WIDTH: i32 = 6;
 /// The nearest reference is accepted only if it is at least this many times
 /// closer than the nearest reference of another character…
-const MIN_MARGIN: f32 = 1.5;
+pub const MIN_MARGIN: f32 = 1.5;
 /// …and closer than this (sum of squared ink differences).
 pub const MAX_DISTANCE: f32 = 8.0;
 
@@ -178,6 +178,23 @@ fn best(mut ranked: Vec<(f32, char)>) -> Option<char> {
 
 pub fn nearest<'a, R: AsRef<str> + 'a>(glyph: &Glyph, references: impl IntoIterator<Item = (char, &'a [R])>) -> Option<char> {
     best(distances(&centred(glyph), references).collect())
+}
+
+/// The `n` closest characters to `glyph` among `learned`, closest first, each at its
+/// nearest glyph's distance (for the log). Empty when no learned glyph has its height.
+pub fn closest(glyph: &Glyph, learned: &[LearnedGlyph], n: usize) -> Vec<(char, f32)> {
+    let mut ranked: Vec<(f32, char)> = distances(&centred(glyph), learned.iter().map(|l| (l.ch, l.rows.as_slice()))).collect();
+    ranked.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut out: Vec<(char, f32)> = Vec::new();
+    for (d, ch) in ranked {
+        if out.len() == n {
+            break;
+        }
+        if !out.iter().any(|&(c, _)| c == ch) {
+            out.push((ch, d));
+        }
+    }
+    out
 }
 
 /// The glyph's character, from the glyphs learned at this resolution.

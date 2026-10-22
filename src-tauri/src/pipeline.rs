@@ -333,10 +333,18 @@ impl Pipeline {
             store.delete_unknown_glyph(entry.id)?;
         }
         drop(store);
+        let heights = |glyphs: &[LearnedGlyph]| {
+            let mut h: Vec<usize> = glyphs.iter().map(|g| g.rows.len()).collect();
+            h.sort_unstable();
+            h.dedup();
+            h
+        };
         info!(
-            "glyphs for {resolution}: {} EXP and {} level learned, {} unknown waiting ({} now readable, removed)",
+            "glyphs for {resolution}: {} EXP ({:?} rows tall) and {} level ({:?} rows tall) learned, {} unknown waiting ({} now readable, removed)",
             exp.len(),
+            heights(&exp),
             level.len(),
+            heights(&level),
             waiting.iter().filter(|u| !u.dismissed).count(),
             read_now.len()
         );

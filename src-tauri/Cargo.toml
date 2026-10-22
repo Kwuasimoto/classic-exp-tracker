@@ -1,6 +1,6 @@
 [package]
 name = "classic-exp-tracker"
-version = "0.2.0"
+version = "0.2.1"
 description = "MapleStory Classic World EXP tracker"
 authors = ["Kwuasimoto"]
 repository = "https://github.com/Kwuasimoto/classic-exp-tracker"
