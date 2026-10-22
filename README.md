@@ -26,27 +26,24 @@ flowchart LR
 
 **Requirements:** Windows 10 version 2004 or later, or Windows 11, 64-bit. The installer downloads Microsoft Edge WebView2 if it's missing (Windows 11 already has it). On Windows 10, Windows draws a yellow border around the screen while the app captures it; Windows 11 lets the app hide it. Map names are read with Windows' built-in text recognition, which needs a Windows display language that supports it, such as English.
 
-## Set up (once)
+## Set up
 
-1. **Put MapleStory on your primary monitor**, with the status bar (EXP and level) and the minimap visible, and the minimap showing the map name. The app reads only the primary monitor. If you have a second monitor, the app opens there so it doesn't cover the game; with one monitor, keep the app's window away from the EXP bar and minimap.
-2. Open the app and go to **Calibrate**, then press **Grab frame**.
-3. With **EXP** selected, drag a box tightly around the numbers after "EXP." Leave room on the right for longer numbers.
-4. Check the **Map** box covers the street and map name under the minimap title, and the **Level** box covers only the number after "LV.". At 1920×1080 both start in the right place; at other resolutions, drag them yourself.
-5. Press **Preview**. When it shows your EXP, percentage, map and level correctly, press **Save**.
+1. **Set Windows to a 16:9 resolution and play MapleStory full screen** on your primary monitor. **1366×768** is the game's own resolution: its text is drawn pixel for pixel there and reads best. Larger 16:9 sizes such as 1920×1080 work too. Other shapes, such as 1280×960 or ultrawide, aren't supported yet: the game stretches its text unevenly there.
+2. Keep the status bar (EXP and level) and the minimap visible, with the minimap showing the map name. The app reads only the primary monitor. If you have a second monitor, the app opens there so it doesn't cover the game; with one monitor, keep the app's window away from the EXP bar and minimap.
 
-EXP is read from the game's own pixel font, at whatever size your screen shows it, so it works at any resolution with nothing to teach. The level digits are learned while you play, per screen resolution; a digit the app can't place waits on the **Glyphs** page for you to name.
+There's nothing to calibrate: the app knows where the game draws EXP, the map name and the level, and scales those spots to your screen. EXP is read from the game's own pixel font, so there's nothing to teach. The level digits are learned while you play, per screen resolution; a digit the app can't place waits on the **Glyphs** page for you to name.
 
 ## Use
 
 - **Live** shows your EXP/hr over the last 60 minutes of training, %/hr, time to level and EXP to level, with a chart of EXP per 10 minutes. Time in town or AFK doesn't lower the rate.
 - The **save** button left of 2H/3H saves what the chart shows to History as a snapshot. The **reset** button next to it starts a new session and saves nothing.
 - Only one copy of the app runs at a time; opening it again brings the open window forward.
-- **Glyphs** keeps one library per screen resolution, with a tab for each; the one for your current resolution is used automatically (marked **in use**). Each shows the level digits learned (with any still missing) and, under **Unknown**, digits waiting for you to name. **Change** corrects a learned digit and **Forget** removes it; **Dismiss** hides a shape that isn't a digit (something over the level box). **Export** saves a resolution's setup, its calibration boxes and learned level digits (shapes as text, not screenshots), to `classic-exp-tracker-config.json`. **Import** loads such a file: its boxes replace yours for that resolution and its digits are added, so a friend with the same screen setup can use yours without calibrating. Files from versions before 0.3.0 still import; the EXP glyphs in them are skipped.
+- **Glyphs** keeps one library per screen resolution, with a tab for each; the one for your current resolution is used automatically (marked **in use**). Each shows the level digits learned (with any still missing) and, under **Unknown**, digits waiting for you to name. **Change** corrects a learned digit and **Forget** removes it; **Dismiss** hides a shape that isn't a digit (something over the level box). **Export** saves a resolution's learned level digits (shapes as text, not screenshots) to `classic-exp-tracker-config.json`. **Import** loads such a file and adds its digits, so a friend with the same screen resolution can use yours. Files from older versions still import; the EXP glyphs and calibration boxes in them are skipped.
 - **History** lists your snapshots, which can be renamed and deleted. Snapshots are the only history kept: live data is deleted once the 3H chart no longer shows it, so save anything you want to keep.
 - The status line at the bottom of the side nav says whether reading works. If it doesn't:
-  - **EXP not readable:** the status bar is hidden or covered, or the EXP box moved. Recalibrate.
+  - **EXP not readable:** the game isn't full screen, or the status bar is hidden or covered.
   - **Map name not readable:** open the minimap.
-  - **Not calibrated for this screen resolution:** calibration is saved per resolution; calibrate again at the new one.
+  - **… isn't 16:9:** set Windows to a 16:9 resolution, such as 1366×768 or 1920×1080.
   - **Screen capture failed:** another app or the game is blocking capture. The app stops rather than working around it.
 
 ## Your data

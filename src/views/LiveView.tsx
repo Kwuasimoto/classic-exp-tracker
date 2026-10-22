@@ -8,7 +8,7 @@ type WindowMinutes = 120 | 180;
 const TOAST_MS = 3000;
 const whole = (n: number) => Math.round(n).toLocaleString("en-US");
 
-export function LiveView({ tick, onCalibrate }: { tick: Tick | null; onCalibrate: () => void }) {
+export function LiveView({ tick }: { tick: Tick | null }) {
   const [bars, setBars] = useState<Bar[]>([]);
   const [windowMinutes, setWindowMinutes] = useState<WindowMinutes>(120);
   const [error, setError] = useState<AppError | null>(null);
@@ -65,7 +65,6 @@ export function LiveView({ tick, onCalibrate }: { tick: Tick | null; onCalibrate
           <div className="label">Current map</div>
           <h1>{tick?.mapName ?? "Waiting for map…"}</h1>
         </div>
-        {tick?.status.kind === "notCalibrated" && <button className="btn primary" onClick={onCalibrate}>Calibrate</button>}
         {level !== null && <div className="badge">LV. {level}</div>}
       </section>
       {error && <p className="panel error">{error.message}</p>}

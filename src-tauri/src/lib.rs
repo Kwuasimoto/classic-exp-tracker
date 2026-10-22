@@ -91,9 +91,6 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_live_snapshot,
             commands::get_live_chart,
-            commands::get_calibration_frame,
-            commands::preview_regions,
-            commands::save_calibration,
             commands::get_glyphs,
             commands::assign_glyph,
             commands::relabel_glyph,

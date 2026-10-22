@@ -24,11 +24,13 @@ export function statusText(s: ReaderStatus): string {
     case "ok":
       return "Reading OK";
     case "expUnreadable":
-      return "EXP not readable — is the status bar visible?";
+      return "EXP not readable — is the game full screen with the status bar visible?";
     case "mapUnreadable":
       return "Map name not readable — is the minimap open at the top-left?";
-    case "notCalibrated":
-      return "Not calibrated for this screen resolution";
+    case "starting":
+      return "Starting screen capture…";
+    case "screenNotSupported":
+      return `${s.detail} isn't 16:9 — set Windows to a 16:9 resolution (1366×768 reads best) and play full screen`;
     case "captureFailed":
       return `Screen capture failed: ${s.detail}`;
     case "storageFailed":

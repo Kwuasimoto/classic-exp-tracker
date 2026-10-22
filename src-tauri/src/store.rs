@@ -6,12 +6,13 @@ use std::path::Path;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::Serialize;
 
-use crate::geom::{Calibration, Rect};
 use crate::rates::MinuteRow;
 use crate::read::{GlyphKind, LearnedGlyph};
 use crate::read::map_strip::Signature;
 use crate::tracker::MapId;
 
+/// The `calibration` table (boxes drawn per resolution) is unread since 0.4.0, when the
+/// app started placing its boxes itself (geom::boxes_for); its rows are left as they are.
 const SCHEMA_VERSION: i64 = 7;
 const SCHEMA: &str = "
 BEGIN;
@@ -231,10 +232,6 @@ fn art_at(row: &Row, idx: usize) -> rusqlite::Result<Vec<String>> {
     Ok(row.get::<_, String>(idx)?.lines().map(str::to_string).collect())
 }
 
-fn rect_at(row: &Row, first: usize) -> rusqlite::Result<Rect> {
-    Ok(Rect { x: col_u32(row, first)?, y: col_u32(row, first + 1)?, w: col_u32(row, first + 2)?, h: col_u32(row, first + 3)? })
-}
-
 impl Store {
     pub fn open(path: &Path) -> Result<Self, StoreError> {
         Self::init(Connection::open(path)?)
@@ -350,43 +347,6 @@ impl Store {
         )?;
         let rows = stmt.query_map(params![from, to], minute_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
-    }
-
-    pub fn calibration(&self, resolution: &str) -> Result<Option<Calibration>, StoreError> {
-        Ok(self
-            .conn
-            .query_row(
-                "SELECT exp_x, exp_y, exp_w, exp_h, map_x, map_y, map_w, map_h, level_x, level_y, level_w, level_h
-                 FROM calibration WHERE resolution = ?1",
-                [resolution],
-                |r| {
-                    let level = match r.get::<_, Option<i64>>(8)? {
-                        Some(_) => Some(rect_at(r, 8)?),
-                        None => None,
-                    };
-                    Ok(Calibration { exp: rect_at(r, 0)?, map: rect_at(r, 4)?, level })
-                },
-            )
-            .optional()?)
-    }
-
-    pub fn save_calibration(&self, resolution: &str, c: &Calibration) -> Result<(), StoreError> {
-        self.conn.execute(
-            "INSERT INTO calibration (resolution, exp_x, exp_y, exp_w, exp_h, map_x, map_y, map_w, map_h,
-                                      level_x, level_y, level_w, level_h)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
-             ON CONFLICT (resolution) DO UPDATE SET
-               exp_x = excluded.exp_x, exp_y = excluded.exp_y, exp_w = excluded.exp_w, exp_h = excluded.exp_h,
-               map_x = excluded.map_x, map_y = excluded.map_y, map_w = excluded.map_w, map_h = excluded.map_h,
-               level_x = excluded.level_x, level_y = excluded.level_y, level_w = excluded.level_w, level_h = excluded.level_h",
-            params![
-                resolution,
-                c.exp.x, c.exp.y, c.exp.w, c.exp.h,
-                c.map.x, c.map.y, c.map.w, c.map.h,
-                c.level.map(|l| l.x), c.level.map(|l| l.y), c.level.map(|l| l.w), c.level.map(|l| l.h),
-            ],
-        )?;
-        Ok(())
     }
 
     /// The level digits learned at `resolution`, oldest first. EXP glyphs from before

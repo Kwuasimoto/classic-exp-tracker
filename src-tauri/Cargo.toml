@@ -1,6 +1,6 @@
 [package]
 name = "classic-exp-tracker"
-version = "0.3.0"
+version = "0.4.0"
 description = "MapleStory Classic World EXP tracker"
 authors = ["Kwuasimoto"]
 repository = "https://github.com/Kwuasimoto/classic-exp-tracker"
@@ -27,7 +27,6 @@ windows = { version = "0.62.2", features = ["Media_Ocr", "Graphics_Imaging", "St
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 thiserror = "2.0.21"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
-base64 = "0.23.1"
 log = "0.4.34"
 tauri-plugin-log = "2.10.1"
 tauri-plugin-single-instance = "2"

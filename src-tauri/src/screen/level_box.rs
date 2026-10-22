@@ -38,8 +38,9 @@ pub struct LevelBox {
 }
 
 impl LevelBox {
-    /// This frame's box; `None` without a level box.
-    pub fn observe(&mut self, crop: Option<Crop>) {
+    /// This frame's box.
+    pub fn observe(&mut self, crop: Crop) {
+        let crop = Some(crop);
         if crop == self.crop {
             self.still_frames = self.still_frames.saturating_add(1);
             return;

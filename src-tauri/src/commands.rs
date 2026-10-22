@@ -1,27 +1,17 @@
 //! Tauri commands. Blocking ones run off the main thread via `#[tauri::command(async)]`.
 
-use std::io::Cursor;
 use std::sync::atomic::Ordering;
-use std::sync::mpsc::sync_channel;
 use std::sync::Arc;
-use std::time::Duration;
 
-use base64::Engine;
 use serde::Serialize;
 use tauri::{State, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 
-use crate::capture::Regions;
 use crate::error::AppError;
-use crate::geom::{resolution_key, Calibration, Crop, Rect};
 use crate::glyph_library::{self, Library, MAX_FILE_BYTES};
 use crate::now_unix;
 use crate::pipeline::{AppState, Tick};
 use crate::rates::{self, Bar};
-use crate::read::exp::{read_exp, ExpReading};
-use crate::read::level;
-use crate::read::map_strip::read_strip;
-use crate::read::ocr::MapOcr;
 use crate::read::{GlyphKind, LearnedGlyph};
 use crate::store::SnapshotRecord;
 
@@ -69,109 +59,6 @@ pub fn get_live_chart(state: AppStateRef<'_>, window_minutes: u32) -> Result<Vec
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CalibrationFrame {
-    width: u32,
-    height: u32,
-    png_data_url: String,
-    current: Option<Calibration>,
-}
-
-#[tauri::command(async)]
-pub fn get_calibration_frame(state: AppStateRef<'_>) -> Result<CalibrationFrame, AppError> {
-    let (tx, rx) = sync_channel::<Crop>(1);
-    *state.capture.full_frame_request.lock().expect("frame request lock poisoned") = Some(tx);
-    let frame = rx
-        .recv_timeout(Duration::from_secs(3))
-        .map_err(|_| AppError::Capture("no frame from screen capture within 3 s".into()))?;
-    let mut png = Vec::new();
-    image::DynamicImage::ImageRgba8(frame.to_image())
-        .write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)
-        .map_err(|e| AppError::Capture(format!("encoding preview: {e}")))?;
-    let current = state.store.lock().expect("store lock poisoned").calibration(&resolution_key(frame.width, frame.height))?;
-    let result = CalibrationFrame {
-        width: frame.width,
-        height: frame.height,
-        png_data_url: format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(&png)),
-        current,
-    };
-    *state.calibration_frame.lock().expect("calibration frame lock poisoned") = Some(frame);
-    Ok(result)
-}
-
-#[derive(Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
-pub enum Preview<T> {
-    Ok { value: T },
-    Failed { reason: String },
-}
-
-#[derive(Serialize)]
-pub struct RegionPreview {
-    exp: Preview<ExpReading>,
-    map: Preview<String>,
-    /// `None` when no level box is drawn.
-    level: Option<Preview<u32>>,
-}
-
-fn grabbed_frame(state: &AppState) -> Result<Crop, AppError> {
-    state
-        .calibration_frame
-        .lock()
-        .expect("calibration frame lock poisoned")
-        .clone()
-        .ok_or_else(|| AppError::Invalid("grab a frame first".into()))
-}
-
-#[tauri::command(async)]
-pub fn preview_regions(state: AppStateRef<'_>, exp: Rect, map: Rect, level: Option<Rect>) -> Result<RegionPreview, AppError> {
-    let frame = grabbed_frame(&state)?;
-    let outside = || "box is outside the frame".to_string();
-    let glyphs = state.store.lock().expect("store lock poisoned").glyphs(&resolution_key(frame.width, frame.height))?;
-    let learned_level: Vec<LearnedGlyph> = glyphs.into_iter().map(|g| g.glyph).collect();
-    let exp = match frame.sub(exp).ok_or_else(outside).and_then(|c| read_exp(&c).map_err(|e| e.to_string())) {
-        Ok(value) => Preview::Ok { value },
-        Err(reason) => Preview::Failed { reason },
-    };
-    let map = match frame.sub(map).ok_or_else(outside).and_then(|c| {
-        read_strip(&c).map_err(|e| e.to_string())?;
-        MapOcr::new()
-            .and_then(|ocr| ocr.label(std::slice::from_ref(&c)))
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| "map strip found, but OCR read no text".to_string())
-    }) {
-        Ok(value) => Preview::Ok { value },
-        Err(reason) => Preview::Failed { reason },
-    };
-    let level_preview = level.map(|rect| {
-        match frame.sub(rect).ok_or_else(outside).and_then(|c| {
-            let glyphs = level::segment(&c).map_err(|e| e.to_string())?;
-            level::read_level(&glyphs, &learned_level).ok_or_else(|| {
-                format!("{} digit(s) found, not all learned yet; the app learns them while you play", glyphs.len())
-            })
-        }) {
-            Ok(value) => Preview::Ok { value },
-            Err(reason) => Preview::Failed { reason },
-        }
-    });
-    Ok(RegionPreview { exp, map, level: level_preview })
-}
-
-#[tauri::command(async)]
-pub fn save_calibration(state: AppStateRef<'_>, exp: Rect, map: Rect, level: Option<Rect>) -> Result<(), AppError> {
-    let frame = grabbed_frame(&state)?;
-    let (width, height) = (frame.width, frame.height);
-    if !exp.fits_in(width, height) || !map.fits_in(width, height) || level.is_some_and(|l| !l.fits_in(width, height)) {
-        return Err(AppError::Invalid(format!("boxes must lie inside the {width}x{height} frame")));
-    }
-    let calibration = Calibration { exp, map, level };
-    state.store.lock().expect("store lock poisoned").save_calibration(&resolution_key(width, height), &calibration)?;
-    log::info!("calibration saved for {width}x{height}: {calibration:?}");
-    *state.capture.regions.write().expect("regions lock poisoned") = Some(Regions { width, height, calibration });
-    Ok(())
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct LearnedEntry {
     id: i64,
     kind: GlyphKind,
@@ -196,8 +83,6 @@ pub struct Glyphs {
     in_use: Option<String>,
     /// Every resolution with a library, smallest first, and the one in use.
     resolutions: Vec<String>,
-    /// Whether the resolution shown has calibration boxes saved (they're exported too).
-    calibrated: bool,
     learned: Vec<LearnedEntry>,
     unknown: Vec<UnknownEntry>,
     /// Level digits with no glyph yet, e.g. "479".
@@ -230,32 +115,26 @@ pub fn get_glyphs(state: AppStateRef<'_>, resolution: Option<String>) -> Result<
     resolutions.dedup();
     let mut learned = Vec::new();
     let mut unknown = Vec::new();
-    let mut calibrated = false;
     if let Some(resolution) = &resolution {
-        calibrated = store.calibration(resolution)?.is_some();
         learned.extend(store.glyphs(resolution)?.into_iter().map(|g| LearnedEntry { id: g.id, kind: g.kind, ch: g.glyph.ch, art: g.glyph.rows }));
         unknown.extend(
             store.unknown_glyphs(resolution)?.into_iter().filter(|u| !u.dismissed).map(|u| UnknownEntry { id: u.id, kind: u.kind, art: u.rows }),
         );
     }
     let missing_level = GlyphKind::Level.alphabet().chars().filter(|&c| !learned.iter().any(|g| g.ch == c)).collect();
-    Ok(Glyphs { resolution, in_use, resolutions, calibrated, learned, unknown, missing_level })
+    Ok(Glyphs { resolution, in_use, resolutions, learned, unknown, missing_level })
 }
 
-/// Save `resolution`'s setup (calibration boxes and its learned level digits) to a
-/// file the user picks. Returns its path, or `None` if the user cancelled.
+/// Save `resolution`'s learned level digits to a file the user picks. Returns its path, or `None` if the user cancelled.
 #[tauri::command(async)]
 pub fn export_glyphs(window: WebviewWindow, state: AppStateRef<'_>, resolution: String) -> Result<Option<String>, AppError> {
     valid_resolution(&resolution)?;
-    let (calibration, glyphs) = {
-        let store = state.store.lock().expect("store lock poisoned");
-        (store.calibration(&resolution)?, store.glyphs(&resolution)?)
-    };
-    if calibration.is_none() && glyphs.is_empty() {
-        return Err(AppError::Invalid(format!("nothing to export: {resolution} has no calibration or glyphs")));
+    let glyphs = state.store.lock().expect("store lock poisoned").glyphs(&resolution)?;
+    if glyphs.is_empty() {
+        return Err(AppError::Invalid(format!("nothing to export: {resolution} has no level digits learned")));
     }
     let count = glyphs.len();
-    let json = serde_json::to_string_pretty(&Library::new(&resolution, calibration, glyphs.into_iter().map(|g| (g.kind, g.glyph))))
+    let json = serde_json::to_string_pretty(&Library::new(&resolution, glyphs.into_iter().map(|g| (g.kind, g.glyph))))
         .map_err(|e| AppError::File(format!("writing the library: {e}")))?;
     let picked = window
         .dialog()
@@ -268,7 +147,7 @@ pub fn export_glyphs(window: WebviewWindow, state: AppStateRef<'_>, resolution: 
     let Some(picked) = picked else { return Ok(None) };
     let path = picked.into_path().map_err(|e| AppError::File(format!("the chosen location isn't a file path: {e}")))?;
     std::fs::write(&path, json).map_err(|e| AppError::File(format!("saving {}: {e}", path.display())))?;
-    log::info!("exported {resolution}'s calibration ({}) and {count} glyph(s) to {}", calibration.is_some(), path.display());
+    log::info!("exported {resolution}'s {count} level digit(s) to {}", path.display());
     Ok(Some(path.display().to_string()))
 }
 
@@ -279,13 +158,10 @@ pub struct Imported {
     /// Glyphs added; the rest were already in the library.
     added: usize,
     total: usize,
-    /// Whether the file's calibration boxes replaced this resolution's.
-    calibration: bool,
 }
 
-/// Import a setup file the user picks into its resolution: its calibration boxes
-/// replace the ones saved there (in use at once if it's the current resolution), and
-/// its level digits are added. `None` if the user cancelled.
+/// Import a config file the user picks: its level digits are added to its resolution.
+/// `None` if the user cancelled.
 #[tauri::command(async)]
 pub fn import_glyphs(window: WebviewWindow, state: AppStateRef<'_>) -> Result<Option<Imported>, AppError> {
     let picked = window
@@ -303,25 +179,15 @@ pub fn import_glyphs(window: WebviewWindow, state: AppStateRef<'_>) -> Result<Op
     }
     let json = std::fs::read_to_string(&path).map_err(|e| AppError::File(format!("reading {}: {e}", path.display())))?;
     let library = Library::parse(&json).map_err(AppError::Invalid)?;
+    let had_boxes = library.has_boxes();
     // EXP glyphs in files from before 0.3.0 are skipped: EXP is read from the game's font.
     let (glyphs, exp_glyphs): (Vec<_>, Vec<_>) = library.glyphs.into_iter().partition(|g| g.kind == GlyphKind::Level);
     let glyphs: Vec<(GlyphKind, LearnedGlyph)> = glyphs.into_iter().map(|g| (g.kind, LearnedGlyph { ch: g.ch, rows: g.art })).collect();
-    let (width, height) = valid_resolution(&library.resolution)?;
-    let added = {
-        let store = state.store.lock().expect("store lock poisoned");
-        if let Some(calibration) = &library.calibration {
-            store.save_calibration(&library.resolution, calibration)?;
-        }
-        store.import_glyphs(&library.resolution, &glyphs)?
-    };
-    if let Some(calibration) = library.calibration {
-        log::info!("calibration for {} imported from {}: {calibration:?}", library.resolution, path.display());
-        // Use the boxes now if the screen is at this resolution; otherwise they're loaded
-        // when it is (pipeline looks calibrations up per resolution).
-        let in_use = state.glyph_resolution.read().expect("glyph resolution lock poisoned").clone();
-        if in_use.as_deref() == Some(library.resolution.as_str()) {
-            *state.capture.regions.write().expect("regions lock poisoned") = Some(Regions { width, height, calibration });
-        }
+    valid_resolution(&library.resolution)?;
+    let added = state.store.lock().expect("store lock poisoned").import_glyphs(&library.resolution, &glyphs)?;
+    if had_boxes {
+        // Since 0.4.0 the boxes are placed automatically (geom::boxes_for).
+        log::info!("calibration boxes in {} ignored: the app places its boxes itself", path.display());
     }
     log::info!(
         "imported {added} of {} level glyph(s) for {} from {} ({} EXP glyph(s) from an older version skipped)",
@@ -331,7 +197,7 @@ pub fn import_glyphs(window: WebviewWindow, state: AppStateRef<'_>) -> Result<Op
         exp_glyphs.len()
     );
     state.glyphs_changed.store(true, Ordering::Release);
-    Ok(Some(Imported { resolution: library.resolution, added, total: glyphs.len(), calibration: library.calibration.is_some() }))
+    Ok(Some(Imported { resolution: library.resolution, added, total: glyphs.len() }))
 }
 
 /// `typed` as one character of `kind`'s readout, or an error listing them.

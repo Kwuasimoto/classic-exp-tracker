@@ -2,10 +2,12 @@
 //!
 //! record: print the EXP box's pixels for each frame as text, to test the reader with.
 //! replay: run the EXP reader over a recording and print what each frame read as.
+//! scores: print how closely each glyph of each distinct line in a recording matched.
 //! live / png: print the lines the reader can't read, with the closest characters.
 //!
 //!   cargo run --manifest-path src-tauri/Cargo.toml --features dev-tools --bin glyph-collect -- record <x> <y> <w> <h> <seconds> > frames.txt
 //!   cargo run --manifest-path src-tauri/Cargo.toml --features dev-tools --bin glyph-collect -- replay frames.txt
+//!   cargo run --manifest-path src-tauri/Cargo.toml --features dev-tools --bin glyph-collect -- scores frames.txt
 //!   cargo run --manifest-path src-tauri/Cargo.toml --features dev-tools --bin glyph-collect -- live <x> <y> <w> <h> <seconds>
 //!   cargo run --manifest-path src-tauri/Cargo.toml --features dev-tools --bin glyph-collect -- png <path> <x> <y> <w> <h>
 
@@ -16,7 +18,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use classic_exp_tracker_lib::capture::{self, CaptureMsg, Regions, Shared};
-use classic_exp_tracker_lib::geom::{Calibration, Crop, Rect};
+use classic_exp_tracker_lib::geom::{Boxes, Crop, Rect};
 use classic_exp_tracker_lib::read::exp::{read_exp, read_line};
 
 /// Unreadable lines, keyed by what they read as with the closest characters of each
@@ -84,6 +86,24 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             return Ok(());
         }
+        Some("scores") => {
+            // Each distinct line once: every glyph's best character, its score and its
+            // lead over the next closest (accepted at ≥ 0.75 with a lead of ≥ 0.03).
+            let mut seen = std::collections::BTreeSet::new();
+            for (t, crop) in load_recording(args.get(1).ok_or("missing recording path")?)? {
+                let Ok(line) = read_line(&crop) else { continue };
+                if !seen.insert(line.text()) {
+                    continue;
+                }
+                println!("frame {t}: {:?} ({:.2} px per font pixel)", line.text(), line.font_px());
+                for g in &line.glyphs {
+                    let (best, score) = g.ranked.first().copied().unwrap_or(('-', f32::NAN));
+                    let next = g.ranked.get(1).map_or(String::from("none"), |&(ch, s)| format!("{ch:?} {s:.3}"));
+                    println!("  {best:?} {score:.3}  next {next}  lead {:.3}", score - g.ranked.get(1).map_or(0.0, |r| r.1));
+                }
+            }
+            return Ok(());
+        }
         Some("png") => {
             let path = args.get(1).ok_or("missing png path")?;
             let rect = Rect { x: num(2)?, y: num(3)?, w: num(4)?, h: num(5)? };
@@ -99,7 +119,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             *shared.regions.write().map_err(|_| "regions lock poisoned")? = Some(Regions {
                 width: monitor.width()?,
                 height: monitor.height()?,
-                calibration: Calibration { exp: rect, map: rect, level: None },
+                boxes: Boxes { exp: rect, map: rect, level: rect },
             });
             let (tx, rx) = sync_channel(4);
             let control = capture::start(tx, shared)?;
@@ -121,7 +141,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 return Ok(());
             }
         }
-        _ => return Err("usage: glyph-collect record|live <x> <y> <w> <h> <seconds> | replay <file> | png <path> <x> <y> <w> <h>".into()),
+        _ => return Err("usage: glyph-collect record|live <x> <y> <w> <h> <seconds> | replay|scores <file> | png <path> <x> <y> <w> <h>".into()),
     }
     for (what, count) in &rejected {
         println!("{count}x {what}");

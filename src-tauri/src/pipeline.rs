@@ -14,7 +14,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 use crate::capture::{self, CaptureMsg, Control, Regions, Shared};
-use crate::geom::{resolution_key, Crop};
+use crate::geom::{boxes_for, resolution_key, Crop, NATIVE};
 use crate::read::level::{centred, classify, distance_to, from_art, to_art, Glyph, MAX_DISTANCE};
 use crate::read::map_strip::Signature;
 use crate::read::ocr::MapOcr;
@@ -36,7 +36,10 @@ pub enum ReaderStatus {
     Ok,
     ExpUnreadable,
     MapUnreadable,
-    NotCalibrated,
+    /// No frame read yet.
+    Starting,
+    /// The screen isn't 16:9 (its resolution): the boxes and the EXP reader need it.
+    ScreenNotSupported(String),
     CaptureFailed(String),
     StorageFailed(String),
     NotifyFailed(String),
@@ -56,15 +59,13 @@ pub struct Tick {
 
 impl Default for Tick {
     fn default() -> Self {
-        Self { status: ReaderStatus::NotCalibrated, map_name: None, exp: None, pct_bp: None, total_est: None, level: None }
+        Self { status: ReaderStatus::Starting, map_name: None, exp: None, pct_bp: None, total_est: None, level: None }
     }
 }
 
 pub struct AppState {
     pub store: Mutex<Store>,
     pub capture: Arc<Shared>,
-    /// Last full frame grabbed for the calibration screen (memory only).
-    pub calibration_frame: Mutex<Option<Crop>>,
     pub live: RwLock<Tick>,
     /// The tracker's minute in progress, added to the live chart (see commands::get_live_chart).
     /// Written and read only while holding `store`, so a minute is never both stored and live.
@@ -86,7 +87,6 @@ impl AppState {
         Self {
             store: Mutex::new(store),
             capture: Arc::new(Shared::default()),
-            calibration_frame: Mutex::new(None),
             live: RwLock::new(Tick::default()),
             live_minute: RwLock::new(None),
             live_since: RwLock::new(live_since),
@@ -176,7 +176,7 @@ impl Pipeline {
             self.ensure_capture();
             match self.rx.recv_timeout(Duration::from_millis(500)) {
                 Ok(CaptureMsg::Regions { t, width, height, exp, map, level }) => self.on_regions(t, width, height, exp, map, level),
-                Ok(CaptureMsg::Uncalibrated { width, height }) => self.on_uncalibrated(width, height),
+                Ok(CaptureMsg::NoBoxes { width, height }) => self.on_new_screen(width, height),
                 Ok(CaptureMsg::Closed) => {}
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => unreachable!("the pipeline owns a sender"),
@@ -215,7 +215,7 @@ impl Pipeline {
             warn!("monitor capture stopped: {reason}; retrying in {}s", self.backoff.as_secs());
             self.capture_error = Some(reason);
             self.schedule_retry();
-            self.publish(ReaderStatus::NotCalibrated);
+            self.publish(ReaderStatus::Starting);
         }
         if self.control.is_some() || Instant::now() < self.retry_at {
             return;
@@ -229,7 +229,7 @@ impl Pipeline {
                 warn!("monitor capture failed to start: {e}; retrying in {}s", self.backoff.as_secs());
                 self.capture_error = Some(e.to_string());
                 self.schedule_retry();
-                self.publish(ReaderStatus::NotCalibrated);
+                self.publish(ReaderStatus::Starting);
             }
         }
     }
@@ -244,30 +244,30 @@ impl Pipeline {
         self.backoff = Duration::from_secs(1);
     }
 
-    fn on_uncalibrated(&mut self, width: u32, height: u32) {
+    /// A frame at a new resolution: place the boxes for it, or say why there are none.
+    fn on_new_screen(&mut self, width: u32, height: u32) {
         self.frames_flowing();
         self.use_glyphs_for(width, height);
+        let boxes = boxes_for(width, height);
         if self.tried_resolution != Some((width, height)) {
-            let found = self.state.store.lock().expect("store lock poisoned").calibration(&resolution_key(width, height));
-            match found {
-                Ok(Some(calibration)) => {
-                    info!("loaded calibration for {width}x{height}: {calibration:?}");
-                    *self.state.capture.regions.write().expect("regions lock poisoned") =
-                        Some(Regions { width, height, calibration });
-                    self.tried_resolution = Some((width, height));
-                }
-                Ok(None) => {
-                    info!("no calibration saved for {width}x{height}; waiting for the Calibrate tab");
-                    self.tried_resolution = Some((width, height));
-                }
-                // Not marked as tried, so the next frame retries the lookup.
-                Err(e) => self.storage_failed("loading calibration", e),
+            match boxes {
+                Some(boxes) => info!("boxes for {width}x{height} scaled from {}x{}: {boxes:?}", NATIVE.0, NATIVE.1),
+                None => warn!(
+                    "{width}x{height} is not 16:9; EXP can only be read at a 16:9 resolution with the game full screen"
+                ),
             }
+            self.tried_resolution = Some((width, height));
         }
-        self.publish(ReaderStatus::NotCalibrated);
+        match boxes {
+            Some(boxes) => {
+                *self.state.capture.regions.write().expect("regions lock poisoned") = Some(Regions { width, height, boxes });
+                self.publish(ReaderStatus::Starting);
+            }
+            None => self.publish(ReaderStatus::ScreenNotSupported(resolution_key(width, height))),
+        }
     }
 
-    fn on_regions(&mut self, t: i64, width: u32, height: u32, exp: Crop, map: Crop, level: Option<Crop>) {
+    fn on_regions(&mut self, t: i64, width: u32, height: u32, exp: Crop, map: Crop, level: Crop) {
         self.frames_flowing();
         self.use_glyphs_for(width, height);
         let FrameRead { exp, map_readable, new_map, unknown } = self.screen.read(t, &exp, map, level);

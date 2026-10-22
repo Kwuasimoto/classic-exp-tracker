@@ -9,8 +9,6 @@ use crate::store::StoreError;
 pub enum AppError {
     #[error("storage: {0}")]
     Storage(String),
-    #[error("capture: {0}")]
-    Capture(String),
     #[error("invalid input: {0}")]
     Invalid(String),
     #[error("not found: {0}")]

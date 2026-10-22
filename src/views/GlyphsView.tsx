@@ -96,9 +96,8 @@ export function GlyphsView({ tick }: { tick: Tick | null }) {
     setMessage(null);
     const res = await importGlyphs();
     if (res.success && res.data !== null) {
-      const { resolution, added, total, calibration } = res.data;
-      const boxes = calibration ? `Calibration boxes for ${resolution} replaced. ` : "";
-      setMessage(`${boxes}Imported ${added} of ${total} glyphs into ${resolution}${added < total ? " (the rest were already there)" : ""}.`);
+      const { resolution, added, total } = res.data;
+      setMessage(`Imported ${added} of ${total} glyphs into ${resolution}${added < total ? " (the rest were already there)" : ""}.`);
       setViewed(resolution === glyphs?.inUse ? null : resolution);
     }
     await done(res);
@@ -107,17 +106,16 @@ export function GlyphsView({ tick }: { tick: Tick | null }) {
   const unknown = glyphs?.unknown ?? [];
   const learned = glyphs?.learned ?? [];
   const shown = glyphs?.resolution ?? null;
-  const canExport = (glyphs?.calibrated ?? false) || learned.length > 0;
   return (
     <>
       <section className="panel">
         <div className="row" style={{ justifyContent: "space-between" }}>
           <h2 style={{ margin: 0 }}>Glyphs</h2>
           <div className="row" style={{ gap: 8 }}>
-            <button className="btn" disabled={!shown || !canExport} title="Save this resolution's calibration boxes and learned level digits to a file" onClick={() => shown && void exportLibrary(shown)}>
+            <button className="btn" disabled={!shown || learned.length === 0} title="Save this resolution's learned level digits to a file" onClick={() => shown && void exportLibrary(shown)}>
               Export
             </button>
-            <button className="btn" title="Load an exported setup: its boxes replace yours for that resolution, its level digits are added" onClick={() => void importLibrary()}>Import</button>
+            <button className="btn" title="Load an exported config: its level digits are added" onClick={() => void importLibrary()}>Import</button>
           </div>
         </div>
         {glyphs && glyphs.resolutions.length > 0 && (

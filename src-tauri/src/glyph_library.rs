@@ -1,18 +1,18 @@
-//! A resolution's setup as a file, exported and imported on the Glyphs page: its
-//! calibration boxes and learned level digits, so another PC with the same screen
-//! setup reads the same way. Each glyph is its character and centred ink as ASCII art
+//! A resolution's learned level digits as a file, exported and imported on the Glyphs
+//! page, so another PC with the same screen reads the same way. Each glyph is its character and centred ink as ASCII art
 //! (see read::level::to_art), as the database stores it. Never pixels from a screenshot.
 
+use serde::de::IgnoredAny;
 use serde::{Deserialize, Serialize};
 
-use crate::geom::Calibration;
 use crate::read::level::valid_art;
 use crate::read::{GlyphKind, LearnedGlyph};
 
 const FORMAT: &str = "classic-exp-tracker-glyphs";
-/// Version 2 added the calibration; version 3 (0.3.0) has no EXP glyphs, since EXP is
-/// read from the game's font. Older files still import (their EXP glyphs are skipped).
-const VERSION: u32 = 3;
+/// Version 2 added calibration boxes; version 3 (0.3.0) has no EXP glyphs, since EXP is
+/// read from the game's font; version 4 (0.4.0) has no boxes, since the app places them.
+/// Older files still import (their EXP glyphs and boxes are skipped).
+const VERSION: u32 = 4;
 /// Far more than a library holds (15 + 10 characters, a few shapes each).
 const MAX_GLYPHS: usize = 1_000;
 /// Files larger than this aren't read.
@@ -26,8 +26,9 @@ pub struct Library {
     format: String,
     version: u32,
     pub resolution: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub calibration: Option<Calibration>,
+    /// Calibration boxes in a version 2 or 3 file: accepted, not used.
+    #[serde(default, skip_serializing)]
+    calibration: Option<IgnoredAny>,
     pub glyphs: Vec<LibraryGlyph>,
 }
 
@@ -40,22 +41,23 @@ pub struct LibraryGlyph {
 }
 
 impl Library {
-    pub fn new(
-        resolution: &str,
-        calibration: Option<Calibration>,
-        glyphs: impl IntoIterator<Item = (GlyphKind, LearnedGlyph)>,
-    ) -> Self {
+    pub fn new(resolution: &str, glyphs: impl IntoIterator<Item = (GlyphKind, LearnedGlyph)>) -> Self {
         Self {
             format: FORMAT.to_string(),
             version: VERSION,
             resolution: resolution.to_string(),
-            calibration,
+            calibration: None,
             glyphs: glyphs.into_iter().map(|(kind, g)| LibraryGlyph { kind, ch: g.ch, art: g.rows }).collect(),
         }
     }
 
-    /// An imported file, checked: its format, resolution, calibration boxes, and every
-    /// glyph's character and shape. The reason it was refused otherwise.
+    /// Whether the file has calibration boxes from an older version (ignored).
+    pub fn has_boxes(&self) -> bool {
+        self.calibration.is_some()
+    }
+
+    /// An imported file, checked: its format, resolution, and every glyph's character
+    /// and shape. The reason it was refused otherwise.
     pub fn parse(json: &str) -> Result<Self, String> {
         // Format and version first: a newer app's file may have fields this one doesn't know.
         let value: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("not a Classic EXP Tracker config file: {e}"))?;
@@ -70,13 +72,8 @@ impl Library {
             _ => return Err("not a Classic EXP Tracker config file (no valid version)".to_string()),
         }
         let library: Self = serde_json::from_value(value).map_err(|e| format!("this config file is damaged: {e}"))?;
-        let Some((width, height)) = parse_resolution(&library.resolution) else {
+        if parse_resolution(&library.resolution).is_none() {
             return Err(format!("{:?} is not a screen resolution", library.resolution));
-        };
-        if let Some(c) = &library.calibration
-            && [Some(c.exp), Some(c.map), c.level].into_iter().flatten().any(|r| !r.fits_in(width, height))
-        {
-            return Err(format!("its calibration boxes don't fit a {} screen", library.resolution));
         }
         if library.glyphs.len() > MAX_GLYPHS {
             return Err(format!("{} glyphs is more than a library holds ({MAX_GLYPHS})", library.glyphs.len()));
@@ -107,16 +104,11 @@ mod tests {
     #[test]
     fn an_exported_library_imports_and_bad_files_are_refused() {
         let art = vec![" ".repeat(12) + "@"; 11];
-        let rect = |x| crate::geom::Rect { x, y: 1037, w: 132, h: 16 };
-        let calibration = Calibration { exp: rect(1053), map: rect(62), level: None };
         let glyph = (GlyphKind::Exp, LearnedGlyph { ch: '[', rows: art.clone() });
-        let json = serde_json::to_string(&Library::new("1920x1080", Some(calibration), [glyph])).unwrap();
+        let json = serde_json::to_string(&Library::new("1920x1080", [glyph])).unwrap();
         let library = Library::parse(&json).expect("round trip");
         assert_eq!((library.resolution.as_str(), library.glyphs[0].ch), ("1920x1080", '['));
-        assert_eq!(library.calibration, Some(calibration));
-
-        let off_screen = json.replace("1053", "1900");
-        assert!(Library::parse(&off_screen).is_err(), "the EXP box would run off a 1920-wide screen");
+        assert!(!library.has_boxes());
 
         let level_bracket = json.replace("\"exp\"", "\"level\"");
         assert!(Library::parse(&level_bracket).is_err(), "'[' isn't a level digit");
@@ -124,9 +116,13 @@ mod tests {
         assert!(Library::parse(&short_row).is_err(), "rows must be glyph art width");
         assert!(Library::parse(&json.replace("1920x1080", "1920x")).is_err());
         assert!(Library::parse("{}").is_err());
-        let newer = json.replace("\"version\":3", "\"version\":4").replace("\"glyphs\"", "\"future\":1,\"glyphs\"");
+        let newer = json.replace("\"version\":4", "\"version\":5").replace("\"glyphs\"", "\"future\":1,\"glyphs\"");
         assert!(Library::parse(&newer).unwrap_err().contains("newer version"), "a newer app's file says so");
-        let older = json.replace("\"version\":3", "\"version\":2");
-        assert_eq!(Library::parse(&older).expect("an older file imports").glyphs[0].kind, GlyphKind::Exp);
+        // A 0.2 file: version 2, with calibration boxes and EXP glyphs.
+        let boxes = r#""calibration":{"exp":{"x":1053,"y":1037,"w":132,"h":16},"map":{"x":62,"y":36,"w":309,"h":44},"level":null},"#;
+        let older = json.replace("\"version\":4", "\"version\":2").replace("\"glyphs\"", &format!("{boxes}\"glyphs\""));
+        let older = Library::parse(&older).expect("an older file imports");
+        assert!(older.has_boxes());
+        assert_eq!(older.glyphs[0].kind, GlyphKind::Exp);
     }
 }

@@ -1,4 +1,4 @@
-//! What the screen shows, frame by frame: reads the calibrated regions, debounces map
+//! What the screen shows, frame by frame: reads the readout boxes, debounces map
 //! changes, follows the level box, and logs reader failures. No I/O apart from log
 //! lines; pipeline.rs saves what this module finds.
 
@@ -89,7 +89,7 @@ impl Screen {
     }
 
     /// Read this frame's regions.
-    pub fn read(&mut self, t: i64, exp: &Crop, map: Crop, level: Option<Crop>) -> FrameRead {
+    pub fn read(&mut self, t: i64, exp: &Crop, map: Crop, level: Crop) -> FrameRead {
         self.count_frame(t);
         let read = self.read_exp_box(exp);
         let exp = self.exp_log.record(t, read);

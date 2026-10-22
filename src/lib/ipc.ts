@@ -6,7 +6,7 @@ import { err, ok, type Result } from "./result";
 const count = z.number().int().nonnegative();
 
 export const AppErrorSchema = z.object({
-  kind: z.enum(["storage", "capture", "invalid", "notFound", "file"]),
+  kind: z.enum(["storage", "invalid", "notFound", "file"]),
   message: z.string(),
 });
 export type AppError = z.infer<typeof AppErrorSchema> | { kind: "ipc"; message: string };
@@ -15,7 +15,8 @@ export const ReaderStatusSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("ok") }),
   z.object({ kind: z.literal("expUnreadable") }),
   z.object({ kind: z.literal("mapUnreadable") }),
-  z.object({ kind: z.literal("notCalibrated") }),
+  z.object({ kind: z.literal("starting") }),
+  z.object({ kind: z.literal("screenNotSupported"), detail: z.string() }),
   z.object({ kind: z.literal("captureFailed"), detail: z.string() }),
   z.object({ kind: z.literal("storageFailed"), detail: z.string() }),
   z.object({ kind: z.literal("notifyFailed"), detail: z.string() }),
@@ -48,31 +49,6 @@ export const SnapshotSchema = z.object({
 });
 export type Snapshot = z.infer<typeof SnapshotSchema>;
 
-export const RectSchema = z.object({ x: count, y: count, w: count, h: count });
-export type Rect = z.infer<typeof RectSchema>;
-export const CalibrationSchema = z.object({ exp: RectSchema, map: RectSchema, level: RectSchema.nullable() });
-export type Calibration = z.infer<typeof CalibrationSchema>;
-
-export const CalibrationFrameSchema = z.object({
-  width: z.number().int().positive(),
-  height: z.number().int().positive(),
-  pngDataUrl: z.string().startsWith("data:image/png;base64,"),
-  current: CalibrationSchema.nullable(),
-});
-export type CalibrationFrame = z.infer<typeof CalibrationFrameSchema>;
-
-const previewOf = <T extends z.ZodType>(value: T) =>
-  z.discriminatedUnion("kind", [
-    z.object({ kind: z.literal("ok"), value }),
-    z.object({ kind: z.literal("failed"), reason: z.string() }),
-  ]);
-export const RegionPreviewSchema = z.object({
-  exp: previewOf(z.object({ exp: count, pctBp: count })),
-  map: previewOf(z.string()),
-  level: previewOf(count).nullable(),
-});
-export type RegionPreview = z.infer<typeof RegionPreviewSchema>;
-
 const GlyphKindSchema = z.enum(["exp", "level"]);
 export type GlyphKind = z.infer<typeof GlyphKindSchema>;
 /** A glyph's centred ink as ASCII art, one string per row: ' ' = none … '@' = full. */
@@ -84,8 +60,6 @@ export const GlyphsSchema = z.object({
   inUse: z.string().nullable(),
   /** Every resolution with a library, smallest first. */
   resolutions: z.array(z.string()),
-  /** Whether the resolution shown has calibration boxes saved (they're exported too). */
-  calibrated: z.boolean(),
   learned: z.array(z.object({ id: z.number().int(), kind: GlyphKindSchema, ch: z.string().length(1), art: ArtSchema })),
   unknown: z.array(z.object({ id: z.number().int(), kind: GlyphKindSchema, art: ArtSchema })),
   missingLevel: z.string(),
@@ -111,16 +85,12 @@ async function call<S extends z.ZodType>(cmd: string, schema: S, args?: Record<s
 
 export const getLiveSnapshot = () => call("get_live_snapshot", TickSchema);
 export const getLiveChart = (windowMinutes: 120 | 180) => call("get_live_chart", z.array(BarSchema), { windowMinutes });
-export const getCalibrationFrame = () => call("get_calibration_frame", CalibrationFrameSchema);
-export const previewRegions = (c: Calibration) => call("preview_regions", RegionPreviewSchema, c);
-export const saveCalibration = (c: Calibration) => call("save_calibration", z.null(), c);
 /** The glyph library of `resolution`, or of the one in use when null. */
 export const getGlyphs = (resolution: string | null) => call("get_glyphs", GlyphsSchema, { resolution });
-/** Saves a resolution's setup (calibration boxes and learned glyphs) to a file the user picks: its path, or null if cancelled. */
+/** Saves a resolution's learned level digits to a file the user picks: its path, or null if cancelled. */
 export const exportGlyphs = (resolution: string) => call("export_glyphs", z.string().nullable(), { resolution });
-/** Imports a setup file the user picks (its boxes replace that resolution's; its glyphs are added): what was imported, or null if cancelled. */
-export const importGlyphs = () =>
-  call("import_glyphs", z.object({ resolution: z.string(), added: count, total: count, calibration: z.boolean() }).nullable());
+/** Imports a config file the user picks (its level digits are added): what was imported, or null if cancelled. */
+export const importGlyphs = () => call("import_glyphs", z.object({ resolution: z.string(), added: count, total: count }).nullable());
 /** Names an unknown glyph: it's learned as `ch`. */
 export const assignGlyph = (id: number, ch: string) => call("assign_glyph", z.null(), { id, ch });
 /** Corrects a learned glyph's character. */

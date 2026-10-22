@@ -1,9 +1,9 @@
 //! Windows Graphics Capture of the PRIMARY MONITOR (never a window, never the game
-//! process). Each accepted frame is cropped to the calibrated regions on the GPU,
+//! process). Each accepted frame is cropped to the readout boxes (geom::boxes_for) on the GPU,
 //! copied to memory, and sent to the pipeline. Nothing is written to disk.
 
 use std::sync::mpsc::{SyncSender, TrySendError};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use windows_capture::capture::{CaptureControl, Context, GraphicsCaptureApiHandler};
@@ -15,7 +15,7 @@ use windows_capture::settings::{
     SecondaryWindowSettings, Settings,
 };
 
-use crate::geom::{Calibration, Crop, Rect};
+use crate::geom::{Boxes, Crop, Rect};
 use crate::now_unix;
 
 pub const SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
@@ -24,22 +24,21 @@ pub const SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
 pub struct Regions {
     pub width: u32,
     pub height: u32,
-    pub calibration: Calibration,
+    pub boxes: Boxes,
 }
 
 /// State shared between the capture thread, the pipeline and commands.
 #[derive(Default)]
 pub struct Shared {
-    /// Calibration for the current monitor resolution; `None` until known.
+    /// The boxes for the current monitor resolution; `None` until known.
     pub regions: RwLock<Option<Regions>>,
-    /// One-shot request for a full frame (calibration screen).
-    pub full_frame_request: Mutex<Option<SyncSender<Crop>>>,
 }
 
 #[derive(Debug)]
 pub enum CaptureMsg {
-    Regions { t: i64, width: u32, height: u32, exp: Crop, map: Crop, level: Option<Crop> },
-    Uncalibrated { width: u32, height: u32 },
+    Regions { t: i64, width: u32, height: u32, exp: Crop, map: Crop, level: Crop },
+    /// A frame at a resolution the pipeline has no boxes for (yet).
+    NoBoxes { width: u32, height: u32 },
     Closed,
 }
 
@@ -88,14 +87,6 @@ impl GraphicsCaptureApiHandler for Handler {
     fn on_frame_arrived(&mut self, frame: &mut Frame, control: InternalCaptureControl) -> Result<(), Self::Error> {
         let (width, height) = (frame.width(), frame.height());
 
-        let requester = self.shared.full_frame_request.lock().map_err(|_| CaptureError::Poisoned)?.take();
-        if let Some(requester) = requester {
-            let full = copy_region(frame, Rect { x: 0, y: 0, w: width, h: height })?;
-            if requester.try_send(full).is_err() {
-                // The requester timed out and dropped its receiver; nobody to deliver to.
-            }
-        }
-
         if self.last_sent.is_some_and(|t| t.elapsed() < SAMPLE_INTERVAL) {
             return Ok(());
         }
@@ -106,20 +97,20 @@ impl GraphicsCaptureApiHandler for Handler {
             Some(r)
                 if r.width == width
                     && r.height == height
-                    && r.calibration.exp.fits_in(width, height)
-                    && r.calibration.map.fits_in(width, height)
-                    && r.calibration.level.is_none_or(|l| l.fits_in(width, height)) =>
+                    && r.boxes.exp.fits_in(width, height)
+                    && r.boxes.map.fits_in(width, height)
+                    && r.boxes.level.fits_in(width, height) =>
             {
                 CaptureMsg::Regions {
                     t: now_unix(),
                     width,
                     height,
-                    exp: copy_region(frame, r.calibration.exp)?,
-                    map: copy_region(frame, r.calibration.map)?,
-                    level: r.calibration.level.map(|l| copy_region(frame, l)).transpose()?,
+                    exp: copy_region(frame, r.boxes.exp)?,
+                    map: copy_region(frame, r.boxes.map)?,
+                    level: copy_region(frame, r.boxes.level)?,
                 }
             }
-            _ => CaptureMsg::Uncalibrated { width, height },
+            _ => CaptureMsg::NoBoxes { width, height },
         };
         match self.tx.try_send(msg) {
             // Full: the pipeline is behind; dropping one sample is correct (the next arrives in 1 s).
