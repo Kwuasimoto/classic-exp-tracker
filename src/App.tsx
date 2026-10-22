@@ -7,17 +7,15 @@ import { TitleBar } from "./components/TitleBar";
 import { BACKDROPS, saveBackdrop, savedBackdrop } from "./lib/backgrounds";
 import { statusText } from "./lib/format";
 import { useTick } from "./lib/useTick";
-import { GlyphsView } from "./views/GlyphsView";
 import { HistoryView } from "./views/HistoryView";
 import { LiveView } from "./views/LiveView";
 
-type Tab = "live" | "history" | "glyphs";
+type Tab = "live" | "history";
 
 const ICON = { fill: "none", stroke: "currentColor", strokeWidth: 2.2, strokeLinecap: "round", strokeLinejoin: "round" } as const;
 const TABS: ReadonlyArray<{ id: Tab; label: string; icon: ReactNode }> = [
   { id: "live", label: "Live", icon: <><polyline points="3 17 9 11 13 15 21 7" /><polyline points="15 7 21 7 21 13" /></> },
   { id: "history", label: "History", icon: <><circle cx="12" cy="12" r="9" /><polyline points="12 7 12 12 15 14" /></> },
-  { id: "glyphs", label: "Glyphs", icon: <><polyline points="4 7 4 4 20 4 20 7" /><line x1="9" y1="20" x2="15" y2="20" /><line x1="12" y1="4" x2="12" y2="20" /></> },
 ];
 
 export default function App() {
@@ -59,7 +57,6 @@ export default function App() {
         <main className="content">
           {tab === "live" && <LiveView tick={tick} />}
           {tab === "history" && <HistoryView />}
-          {tab === "glyphs" && <GlyphsView tick={tick} />}
         </main>
       </div>
     </div>

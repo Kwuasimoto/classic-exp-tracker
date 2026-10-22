@@ -2,7 +2,6 @@ pub mod capture;
 mod commands;
 mod error;
 pub mod geom;
-pub mod glyph_library;
 mod pipeline;
 pub mod rates;
 pub mod read;
@@ -66,8 +65,6 @@ pub fn run() {
                 .timezone_strategy(tauri_plugin_log::TimezoneStrategy::UseLocal)
                 .build(),
         )
-        // Save/open dialogs for glyph library export and import, shown from Rust (commands.rs).
-        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
@@ -91,13 +88,6 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_live_snapshot,
             commands::get_live_chart,
-            commands::get_glyphs,
-            commands::assign_glyph,
-            commands::relabel_glyph,
-            commands::forget_glyph,
-            commands::dismiss_glyph,
-            commands::export_glyphs,
-            commands::import_glyphs,
             commands::save_snapshot,
             commands::reset_session,
             commands::get_snapshots,

@@ -9,7 +9,6 @@ use log::{info, warn};
 use crate::geom::Crop;
 use crate::read::exp::{read_line, reading, ExpReading, Glyph, Line};
 use crate::read::font::{ncc, MIN_LEAD, MIN_SCORE};
-use crate::read::level::Glyph as LevelGlyph;
 use crate::read::map_strip::{read_strip, Signature};
 use crate::read::{LearnedGlyph, ReadError};
 use crate::tracker::{ConfirmOutcome, MapConfirmer, Tracker};
@@ -47,8 +46,6 @@ pub struct FrameRead {
     pub map_readable: bool,
     /// A map confirmed on this frame, with the strips that confirmed it (for OCR).
     pub new_map: Option<(Signature, Vec<Crop>)>,
-    /// Level digits no learned digit matches, for the Glyphs page.
-    pub unknown: Vec<LevelGlyph>,
 }
 
 pub struct Screen {
@@ -100,8 +97,7 @@ impl Screen {
             ConfirmOutcome::Unchanged => None,
         });
         self.level_box.observe(level);
-        let unknown = self.level_box.take_unknown();
-        FrameRead { exp, map_readable, new_map, unknown }
+        FrameRead { exp, map_readable, new_map }
     }
 
     /// The EXP readout. A box that looks as it did last frame reads as it did then;

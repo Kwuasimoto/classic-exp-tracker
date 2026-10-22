@@ -15,21 +15,16 @@ use tauri::{AppHandle, Emitter};
 
 use crate::capture::{self, CaptureMsg, Control, Regions, Shared};
 use crate::geom::{boxes_for, resolution_key, Crop, NATIVE};
-use crate::read::level::{centred, classify, distance_to, from_art, to_art, Glyph, MAX_DISTANCE};
 use crate::read::map_strip::Signature;
 use crate::read::ocr::MapOcr;
-use crate::read::{GlyphKind, LearnedGlyph};
+use crate::read::LearnedGlyph;
 use crate::rates::{self, MinuteRow};
 use crate::screen::{FrameRead, Screen};
-use crate::store::{Store, StoreError, UnknownGlyph};
+use crate::store::{Store, StoreError};
 use crate::tracker::{Effect, MapId, Sample, SessionKey, Tracker};
 
 pub const TICK_EVENT: &str = "tracker-tick";
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
-/// Unrecognised shapes kept for the Glyphs page per resolution; more waiting means
-/// something other than the readouts is being caught, and the user should look.
-const MAX_UNKNOWN_ENTRIES: usize = 50;
-
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", content = "detail", rename_all = "camelCase")]
 pub enum ReaderStatus {
@@ -74,10 +69,6 @@ pub struct AppState {
     pub live_since: RwLock<i64>,
     /// Set by commands, handled by the pipeline thread on its next loop.
     pub end_session_requested: AtomicBool,
-    /// Learned or unknown glyphs changed in the database: reload them.
-    pub glyphs_changed: AtomicBool,
-    /// The resolution whose glyphs are in use (`1920x1080`); `None` before the first frame.
-    pub glyph_resolution: RwLock<Option<String>>,
     shutdown: AtomicBool,
     thread: Mutex<Option<JoinHandle<()>>>,
 }
@@ -91,8 +82,6 @@ impl AppState {
             live_minute: RwLock::new(None),
             live_since: RwLock::new(live_since),
             end_session_requested: AtomicBool::new(false),
-            glyphs_changed: AtomicBool::new(false),
-            glyph_resolution: RwLock::new(None),
             shutdown: AtomicBool::new(false),
             thread: Mutex::new(None),
         }
@@ -130,11 +119,8 @@ struct Pipeline {
     screen: Screen,
     tracker: Tracker,
     current_map: Option<MapId>,
-    /// The resolution the glyphs in use were learned at, and its unknown shapes.
+    /// The resolution the level digits in use were learned at.
     resolution: Option<String>,
-    unknown: Vec<UnknownGlyph>,
-    /// Whether the full-list warning was logged since the glyphs were last loaded.
-    unknown_full_warned: bool,
     keys: HashMap<SessionKey, i64>,
     pending: Vec<Effect>,
     tried_resolution: Option<(u32, u32)>,
@@ -159,8 +145,6 @@ impl Pipeline {
             tracker: Tracker::new(),
             current_map: None,
             resolution: None,
-            unknown: Vec::new(),
-            unknown_full_warned: false,
             keys: HashMap::new(),
             pending: Vec::new(),
             tried_resolution: None,
@@ -190,18 +174,12 @@ impl Pipeline {
             }
     }
 
-    /// Requests from commands: end the session (a reset), reload changed glyphs.
+    /// Requests from commands: end the session (a reset).
     fn handle_requests(&mut self) {
         if self.state.end_session_requested.swap(false, Ordering::AcqRel) {
             info!("session reset by the user");
             let fx = self.tracker.end_session();
             self.apply(fx);
-        }
-        if self.state.glyphs_changed.swap(false, Ordering::AcqRel)
-            && let Some(resolution) = self.resolution.clone()
-            && let Err(e) = self.load_glyphs(resolution)
-        {
-            self.storage_failed("reloading glyphs", e);
         }
     }
 
@@ -270,8 +248,7 @@ impl Pipeline {
     fn on_regions(&mut self, t: i64, width: u32, height: u32, exp: Crop, map: Crop, level: Crop) {
         self.frames_flowing();
         self.use_glyphs_for(width, height);
-        let FrameRead { exp, map_readable, new_map, unknown } = self.screen.read(t, &exp, map, level);
-        self.record_unknown(t, unknown);
+        let FrameRead { exp, map_readable, new_map } = self.screen.read(t, &exp, map, level);
         if let Some((signature, strips)) = &new_map {
             self.resolve_map(t, signature, strips);
         }
@@ -297,85 +274,32 @@ impl Pipeline {
         }
         if let Err(e) = self.load_glyphs(key) {
             self.resolution = None;
-            *self.state.glyph_resolution.write().expect("glyph resolution lock poisoned") = None;
             self.storage_failed("loading learned glyphs", e);
         }
     }
 
-    /// Use the level digits learned at `resolution`, and drop the unknown shapes they
-    /// now read (learned since they were recorded).
+    /// Use the level digits learned at `resolution`.
     fn load_glyphs(&mut self, resolution: String) -> Result<(), StoreError> {
-        let store = self.state.store.lock().expect("store lock poisoned");
-        let level: Vec<LearnedGlyph> = store.glyphs(&resolution)?.into_iter().map(|stored| stored.glyph).collect();
-        let (read_now, waiting): (Vec<UnknownGlyph>, Vec<UnknownGlyph>) = store
-            .unknown_glyphs(&resolution)?
-            .into_iter()
-            .partition(|u| !u.dismissed && classify(&from_art(&u.rows), &level).is_some());
-        for entry in &read_now {
-            store.delete_unknown_glyph(entry.id)?;
-        }
-        drop(store);
+        let level: Vec<LearnedGlyph> =
+            self.state.store.lock().expect("store lock poisoned").glyphs(&resolution)?;
         let mut heights: Vec<usize> = level.iter().map(|g| g.rows.len()).collect();
         heights.sort_unstable();
         heights.dedup();
-        info!(
-            "level digits for {resolution}: {} learned ({heights:?} rows tall), {} unknown waiting ({} now readable, removed)",
-            level.len(),
-            waiting.iter().filter(|u| !u.dismissed).count(),
-            read_now.len()
-        );
+        info!("level digits for {resolution}: {} learned ({heights:?} rows tall)", level.len());
         self.screen.set_level_glyphs(level);
-        *self.state.glyph_resolution.write().expect("glyph resolution lock poisoned") = Some(resolution.clone());
         self.resolution = Some(resolution);
-        self.unknown = waiting;
-        self.unknown_full_warned = false;
         Ok(())
     }
 
-    /// The glyphs are already in use. Once saved, reload: unknown shapes they read are done.
+    /// Save digits just learned (already in use by the level box).
     fn save_glyphs(&mut self, glyphs: &[LearnedGlyph]) {
         let Some(resolution) = &self.resolution else { return };
-        if glyphs.is_empty() {
-            return;
-        }
         let saved = {
             let store = self.state.store.lock().expect("store lock poisoned");
-            glyphs.iter().try_fold(false, |any, glyph| store.add_glyph(resolution, GlyphKind::Level, glyph).map(|added| any || added))
+            glyphs.iter().try_for_each(|glyph| store.add_glyph(resolution, glyph).map(drop))
         };
-        match saved {
-            Ok(true) => self.state.glyphs_changed.store(true, Ordering::Release),
-            // Every character already has its MAX_GLYPHS_PER_CHAR: in use until the next reload.
-            Ok(false) => {}
-            Err(e) => self.storage_failed("saving a learned glyph", e),
-        }
-    }
-
-    /// Keep shapes no glyph matches for the Glyphs page, once each: one close to a
-    /// waiting or dismissed entry is the same shape again.
-    fn record_unknown(&mut self, t: i64, unknown: Vec<Glyph>) {
-        let Some(resolution) = self.resolution.clone() else { return };
-        let kind = GlyphKind::Level;
-        for glyph in unknown {
-            let waiting = self.unknown.iter().any(|u| distance_to(&glyph, &u.rows).is_some_and(|d| d <= MAX_DISTANCE / 2.0));
-            if waiting {
-                continue;
-            }
-            if self.unknown.iter().filter(|u| !u.dismissed).count() >= MAX_UNKNOWN_ENTRIES {
-                if !self.unknown_full_warned {
-                    warn!("{MAX_UNKNOWN_ENTRIES} unrecognised glyphs already wait on the Glyphs page; not keeping more");
-                    self.unknown_full_warned = true;
-                }
-                return;
-            }
-            let rows = to_art(&centred(&glyph));
-            let added = self.state.store.lock().expect("store lock poisoned").add_unknown_glyph(&resolution, kind, &rows, t);
-            match added {
-                Ok(id) => {
-                    info!("unrecognised {} glyph #{id} kept for the Glyphs page", kind.as_str());
-                    self.unknown.push(UnknownGlyph { id, kind, rows, dismissed: false });
-                }
-                Err(e) => return self.storage_failed("keeping an unrecognised glyph", e),
-            }
+        if let Err(e) = saved {
+            self.storage_failed("saving a learned glyph", e);
         }
     }
 

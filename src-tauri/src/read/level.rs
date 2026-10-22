@@ -16,19 +16,18 @@ const WHITE_MIN: u8 = 200;
 const WHITE_FLOOR: f32 = 32.0;
 
 /// Glyphs are compared over the centre of brightness −6 … +6 columns.
-pub const HALF_WIDTH: i32 = 6;
+const HALF_WIDTH: i32 = 6;
 /// The nearest learned digit is accepted only if it is at least this many times
 /// closer than the nearest learned digit of another character…
-pub const MIN_MARGIN: f32 = 1.5;
+const MIN_MARGIN: f32 = 1.5;
 /// …and closer than this (sum of squared ink differences).
-pub const MAX_DISTANCE: f32 = 8.0;
+const MAX_DISTANCE: f32 = 8.0;
 
-/// One digit cut from the level box: its left column in the crop and, per row, the
-/// ink of each pixel (0.0 = background, 1.0 = full text brightness).
+/// One digit cut from the level box: per row, the ink of each pixel (0.0 = background,
+/// 1.0 = full text brightness).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Glyph {
-    pub x: u32,
-    pub ink: Vec<Vec<f32>>,
+    ink: Vec<Vec<f32>>,
 }
 
 fn whiteness(px: [u8; 4]) -> u8 {
@@ -59,7 +58,7 @@ pub fn segment(crop: &Crop) -> Result<Vec<Glyph>, ReadError> {
         }
         let columns = start.saturating_sub(1)..(x + 1).min(w);
         let ink = (top..=bottom).map(|y| columns.clone().map(|gx| ink(gx, y)).collect()).collect();
-        glyphs.push(Glyph { x: start, ink });
+        glyphs.push(Glyph { ink });
     }
     Ok(glyphs)
 }
@@ -67,7 +66,7 @@ pub fn segment(crop: &Crop) -> Result<Vec<Glyph>, ReadError> {
 /// The glyph resampled at its centre of brightness −HALF_WIDTH … +HALF_WIDTH
 /// columns (linear interpolation), so glyphs drawn at different fractional
 /// positions line up with the references.
-pub fn centred(glyph: &Glyph) -> Vec<Vec<f32>> {
+fn centred(glyph: &Glyph) -> Vec<Vec<f32>> {
     let (mut sum, mut weighted) = (0.0, 0.0);
     for row in &glyph.ink {
         for (x, v) in row.iter().enumerate() {
@@ -96,34 +95,20 @@ pub fn centred(glyph: &Glyph) -> Vec<Vec<f32>> {
 /// Ink levels of the ASCII art used for references: ' ' = 0/9 … '@' = 9/9.
 const ART_LEVELS: &[u8; 10] = b" .:-=+*#%@";
 
-/// Rows a glyph's art may have: the text line's height, generously.
-const MAX_ART_ROWS: usize = 64;
-
-/// Whether `rows` is glyph art: 1–MAX_ART_ROWS rows of 2 × HALF_WIDTH + 1 ink levels.
-pub fn valid_art(rows: &[String]) -> bool {
-    let width = 2 * HALF_WIDTH as usize + 1;
-    (1..=MAX_ART_ROWS).contains(&rows.len()) && rows.iter().all(|r| r.len() == width && r.bytes().all(|b| ART_LEVELS.contains(&b)))
-}
-
 fn art_level(b: u8) -> f32 {
     ART_LEVELS.iter().position(|&l| l == b).unwrap_or(0) as f32 / 9.0
 }
 
 /// Centred ink as ASCII art, the format of every stored reference.
-pub fn to_art(centred: &[Vec<f32>]) -> Vec<String> {
+fn to_art(centred: &[Vec<f32>]) -> Vec<String> {
     centred
         .iter()
         .map(|row| row.iter().map(|v| ART_LEVELS[(v * 9.0).round().clamp(0.0, 9.0) as usize] as char).collect())
         .collect()
 }
 
-/// A glyph back from its ASCII art, so stored shapes can be compared like screen glyphs.
-pub fn from_art(rows: &[String]) -> Glyph {
-    Glyph { x: 0, ink: rows.iter().map(|r| r.bytes().map(art_level).collect()).collect() }
-}
-
 /// Sum of squared ink differences; `None` if the line heights differ.
-fn distance(centred: &[Vec<f32>], art: &[impl AsRef<str>]) -> Option<f32> {
+fn distance(centred: &[Vec<f32>], art: &[String]) -> Option<f32> {
     if centred.len() != art.len() {
         return None;
     }
@@ -131,45 +116,25 @@ fn distance(centred: &[Vec<f32>], art: &[impl AsRef<str>]) -> Option<f32> {
         centred
             .iter()
             .zip(art)
-            .flat_map(|(a, r)| a.iter().zip(r.as_ref().bytes()).map(move |(a, r)| (a - art_level(r)) * (a - art_level(r))))
+            .flat_map(|(a, r)| a.iter().zip(r.bytes()).map(move |(a, r)| (a - art_level(r)) * (a - art_level(r))))
             .sum(),
     )
 }
 
-/// How far `glyph` is from a stored shape; `None` if their heights differ.
-pub fn distance_to(glyph: &Glyph, art: &[impl AsRef<str>]) -> Option<f32> {
-    distance(&centred(glyph), art)
-}
-
-fn distances<'a, R: AsRef<str> + 'a>(
-    centred: &[Vec<f32>],
-    references: impl IntoIterator<Item = (char, &'a [R])>,
-) -> impl Iterator<Item = (f32, char)> {
-    references.into_iter().filter_map(|(ch, art)| distance(centred, art).map(|d| (d, ch)))
-}
-
-/// The nearest character, if it is close and clearly closer than any other
-/// character's. Otherwise `None`, and the read fails.
-fn best(mut ranked: Vec<(f32, char)>) -> Option<char> {
+/// The digit `glyph` reads as with the digits learned at this resolution: the nearest
+/// learned shape, if it is close and clearly closer than any other character's.
+fn classify(glyph: &Glyph, learned: &[LearnedGlyph]) -> Option<char> {
+    let centred = centred(glyph);
+    let mut ranked: Vec<(f32, char)> = learned.iter().filter_map(|l| distance(&centred, &l.rows).map(|d| (d, l.ch))).collect();
     ranked.sort_by(|a, b| a.0.total_cmp(&b.0));
     let &(best, ch) = ranked.first()?;
     let runner_up = ranked.iter().find(|(_, c)| *c != ch).map_or(f32::INFINITY, |&(d, _)| d);
     (best <= MAX_DISTANCE && runner_up >= MIN_MARGIN * best).then_some(ch)
 }
 
-pub fn nearest<'a, R: AsRef<str> + 'a>(glyph: &Glyph, references: impl IntoIterator<Item = (char, &'a [R])>) -> Option<char> {
-    best(distances(&centred(glyph), references).collect())
-}
-
-/// The digit `glyph` reads as with the digits learned at this resolution.
-pub fn classify(glyph: &Glyph, learned: &[LearnedGlyph]) -> Option<char> {
-    nearest(glyph, learned.iter().map(|l| (l.ch, l.rows.as_slice())))
-}
-
 /// The level, if every digit matches a learned one.
 pub fn read_level(glyphs: &[Glyph], learned: &[LearnedGlyph]) -> Option<u32> {
-    let digits: Option<String> =
-        glyphs.iter().map(|g| nearest(g, learned.iter().map(|l| (l.ch, l.rows.as_slice())))).collect();
+    let digits: Option<String> = glyphs.iter().map(|g| classify(g, learned)).collect();
     digits?.parse().ok()
 }
 
@@ -189,7 +154,7 @@ pub fn learn(glyphs: &[Glyph], learned: &[LearnedGlyph], level: u32) -> Result<V
     }
     let mut new = Vec::new();
     for (glyph, &ch) in glyphs.iter().zip(&digits) {
-        match nearest(glyph, learned.iter().map(|l| (l.ch, l.rows.as_slice()))) {
+        match classify(glyph, learned) {
             Some(read) if read == ch => {}
             Some(read) => return Err(format!("a glyph reads as {read:?}, but level {level} has {ch:?} there")),
             None => new.push(LearnedGlyph { ch, rows: to_art(&centred(glyph)) }),
