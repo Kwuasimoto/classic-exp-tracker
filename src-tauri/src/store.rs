@@ -8,11 +8,12 @@ use serde::Serialize;
 
 use crate::geom::{Calibration, Rect};
 use crate::rates::MinuteRow;
+use crate::read::glyphs::{starter_glyphs, STARTER_RESOLUTION};
 use crate::read::{GlyphKind, LearnedGlyph};
 use crate::read::map_strip::Signature;
 use crate::tracker::MapId;
 
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 const SCHEMA: &str = "
 BEGIN;
 CREATE TABLE maps (
@@ -267,6 +268,19 @@ impl Store {
         }
         if version < 6 {
             conn.execute_batch(MIGRATION_6)?;
+        }
+        if version < 7 {
+            // Version 7: the starter EXP glyphs join the 1920x1080 library as ordinary
+            // learned glyphs (until now they were matched from the code alongside it).
+            let tx = conn.unchecked_transaction()?;
+            for glyph in starter_glyphs() {
+                tx.execute(
+                    "INSERT INTO glyphs (resolution, kind, ch, art) VALUES (?1, 'exp', ?2, ?3)",
+                    params![STARTER_RESOLUTION, glyph.ch.to_string(), glyph.rows.join("\n")],
+                )?;
+            }
+            tx.execute_batch("PRAGMA user_version = 7;")?;
+            tx.commit()?;
         }
         Ok(Self { conn })
     }

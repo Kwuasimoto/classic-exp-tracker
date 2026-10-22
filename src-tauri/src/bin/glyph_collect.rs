@@ -4,7 +4,7 @@
 //! replay: run the EXP reader over a recording and print what each frame read as.
 //! live / png: print glyphs the reader rejects, centred, as greyscale ASCII art.
 //! export: print the EXP glyphs of a library file (exported on a user's Glyphs page) as
-//!   `Reference`s, to add to glyphs.rs as a built-in set.
+//!   `Reference`s, e.g. to replace the starter set in glyphs.rs.
 //!
 //!   cargo run --manifest-path src-tauri/Cargo.toml --features dev-tools --bin glyph-collect -- record <x> <y> <w> <h> <seconds> > frames.txt
 //!   cargo run --manifest-path src-tauri/Cargo.toml --features dev-tools --bin glyph-collect -- replay frames.txt
@@ -23,14 +23,16 @@ use classic_exp_tracker_lib::geom::{Calibration, Crop, Rect};
 use classic_exp_tracker_lib::glyph_library::Library;
 use classic_exp_tracker_lib::read::GlyphKind;
 use classic_exp_tracker_lib::read::exp::{centred, classify, read_exp, segment, to_art};
+use classic_exp_tracker_lib::read::glyphs::starter_glyphs;
 
 /// Rejected glyphs, keyed by their greyscale art, with a count and the line they were in.
 type Rejected = BTreeMap<Vec<String>, (usize, String)>;
 
 fn collect_rejected(crop: &Crop, rejected: &mut Rejected) {
     let Ok(glyphs) = segment(crop) else { return };
-    let line: String = glyphs.iter().map(|g| classify(g, &[]).unwrap_or('?')).collect();
-    for g in glyphs.iter().filter(|g| classify(g, &[]).is_none()) {
+    let starter = starter_glyphs();
+    let line: String = glyphs.iter().map(|g| classify(g, &starter).unwrap_or('?')).collect();
+    for g in glyphs.iter().filter(|g| classify(g, &starter).is_none()) {
         rejected.entry(to_art(&centred(g))).or_insert((0, line.clone())).0 += 1;
     }
 }
@@ -81,7 +83,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {
         Some("replay") => {
             for (t, crop) in load_recording(args.get(1).ok_or("missing recording path")?)? {
-                match read_exp(&crop, &[]) {
+                match read_exp(&crop, &starter_glyphs()) {
                     Ok(r) => println!("{t} {} [{}.{:02}%]", r.exp, r.pct_bp / 100, r.pct_bp % 100),
                     Err(e) => println!("{t} unreadable: {e}"),
                 }

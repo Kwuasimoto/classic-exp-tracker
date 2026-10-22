@@ -6,16 +6,24 @@
 //! Built 2026-10-16 by averaging ~7,600 centred glyphs from a 10-minute recording
 //! of the EXP readout at 1920x1080 (`glyph-collect record`).
 
-/// The screen setup these references were recorded at. Elsewhere the text is usually
-/// drawn at another size, and the app learns that resolution's glyphs (see screen/exp_learner.rs).
-pub const BUILT_IN_RESOLUTION: &str = "1920x1080";
+/// The resolution these glyphs were recorded at. They're added to its library when the
+/// database is created (store.rs, version 7) and are ordinary learned glyphs from then
+/// on: shown, exported, changed and forgotten like the rest.
+pub const STARTER_RESOLUTION: &str = "1920x1080";
+
+/// The starter EXP glyphs, as stored in the database.
+pub fn starter_glyphs() -> Vec<LearnedGlyph> {
+    STARTER_GLYPHS.iter().map(|r| LearnedGlyph { ch: r.ch, rows: r.rows.iter().map(|row| (*row).to_string()).collect() }).collect()
+}
+
+use super::LearnedGlyph;
 
 pub struct Reference {
     pub ch: char,
     pub rows: &'static [&'static str],
 }
 
-pub const REFERENCES: &[Reference] = &[
+const STARTER_GLYPHS: &[Reference] = &[
     Reference { ch: '0', rows: &[
         "    -+*+-    ",
         "   .*@@@*.   ",

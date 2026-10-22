@@ -87,8 +87,7 @@ export const GlyphsSchema = z.object({
   resolutions: z.array(z.string()),
   /** Whether the resolution shown has calibration boxes saved (they're exported too). */
   calibrated: z.boolean(),
-  /** `id` is null for a built-in glyph, which can't be forgotten. */
-  learned: z.array(z.object({ id: z.number().int().nullable(), kind: GlyphKindSchema, ch: z.string().length(1), art: ArtSchema })),
+  learned: z.array(z.object({ id: z.number().int(), kind: GlyphKindSchema, ch: z.string().length(1), art: ArtSchema })),
   unknown: z.array(z.object({ id: z.number().int(), kind: GlyphKindSchema, art: ArtSchema })),
   missingExp: z.string(),
   missingLevel: z.string(),

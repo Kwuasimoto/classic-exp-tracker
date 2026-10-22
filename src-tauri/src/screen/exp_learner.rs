@@ -50,10 +50,11 @@ mod tests {
     use super::*;
     use crate::geom::fixture;
     use crate::read::exp::read_line;
+    use crate::read::glyphs::starter_glyphs;
 
     /// The fixture's line (`326[0.10%]`) with the glyph at `unknown` made unrecognised.
     fn line_missing(unknown: usize) -> Vec<(Glyph, Option<char>)> {
-        let mut line = read_line(&fixture("exp_326_0.10.png"), &[]).expect("text found");
+        let mut line = read_line(&fixture("exp_326_0.10.png"), &starter_glyphs()).expect("text found");
         line[unknown].1 = None;
         line
     }

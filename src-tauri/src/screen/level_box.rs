@@ -108,7 +108,7 @@ impl LevelBox {
             return Vec::new();
         }
         self.unknown_reported = true;
-        self.glyphs.iter().filter(|g| !GlyphKind::Level.recognises(g, &self.learned)).cloned().collect()
+        self.glyphs.iter().filter(|g| !GlyphKind::recognises(g, &self.learned)).cloned().collect()
     }
 
     /// The level the box shows, once it has held still.

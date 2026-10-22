@@ -52,7 +52,7 @@ impl ExpBox {
 }
 
 pub struct Screen {
-    /// EXP glyphs learned at this resolution, used with the built-in ones.
+    /// EXP glyphs learned at this resolution.
     exp_glyphs: Vec<LearnedGlyph>,
     /// The EXP box's pixels and how many frames in a row they've looked the same.
     exp_crop: Option<Crop>,

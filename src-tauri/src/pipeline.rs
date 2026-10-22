@@ -327,7 +327,7 @@ impl Pipeline {
                     GlyphKind::Exp => &exp,
                     GlyphKind::Level => &level,
                 };
-                u.kind.recognises(&from_art(&u.rows), learned)
+                GlyphKind::recognises(&from_art(&u.rows), learned)
             });
         for entry in &read_now {
             store.delete_unknown_glyph(entry.id)?;

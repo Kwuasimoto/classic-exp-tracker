@@ -21,7 +21,7 @@ pub enum ReadError {
 }
 
 /// A glyph learned on this PC (by the app or from the user): its character and
-/// centred ink as ASCII art (see exp::to_art), the format of the built-in references.
+/// centred ink as ASCII art (see exp::to_art).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LearnedGlyph {
     pub ch: char,
@@ -60,12 +60,8 @@ impl GlyphKind {
         }
     }
 
-    /// Whether `glyph` reads as a character with these learned glyphs (and, for EXP,
-    /// the built-in references).
-    pub fn recognises(self, glyph: &exp::Glyph, learned: &[LearnedGlyph]) -> bool {
-        match self {
-            Self::Exp => exp::classify(glyph, learned).is_some(),
-            Self::Level => exp::nearest(glyph, learned.iter().map(|l| (l.ch, l.rows.as_slice()))).is_some(),
-        }
+    /// Whether `glyph` reads as a character with these learned glyphs.
+    pub fn recognises(glyph: &exp::Glyph, learned: &[LearnedGlyph]) -> bool {
+        exp::classify(glyph, learned).is_some()
     }
 }

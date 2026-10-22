@@ -106,7 +106,7 @@ export function GlyphsView({ tick }: { tick: Tick | null }) {
   const unknown = glyphs?.unknown ?? [];
   const learned = glyphs?.learned ?? [];
   const shown = glyphs?.resolution ?? null;
-  const canExport = (glyphs?.calibrated ?? false) || learned.some((g) => g.id !== null);
+  const canExport = (glyphs?.calibrated ?? false) || learned.length > 0;
   return (
     <>
       <section className="panel">
@@ -202,8 +202,8 @@ export function GlyphsView({ tick }: { tick: Tick | null }) {
                 <p className="caption">None yet.</p>
               ) : (
                 <div className="glyph-list" style={{ marginTop: 12 }}>
-                  {entries.map((g, i) => (
-                    <div key={g.id ?? `built-in-${i}`} className="glyph-card">
+                  {entries.map((g) => (
+                    <div key={g.id} className="glyph-card">
                       <GlyphShape art={g.art} scale={3} />
                       {changing !== null && changing.id === g.id ? (
                         <input
@@ -222,24 +222,22 @@ export function GlyphsView({ tick }: { tick: Tick | null }) {
                       ) : (
                         <span style={{ fontSize: 18, fontWeight: 900 }}>{g.ch}</span>
                       )}
-                      <span className="caption">{g.id === null ? "built in" : "learned"}</span>
-                      {g.id !== null &&
-                        (changing !== null && changing.id === g.id ? (
+                      {changing !== null && changing.id === g.id ? (
                           <div className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
                             <button className="btn primary" disabled={!changing.ch} onClick={() => void relabel()}>Save</button>
                             <button className="btn" onClick={() => setChanging(null)}>Cancel</button>
                           </div>
                         ) : forgetting === g.id ? (
                           <div className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
-                            <button className="btn danger" onClick={() => void forget(g.id as number)}>Forget</button>
+                            <button className="btn danger" onClick={() => void forget(g.id)}>Forget</button>
                             <button className="btn" onClick={() => setForgetting(null)}>Keep</button>
                           </div>
                         ) : (
                           <div className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
-                            <button className="btn" onClick={() => setChanging({ id: g.id as number, ch: g.ch })}>Change</button>
+                            <button className="btn" onClick={() => setChanging({ id: g.id, ch: g.ch })}>Change</button>
                             <button className="btn" onClick={() => setForgetting(g.id)}>Forget</button>
                           </div>
-                        ))}
+                        )}
                     </div>
                   ))}
                 </div>

@@ -3,7 +3,6 @@
 
 use serde::Serialize;
 
-use super::glyphs::REFERENCES;
 use super::{LearnedGlyph, ReadError};
 use crate::geom::Crop;
 
@@ -181,13 +180,9 @@ pub fn nearest<'a, R: AsRef<str> + 'a>(glyph: &Glyph, references: impl IntoItera
     best(distances(&centred(glyph), references).collect())
 }
 
-/// The glyph's character, from the built-in references and the glyphs learned at
-/// this resolution together.
+/// The glyph's character, from the glyphs learned at this resolution.
 pub fn classify(glyph: &Glyph, learned: &[LearnedGlyph]) -> Option<char> {
-    let centred = centred(glyph);
-    let built_in = distances(&centred, REFERENCES.iter().map(|r| (r.ch, r.rows)));
-    let learned = distances(&centred, learned.iter().map(|l| (l.ch, l.rows.as_slice())));
-    best(built_in.chain(learned).collect())
+    nearest(glyph, learned.iter().map(|l| (l.ch, l.rows.as_slice())))
 }
 
 /// Parse `<digits/commas>[<int>.<2 digits>%]`.
@@ -236,19 +231,20 @@ pub fn read_exp(crop: &Crop, learned: &[LearnedGlyph]) -> Result<ExpReading, Rea
 mod tests {
     use super::*;
     use crate::geom::fixture;
+    use crate::read::glyphs::starter_glyphs;
 
     #[test]
     fn reads_the_fixture() {
-        let reading = read_exp(&fixture("exp_326_0.10.png"), &[]).expect("fixture is readable");
+        let reading = read_exp(&fixture("exp_326_0.10.png"), &starter_glyphs()).expect("fixture is readable");
         assert_eq!(reading, ExpReading { exp: 326, pct_bp: 10 });
     }
 
     #[test]
     fn learned_glyphs_read_a_stretched_screen() {
-        // A monitor stretching the game ×2: the built-in shapes no longer match.
+        // A monitor stretching the game ×2: the 1920x1080 shapes no longer match.
         let base = fixture("exp_326_0.10.png").to_image();
         let stretched = Crop::from_image(&image::imageops::resize(&base, base.width() * 2, base.height() * 2, image::imageops::FilterType::Nearest));
-        assert!(read_exp(&stretched, &[]).is_err());
+        assert!(read_exp(&stretched, &starter_glyphs()).is_err());
         let glyphs = segment(&stretched).expect("text found");
         let learned: Vec<LearnedGlyph> =
             glyphs.iter().zip("326[0.10%]".chars()).map(|(g, ch)| LearnedGlyph { ch, rows: to_art(&centred(g)) }).collect();

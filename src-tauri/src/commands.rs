@@ -19,7 +19,6 @@ use crate::now_unix;
 use crate::pipeline::{AppState, Tick};
 use crate::rates::{self, Bar};
 use crate::read::exp::{read_exp, ExpReading};
-use crate::read::glyphs::{BUILT_IN_RESOLUTION, REFERENCES};
 use crate::read::level;
 use crate::read::map_strip::read_strip;
 use crate::read::ocr::MapOcr;
@@ -175,8 +174,7 @@ pub fn save_calibration(state: AppStateRef<'_>, exp: Rect, map: Rect, level: Opt
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LearnedEntry {
-    /// `None` for a built-in glyph, which can't be forgotten.
-    id: Option<i64>,
+    id: i64,
     kind: GlyphKind,
     ch: char,
     art: Vec<String>,
@@ -197,7 +195,7 @@ pub struct Glyphs {
     resolution: Option<String>,
     /// The resolution whose glyphs are reading the screen now.
     in_use: Option<String>,
-    /// Every resolution with a library, smallest first: built in, learned, or in use.
+    /// Every resolution with a library, smallest first, and the one in use.
     resolutions: Vec<String>,
     /// Whether the resolution shown has calibration boxes saved (they're exported too).
     calibrated: bool,
@@ -229,7 +227,7 @@ pub fn get_glyphs(state: AppStateRef<'_>, resolution: Option<String>) -> Result<
     let resolution = resolution.or_else(|| in_use.clone());
     let store = state.store.lock().expect("store lock poisoned");
     let mut resolutions = store.glyph_resolutions()?;
-    resolutions.extend([Some(BUILT_IN_RESOLUTION.to_string()), in_use.clone(), resolution.clone()].into_iter().flatten());
+    resolutions.extend([in_use.clone(), resolution.clone()].into_iter().flatten());
     by_size(&mut resolutions);
     resolutions.dedup();
     let mut learned = Vec::new();
@@ -237,15 +235,7 @@ pub fn get_glyphs(state: AppStateRef<'_>, resolution: Option<String>) -> Result<
     let mut calibrated = false;
     if let Some(resolution) = &resolution {
         calibrated = store.calibration(resolution)?.is_some();
-        if resolution == BUILT_IN_RESOLUTION {
-            learned.extend(REFERENCES.iter().map(|r| LearnedEntry {
-                id: None,
-                kind: GlyphKind::Exp,
-                ch: r.ch,
-                art: r.rows.iter().map(|row| (*row).to_string()).collect(),
-            }));
-        }
-        learned.extend(store.glyphs(resolution)?.into_iter().map(|g| LearnedEntry { id: Some(g.id), kind: g.kind, ch: g.glyph.ch, art: g.glyph.rows }));
+        learned.extend(store.glyphs(resolution)?.into_iter().map(|g| LearnedEntry { id: g.id, kind: g.kind, ch: g.glyph.ch, art: g.glyph.rows }));
         unknown.extend(
             store.unknown_glyphs(resolution)?.into_iter().filter(|u| !u.dismissed).map(|u| UnknownEntry { id: u.id, kind: u.kind, art: u.rows }),
         );
@@ -255,9 +245,8 @@ pub fn get_glyphs(state: AppStateRef<'_>, resolution: Option<String>) -> Result<
     Ok(Glyphs { resolution, in_use, resolutions, calibrated, learned, unknown, missing_exp, missing_level })
 }
 
-/// Save `resolution`'s setup (calibration boxes and learned glyphs) to a file the user
-/// picks. Returns its path, or `None` if the user cancelled. Built-in glyphs aren't
-/// included: every copy has them.
+/// Save `resolution`'s setup (calibration boxes and every glyph in its library) to a
+/// file the user picks. Returns its path, or `None` if the user cancelled.
 #[tauri::command(async)]
 pub fn export_glyphs(window: WebviewWindow, state: AppStateRef<'_>, resolution: String) -> Result<Option<String>, AppError> {
     valid_resolution(&resolution)?;
@@ -266,7 +255,7 @@ pub fn export_glyphs(window: WebviewWindow, state: AppStateRef<'_>, resolution: 
         (store.calibration(&resolution)?, store.glyphs(&resolution)?)
     };
     if calibration.is_none() && glyphs.is_empty() {
-        return Err(AppError::Invalid(format!("nothing to export: {resolution} has no calibration or learned glyphs")));
+        return Err(AppError::Invalid(format!("nothing to export: {resolution} has no calibration or glyphs")));
     }
     let count = glyphs.len();
     let json = serde_json::to_string_pretty(&Library::new(&resolution, calibration, glyphs.into_iter().map(|g| (g.kind, g.glyph))))
