@@ -10,7 +10,7 @@
 //!   cargo run --manifest-path src-tauri/Cargo.toml --features dev-tools --bin glyph-collect -- replay frames.txt
 //!   cargo run --manifest-path src-tauri/Cargo.toml --features dev-tools --bin glyph-collect -- live <x> <y> <w> <h> <seconds>
 //!   cargo run --manifest-path src-tauri/Cargo.toml --features dev-tools --bin glyph-collect -- png <path> <x> <y> <w> <h>
-//!   cargo run --manifest-path src-tauri/Cargo.toml --features dev-tools --bin glyph-collect -- export <glyphs-WxH.json>
+//!   cargo run --manifest-path src-tauri/Cargo.toml --features dev-tools --bin glyph-collect -- export <classic-exp-tracker-config.json>
 
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -138,7 +138,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 return Ok(());
             }
         }
-        _ => return Err("usage: glyph-collect record|live <x> <y> <w> <h> <seconds> | replay <file> | png <path> <x> <y> <w> <h> | export <glyphs-WxH.json>".into()),
+        _ => return Err("usage: glyph-collect record|live <x> <y> <w> <h> <seconds> | replay <file> | png <path> <x> <y> <w> <h> | export <classic-exp-tracker-config.json>".into()),
     }
     for (rows, (count, line)) in &rejected {
         println!("// rejected {count}x; line read as {line:?}");

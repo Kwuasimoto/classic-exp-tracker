@@ -6,6 +6,7 @@ import {
   forgetGlyph,
   getGlyphs,
   importGlyphs,
+  relabelGlyph,
   type AppError,
   type GlyphKind,
   type Glyphs,
@@ -40,6 +41,8 @@ export function GlyphsView({ tick }: { tick: Tick | null }) {
   const [section, setSection] = useState<Section>("unknown");
   const [typed, setTyped] = useState<Record<number, string>>({});
   const [forgetting, setForgetting] = useState<number | null>(null);
+  // A learned glyph whose character is being changed, and what's typed so far.
+  const [changing, setChanging] = useState<{ id: number; ch: string } | null>(null);
   const [error, setError] = useState<AppError | null>(null);
   // Reloads go out every second and can finish out of order: keep only the newest.
   const latestRequest = useRef(0);
@@ -69,6 +72,13 @@ export function GlyphsView({ tick }: { tick: Tick | null }) {
     await done(res);
   };
 
+  const relabel = async () => {
+    if (!changing) return;
+    const res = await relabelGlyph(changing.id, changing.ch);
+    if (res.success) setChanging(null);
+    await done(res);
+  };
+
   const forget = async (id: number) => {
     setForgetting(null);
     await done(await forgetGlyph(id));
@@ -85,8 +95,9 @@ export function GlyphsView({ tick }: { tick: Tick | null }) {
     setMessage(null);
     const res = await importGlyphs();
     if (res.success && res.data !== null) {
-      const { resolution, added, total } = res.data;
-      setMessage(`Imported ${added} of ${total} glyphs into ${resolution}${added < total ? " (the rest were already there)" : ""}.`);
+      const { resolution, added, total, calibration } = res.data;
+      const boxes = calibration ? `Calibration boxes for ${resolution} replaced. ` : "";
+      setMessage(`${boxes}Imported ${added} of ${total} glyphs into ${resolution}${added < total ? " (the rest were already there)" : ""}.`);
       setViewed(resolution === glyphs?.inUse ? null : resolution);
     }
     await done(res);
@@ -95,17 +106,17 @@ export function GlyphsView({ tick }: { tick: Tick | null }) {
   const unknown = glyphs?.unknown ?? [];
   const learned = glyphs?.learned ?? [];
   const shown = glyphs?.resolution ?? null;
-  const canExport = learned.some((g) => g.id !== null);
+  const canExport = (glyphs?.calibrated ?? false) || learned.some((g) => g.id !== null);
   return (
     <>
       <section className="panel">
         <div className="row" style={{ justifyContent: "space-between" }}>
           <h2 style={{ margin: 0 }}>Glyphs</h2>
           <div className="row" style={{ gap: 8 }}>
-            <button className="btn" disabled={!shown || !canExport} title="Save this resolution's learned glyphs to a file" onClick={() => shown && void exportLibrary(shown)}>
+            <button className="btn" disabled={!shown || !canExport} title="Save this resolution's calibration boxes and learned glyphs to a file" onClick={() => shown && void exportLibrary(shown)}>
               Export
             </button>
-            <button className="btn" title="Add the glyphs from an exported file" onClick={() => void importLibrary()}>Import</button>
+            <button className="btn" title="Load an exported setup: its boxes replace yours for that resolution, its glyphs are added" onClick={() => void importLibrary()}>Import</button>
           </div>
         </div>
         {glyphs && glyphs.resolutions.length > 0 && (
@@ -194,16 +205,40 @@ export function GlyphsView({ tick }: { tick: Tick | null }) {
                   {entries.map((g, i) => (
                     <div key={g.id ?? `built-in-${i}`} className="glyph-card">
                       <GlyphShape art={g.art} scale={3} />
-                      <span style={{ fontSize: 18, fontWeight: 900 }}>{g.ch}</span>
+                      {changing !== null && changing.id === g.id ? (
+                        <input
+                          value={changing.ch}
+                          autoFocus
+                          maxLength={1}
+                          aria-label={`New ${KIND_LABEL[kind]} character`}
+                          title={`One of ${ALPHABET[kind].split("").join(" ")}`}
+                          style={{ width: 44, textAlign: "center", fontSize: 18 }}
+                          onChange={(e) => setChanging({ id: changing.id, ch: e.target.value })}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") void relabel();
+                            if (e.key === "Escape") setChanging(null);
+                          }}
+                        />
+                      ) : (
+                        <span style={{ fontSize: 18, fontWeight: 900 }}>{g.ch}</span>
+                      )}
                       <span className="caption">{g.id === null ? "built in" : "learned"}</span>
                       {g.id !== null &&
-                        (forgetting === g.id ? (
+                        (changing !== null && changing.id === g.id ? (
+                          <div className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
+                            <button className="btn primary" disabled={!changing.ch} onClick={() => void relabel()}>Save</button>
+                            <button className="btn" onClick={() => setChanging(null)}>Cancel</button>
+                          </div>
+                        ) : forgetting === g.id ? (
                           <div className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
                             <button className="btn danger" onClick={() => void forget(g.id as number)}>Forget</button>
                             <button className="btn" onClick={() => setForgetting(null)}>Keep</button>
                           </div>
                         ) : (
-                          <button className="btn" onClick={() => setForgetting(g.id)}>Forget</button>
+                          <div className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
+                            <button className="btn" onClick={() => setChanging({ id: g.id as number, ch: g.ch })}>Change</button>
+                            <button className="btn" onClick={() => setForgetting(g.id)}>Forget</button>
+                          </div>
                         ))}
                     </div>
                   ))}

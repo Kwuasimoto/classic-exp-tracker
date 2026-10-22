@@ -434,6 +434,17 @@ impl Store {
         Ok(added)
     }
 
+    /// Which readout a learned glyph belongs to; `None` when no learned glyph has that id.
+    pub fn glyph_kind(&self, id: i64) -> Result<Option<GlyphKind>, StoreError> {
+        Ok(self.conn.query_row("SELECT kind FROM glyphs WHERE id = ?1", [id], |r| kind_at(r, 0)).optional()?)
+    }
+
+    /// Change a learned glyph's character (it was learned or named wrongly).
+    pub fn relabel_glyph(&self, id: i64, ch: char) -> Result<(), StoreError> {
+        self.conn.execute("UPDATE glyphs SET ch = ?2 WHERE id = ?1", params![id, ch.to_string()])?;
+        Ok(())
+    }
+
     /// `false` when no learned glyph has that id.
     pub fn forget_glyph(&self, id: i64) -> Result<bool, StoreError> {
         Ok(self.conn.execute("DELETE FROM glyphs WHERE id = ?1", [id])? == 1)

@@ -199,6 +199,8 @@ pub struct Glyphs {
     in_use: Option<String>,
     /// Every resolution with a library, smallest first: built in, learned, or in use.
     resolutions: Vec<String>,
+    /// Whether the resolution shown has calibration boxes saved (they're exported too).
+    calibrated: bool,
     learned: Vec<LearnedEntry>,
     unknown: Vec<UnknownEntry>,
     /// Characters of each readout with no glyph yet, e.g. "479".
@@ -207,12 +209,8 @@ pub struct Glyphs {
 }
 
 /// `<width>x<height>`, or an error naming the bad value.
-fn valid_resolution(resolution: &str) -> Result<(), AppError> {
-    if glyph_library::valid_resolution(resolution) {
-        Ok(())
-    } else {
-        Err(AppError::Invalid(format!("{resolution:?} is not a screen resolution")))
-    }
+fn valid_resolution(resolution: &str) -> Result<(u32, u32), AppError> {
+    glyph_library::parse_resolution(resolution).ok_or_else(|| AppError::Invalid(format!("{resolution:?} is not a screen resolution")))
 }
 
 /// Smallest screen first: `1920x1080` before `2560x1440`.
@@ -236,7 +234,9 @@ pub fn get_glyphs(state: AppStateRef<'_>, resolution: Option<String>) -> Result<
     resolutions.dedup();
     let mut learned = Vec::new();
     let mut unknown = Vec::new();
+    let mut calibrated = false;
     if let Some(resolution) = &resolution {
+        calibrated = store.calibration(resolution)?.is_some();
         if resolution == BUILT_IN_RESOLUTION {
             learned.extend(REFERENCES.iter().map(|r| LearnedEntry {
                 id: None,
@@ -252,33 +252,37 @@ pub fn get_glyphs(state: AppStateRef<'_>, resolution: Option<String>) -> Result<
     }
     let missing = |kind: GlyphKind| kind.alphabet().chars().filter(|&c| !learned.iter().any(|g| g.kind == kind && g.ch == c)).collect();
     let (missing_exp, missing_level) = (missing(GlyphKind::Exp), missing(GlyphKind::Level));
-    Ok(Glyphs { resolution, in_use, resolutions, learned, unknown, missing_exp, missing_level })
+    Ok(Glyphs { resolution, in_use, resolutions, calibrated, learned, unknown, missing_exp, missing_level })
 }
 
-/// Save the glyphs learned at `resolution` to a file the user picks. Returns its path,
-/// or `None` if the user cancelled. Built-in glyphs aren't included: every copy has them.
+/// Save `resolution`'s setup (calibration boxes and learned glyphs) to a file the user
+/// picks. Returns its path, or `None` if the user cancelled. Built-in glyphs aren't
+/// included: every copy has them.
 #[tauri::command(async)]
 pub fn export_glyphs(window: WebviewWindow, state: AppStateRef<'_>, resolution: String) -> Result<Option<String>, AppError> {
     valid_resolution(&resolution)?;
-    let glyphs = state.store.lock().expect("store lock poisoned").glyphs(&resolution)?;
-    if glyphs.is_empty() {
-        return Err(AppError::Invalid(format!("no glyphs have been learned at {resolution} yet")));
+    let (calibration, glyphs) = {
+        let store = state.store.lock().expect("store lock poisoned");
+        (store.calibration(&resolution)?, store.glyphs(&resolution)?)
+    };
+    if calibration.is_none() && glyphs.is_empty() {
+        return Err(AppError::Invalid(format!("nothing to export: {resolution} has no calibration or learned glyphs")));
     }
     let count = glyphs.len();
-    let json = serde_json::to_string_pretty(&Library::new(&resolution, glyphs.into_iter().map(|g| (g.kind, g.glyph))))
+    let json = serde_json::to_string_pretty(&Library::new(&resolution, calibration, glyphs.into_iter().map(|g| (g.kind, g.glyph))))
         .map_err(|e| AppError::File(format!("writing the library: {e}")))?;
     let picked = window
         .dialog()
         .file()
         .set_parent(&window)
-        .set_title("Export glyph library")
-        .add_filter("Glyph library", &["json"])
-        .set_file_name(format!("glyphs-{resolution}.json"))
+        .set_title("Export config")
+        .add_filter("Classic EXP Tracker config", &["json"])
+        .set_file_name("classic-exp-tracker-config.json")
         .blocking_save_file();
     let Some(picked) = picked else { return Ok(None) };
     let path = picked.into_path().map_err(|e| AppError::File(format!("the chosen location isn't a file path: {e}")))?;
     std::fs::write(&path, json).map_err(|e| AppError::File(format!("saving {}: {e}", path.display())))?;
-    log::info!("exported {count} glyph(s) learned at {resolution} to {}", path.display());
+    log::info!("exported {resolution}'s calibration ({}) and {count} glyph(s) to {}", calibration.is_some(), path.display());
     Ok(Some(path.display().to_string()))
 }
 
@@ -289,18 +293,21 @@ pub struct Imported {
     /// Glyphs added; the rest were already in the library.
     added: usize,
     total: usize,
+    /// Whether the file's calibration boxes replaced this resolution's.
+    calibration: bool,
 }
 
-/// Add the glyphs from a library file the user picks to its resolution's library.
-/// `None` if the user cancelled.
+/// Import a setup file the user picks into its resolution: its calibration boxes
+/// replace the ones saved there (in use at once if it's the current resolution), and
+/// its glyphs are added. `None` if the user cancelled.
 #[tauri::command(async)]
 pub fn import_glyphs(window: WebviewWindow, state: AppStateRef<'_>) -> Result<Option<Imported>, AppError> {
     let picked = window
         .dialog()
         .file()
         .set_parent(&window)
-        .set_title("Import glyph library")
-        .add_filter("Glyph library", &["json"])
+        .set_title("Import config")
+        .add_filter("Classic EXP Tracker config", &["json"])
         .blocking_pick_file();
     let Some(picked) = picked else { return Ok(None) };
     let path = picked.into_path().map_err(|e| AppError::File(format!("the chosen file isn't a file path: {e}")))?;
@@ -312,10 +319,36 @@ pub fn import_glyphs(window: WebviewWindow, state: AppStateRef<'_>) -> Result<Op
     let library = Library::parse(&json).map_err(AppError::Invalid)?;
     let glyphs: Vec<(GlyphKind, LearnedGlyph)> =
         library.glyphs.into_iter().map(|g| (g.kind, LearnedGlyph { ch: g.ch, rows: g.art })).collect();
-    let added = state.store.lock().expect("store lock poisoned").import_glyphs(&library.resolution, &glyphs)?;
+    let (width, height) = valid_resolution(&library.resolution)?;
+    let added = {
+        let store = state.store.lock().expect("store lock poisoned");
+        if let Some(calibration) = &library.calibration {
+            store.save_calibration(&library.resolution, calibration)?;
+        }
+        store.import_glyphs(&library.resolution, &glyphs)?
+    };
+    if let Some(calibration) = library.calibration {
+        log::info!("calibration for {} imported from {}: {calibration:?}", library.resolution, path.display());
+        // Use the boxes now if the screen is at this resolution; otherwise they're loaded
+        // when it is (pipeline looks calibrations up per resolution).
+        let in_use = state.glyph_resolution.read().expect("glyph resolution lock poisoned").clone();
+        if in_use.as_deref() == Some(library.resolution.as_str()) {
+            *state.capture.regions.write().expect("regions lock poisoned") = Some(Regions { width, height, calibration });
+        }
+    }
     log::info!("imported {added} of {} glyph(s) for {} from {}", glyphs.len(), library.resolution, path.display());
     state.glyphs_changed.store(true, Ordering::Release);
-    Ok(Some(Imported { resolution: library.resolution, added, total: glyphs.len() }))
+    Ok(Some(Imported { resolution: library.resolution, added, total: glyphs.len(), calibration: library.calibration.is_some() }))
+}
+
+/// `typed` as one character of `kind`'s readout, or an error listing them.
+fn readout_char(kind: GlyphKind, typed: &str) -> Result<char, AppError> {
+    let alphabet = kind.alphabet();
+    let mut chars = typed.chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), None) if alphabet.contains(c) => Ok(c),
+        _ => Err(AppError::Invalid(format!("type one of {}", alphabet.chars().map(String::from).collect::<Vec<_>>().join(" ")))),
+    }
 }
 
 /// The user names an unknown glyph: it's learned as `ch`.
@@ -323,17 +356,25 @@ pub fn import_glyphs(window: WebviewWindow, state: AppStateRef<'_>) -> Result<Op
 pub fn assign_glyph(state: AppStateRef<'_>, id: i64, ch: String) -> Result<(), AppError> {
     let store = state.store.lock().expect("store lock poisoned");
     let entry = store.unknown_glyph(id)?.ok_or_else(|| AppError::NotFound(format!("unknown glyph {id}")))?;
-    let alphabet = entry.kind.alphabet();
-    let mut chars = ch.chars();
-    let ch = match (chars.next(), chars.next()) {
-        (Some(c), None) if alphabet.contains(c) => c,
-        _ => return Err(AppError::Invalid(format!("type one of {}", alphabet.chars().map(String::from).collect::<Vec<_>>().join(" ")))),
-    };
+    let ch = readout_char(entry.kind, &ch)?;
     if !store.assign_unknown_glyph(id, ch)? {
         return Err(AppError::NotFound(format!("unknown glyph {id}")));
     }
     drop(store);
     log::info!("unknown {} glyph #{id} named {ch:?} by the user", entry.kind.as_str());
+    state.glyphs_changed.store(true, Ordering::Release);
+    Ok(())
+}
+
+/// The user corrects a learned glyph's character.
+#[tauri::command(async)]
+pub fn relabel_glyph(state: AppStateRef<'_>, id: i64, ch: String) -> Result<(), AppError> {
+    let store = state.store.lock().expect("store lock poisoned");
+    let kind = store.glyph_kind(id)?.ok_or_else(|| AppError::NotFound(format!("glyph {id}")))?;
+    let ch = readout_char(kind, &ch)?;
+    store.relabel_glyph(id, ch)?;
+    drop(store);
+    log::info!("learned {} glyph #{id} changed to {ch:?} by the user", kind.as_str());
     state.glyphs_changed.store(true, Ordering::Release);
     Ok(())
 }

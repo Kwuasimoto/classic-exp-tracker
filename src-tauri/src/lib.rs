@@ -96,6 +96,7 @@ pub fn run() {
             commands::save_calibration,
             commands::get_glyphs,
             commands::assign_glyph,
+            commands::relabel_glyph,
             commands::forget_glyph,
             commands::dismiss_glyph,
             commands::export_glyphs,

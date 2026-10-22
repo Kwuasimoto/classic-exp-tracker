@@ -85,6 +85,8 @@ export const GlyphsSchema = z.object({
   inUse: z.string().nullable(),
   /** Every resolution with a library, smallest first. */
   resolutions: z.array(z.string()),
+  /** Whether the resolution shown has calibration boxes saved (they're exported too). */
+  calibrated: z.boolean(),
   /** `id` is null for a built-in glyph, which can't be forgotten. */
   learned: z.array(z.object({ id: z.number().int().nullable(), kind: GlyphKindSchema, ch: z.string().length(1), art: ArtSchema })),
   unknown: z.array(z.object({ id: z.number().int(), kind: GlyphKindSchema, art: ArtSchema })),
@@ -117,13 +119,15 @@ export const previewRegions = (c: Calibration) => call("preview_regions", Region
 export const saveCalibration = (c: Calibration) => call("save_calibration", z.null(), c);
 /** The glyph library of `resolution`, or of the one in use when null. */
 export const getGlyphs = (resolution: string | null) => call("get_glyphs", GlyphsSchema, { resolution });
-/** Saves a resolution's learned glyphs to a file the user picks: its path, or null if cancelled. */
+/** Saves a resolution's setup (calibration boxes and learned glyphs) to a file the user picks: its path, or null if cancelled. */
 export const exportGlyphs = (resolution: string) => call("export_glyphs", z.string().nullable(), { resolution });
-/** Adds the glyphs of a library file the user picks: what was added, or null if cancelled. */
+/** Imports a setup file the user picks (its boxes replace that resolution's; its glyphs are added): what was imported, or null if cancelled. */
 export const importGlyphs = () =>
-  call("import_glyphs", z.object({ resolution: z.string(), added: count, total: count }).nullable());
+  call("import_glyphs", z.object({ resolution: z.string(), added: count, total: count, calibration: z.boolean() }).nullable());
 /** Names an unknown glyph: it's learned as `ch`. */
 export const assignGlyph = (id: number, ch: string) => call("assign_glyph", z.null(), { id, ch });
+/** Corrects a learned glyph's character. */
+export const relabelGlyph = (id: number, ch: string) => call("relabel_glyph", z.null(), { id, ch });
 export const forgetGlyph = (id: number) => call("forget_glyph", z.null(), { id });
 /** Drops an unknown glyph that isn't part of a readout. */
 export const dismissGlyph = (id: number) => call("dismiss_glyph", z.null(), { id });
