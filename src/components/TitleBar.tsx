@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 /** The app's own title bar (the window has no native frame, see tauri.conf.json).
@@ -6,6 +7,12 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 export function TitleBar() {
   const [maximized, setMaximized] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Shown so a user can say which build they're running.
+  const [version, setVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    getVersion().then(setVersion, (e: unknown) => setError(`version: ${String(e)}`));
+  }, []);
 
   useEffect(() => {
     const win = getCurrentWindow();
@@ -37,6 +44,7 @@ export function TitleBar() {
       <span className="titlebar-name" data-tauri-drag-region>
         CLASSIC EXP TRACKER
       </span>
+      {version && <span className="caption" data-tauri-drag-region>v{version}</span>}
       {error && <span className="error titlebar-error" data-tauri-drag-region>{error}</span>}
       <div className="window-controls">
         <button aria-label="Minimize" onClick={run(() => win.minimize(), "minimize")}>

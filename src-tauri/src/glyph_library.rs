@@ -56,10 +56,19 @@ impl Library {
     /// An imported file, checked: its format, resolution, calibration boxes, and every
     /// glyph's character and shape. The reason it was refused otherwise.
     pub fn parse(json: &str) -> Result<Self, String> {
-        let library: Self = serde_json::from_str(json).map_err(|e| format!("not a glyph library file: {e}"))?;
-        if library.format != FORMAT || !(1..=VERSION).contains(&library.version) {
-            return Err(format!("not a glyph library file (format {:?} version {})", library.format, library.version));
+        // Format and version first: a newer app's file may have fields this one doesn't know.
+        let value: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("not a Classic EXP Tracker config file: {e}"))?;
+        if value.get("format").and_then(serde_json::Value::as_str) != Some(FORMAT) {
+            return Err("not a Classic EXP Tracker config file".to_string());
         }
+        match value.get("version").and_then(serde_json::Value::as_u64) {
+            Some(v) if v > u64::from(VERSION) => {
+                return Err("this config was made by a newer version of Classic EXP Tracker; install the latest version to import it".to_string());
+            }
+            Some(v) if v >= 1 => {}
+            _ => return Err("not a Classic EXP Tracker config file (no valid version)".to_string()),
+        }
+        let library: Self = serde_json::from_value(value).map_err(|e| format!("this config file is damaged: {e}"))?;
         let Some((width, height)) = parse_resolution(&library.resolution) else {
             return Err(format!("{:?} is not a screen resolution", library.resolution));
         };
@@ -114,5 +123,7 @@ mod tests {
         assert!(Library::parse(&short_row).is_err(), "rows must be glyph art width");
         assert!(Library::parse(&json.replace("1920x1080", "1920x")).is_err());
         assert!(Library::parse("{}").is_err());
+        let newer = json.replace("\"version\":2", "\"version\":3").replace("\"glyphs\"", "\"future\":1,\"glyphs\"");
+        assert!(Library::parse(&newer).unwrap_err().contains("newer version"), "a newer app's file says so");
     }
 }
