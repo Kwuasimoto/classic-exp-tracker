@@ -64,7 +64,9 @@ export function LiveView({ tick }: { tick: Tick | null }) {
           <div className="label">Current map</div>
           <h1>{tick?.mapName ?? "Waiting for map…"}</h1>
         </div>
-        {level !== null && <div className="badge">LV. {level}</div>}
+        <div className={level === null ? "badge pending" : "badge"} title={level === null ? "Narrowing down your level from the EXP readings" : undefined}>
+          LV. {level ?? "Determining…"}
+        </div>
       </section>
       {error && <p className="panel error">{error.message}</p>}
       {toast && <div className="toast" role="status">{toast}</div>}

@@ -220,19 +220,15 @@ impl Tracker {
     }
 
     /// A level read from the level box (digits learned from the EXP readings). Used
-    /// only if its table total fits the EXP readings, so a misread can't change the totals.
-    /// With no EXP readings to check it against, it's used as is: the level shows even
-    /// while the EXP box can't be read, and check_level drops it if later readings disagree.
+    /// only once its table total fits the EXP readings, so the level is never shown
+    /// before the readings confirm it, and a misread can't change the totals.
     pub fn use_screen_level(&mut self, level: u32) {
         if self.level == Some(level) {
             return;
         }
         let total = exp_to_next(level);
-        let Some(bounds) = self.bounds else {
-            info!("screen shows level {level}; no EXP readings to check it against yet");
-            self.level = Some(level);
-            return;
-        };
+        // No EXP readings yet: checked again on the next frame.
+        let Some(bounds) = self.bounds else { return };
         if total.is_some_and(|t| bounds.contains(t)) {
             info!("screen shows level {level}; its table total {total:?} fits readings {bounds:?}");
             self.level = Some(level);
@@ -372,13 +368,14 @@ mod tests {
     }
 
     #[test]
-    fn screen_level_shows_without_exp_readings_until_they_disagree() {
+    fn screen_level_waits_for_the_exp_readings_to_confirm_it() {
         let mut tr = Tracker::new();
-        tr.use_screen_level(40);
-        assert_eq!(tr.level(), Some(40));
-        // 291,000 EXP at 89.75% fits only level 41's table total, so 40 was a misread.
+        tr.use_screen_level(41);
+        assert_eq!(tr.level(), None, "no EXP readings to confirm it yet");
+        // 291,000 EXP at 89.75% fits only level 41's table total.
         tr.on_sample(Sample { t: 0, exp: reading(291_000, 8_975), map: MAP });
-        assert_eq!(tr.level(), Some(41));
+        tr.use_screen_level(40);
+        assert_eq!(tr.level(), Some(41), "a misread level box doesn't override the readings");
     }
 
     #[test]

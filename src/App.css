@@ -87,6 +87,7 @@ h2 { margin: 0 0 10px; font-size: 13px; font-weight: 700; letter-spacing: 0.12em
 .pager { justify-content: flex-end; margin-top: 12px; }
 .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .badge { border: 1.5px solid var(--text); border-radius: 999px; padding: 4px 18px; font-size: 15px; font-weight: 900; letter-spacing: 0.08em; white-space: nowrap; }
+.badge.pending { border-color: var(--muted); color: var(--muted); }
 .btn { border: 0; border-radius: 999px; padding: 7px 18px; background: var(--inset); font-weight: 700; letter-spacing: 0.04em; cursor: pointer; }
 .btn:hover { background: #333338; }
 .btn.primary { background: var(--text); color: #000; }
