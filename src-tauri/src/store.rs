@@ -8,11 +8,11 @@ use serde::Serialize;
 
 use crate::geom::{Calibration, Rect};
 use crate::rates::MinuteRow;
-use crate::read::level::LevelGlyph;
+use crate::read::{GlyphKind, LearnedGlyph};
 use crate::read::map_strip::Signature;
 use crate::tracker::MapId;
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 6;
 const SCHEMA: &str = "
 BEGIN;
 CREATE TABLE maps (
@@ -103,6 +103,47 @@ PRAGMA user_version = 4;
 COMMIT;
 PRAGMA foreign_keys = ON;
 ";
+/// Version 5: glyphs learned per resolution, EXP and level alike (level digits were
+/// global; they move to the calibrated resolution when there is exactly one, and are
+/// otherwise relearned), and the unrecognised shapes waiting on the Glyphs page.
+const MIGRATION_5: &str = "
+BEGIN;
+CREATE TABLE glyphs (
+    id INTEGER PRIMARY KEY,
+    resolution TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('exp', 'level')),
+    ch TEXT NOT NULL,
+    art TEXT NOT NULL
+);
+CREATE INDEX glyphs_resolution ON glyphs(resolution);
+INSERT INTO glyphs (resolution, kind, ch, art)
+    SELECT (SELECT resolution FROM calibration), 'level', ch, art FROM level_glyphs
+    WHERE (SELECT COUNT(*) FROM calibration) = 1
+    ORDER BY id;
+DROP TABLE level_glyphs;
+CREATE TABLE unknown_glyphs (
+    id INTEGER PRIMARY KEY,
+    resolution TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('exp', 'level')),
+    art TEXT NOT NULL,
+    first_seen INTEGER NOT NULL
+);
+CREATE INDEX unknown_glyphs_resolution ON unknown_glyphs(resolution);
+PRAGMA user_version = 5;
+COMMIT;
+";
+/// Version 6: dismissed unknown shapes are kept (hidden), so the same shape isn't
+/// recorded again while it stays on screen.
+const MIGRATION_6: &str = "
+BEGIN;
+ALTER TABLE unknown_glyphs ADD COLUMN dismissed INTEGER NOT NULL DEFAULT 0;
+PRAGMA user_version = 6;
+COMMIT;
+";
+
+/// Learned shapes kept per character and resolution: enough for the sub-pixel
+/// positions a character lands at, without growing forever.
+const MAX_GLYPHS_PER_CHAR: i64 = 8;
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -119,6 +160,24 @@ pub struct MapRecord {
     pub id: MapId,
     pub name: String,
     pub signature: Signature,
+}
+
+/// A learned glyph as stored, with the id the Glyphs page forgets it by.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoredGlyph {
+    pub id: i64,
+    pub kind: GlyphKind,
+    pub glyph: LearnedGlyph,
+}
+
+/// A shape the app couldn't read, waiting on the Glyphs page for its character, or
+/// dismissed there as not part of a readout.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnknownGlyph {
+    pub id: i64,
+    pub kind: GlyphKind,
+    pub rows: Vec<String>,
+    pub dismissed: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -158,6 +217,20 @@ fn minute_row(row: &Row) -> rusqlite::Result<MinuteRow> {
     Ok(MinuteRow { minute_start: row.get(0)?, exp_gained: col_u64(row, 1)?, training_secs: col_u32(row, 2)? })
 }
 
+fn kind_at(row: &Row, idx: usize) -> rusqlite::Result<GlyphKind> {
+    let s: String = row.get(idx)?;
+    GlyphKind::parse(&s).ok_or_else(|| rusqlite::Error::InvalidColumnType(idx, s, rusqlite::types::Type::Text))
+}
+
+fn char_at(row: &Row, idx: usize) -> rusqlite::Result<char> {
+    let s: String = row.get(idx)?;
+    s.chars().next().ok_or_else(|| rusqlite::Error::InvalidColumnType(idx, s, rusqlite::types::Type::Text))
+}
+
+fn art_at(row: &Row, idx: usize) -> rusqlite::Result<Vec<String>> {
+    Ok(row.get::<_, String>(idx)?.lines().map(str::to_string).collect())
+}
+
 fn rect_at(row: &Row, first: usize) -> rusqlite::Result<Rect> {
     Ok(Rect { x: col_u32(row, first)?, y: col_u32(row, first + 1)?, w: col_u32(row, first + 2)?, h: col_u32(row, first + 3)? })
 }
@@ -188,6 +261,12 @@ impl Store {
         }
         if version < 4 {
             conn.execute_batch(MIGRATION_4)?;
+        }
+        if version < 5 {
+            conn.execute_batch(MIGRATION_5)?;
+        }
+        if version < 6 {
+            conn.execute_batch(MIGRATION_6)?;
         }
         Ok(Self { conn })
     }
@@ -305,26 +384,114 @@ impl Store {
         Ok(())
     }
 
-    pub fn level_glyphs(&self) -> Result<Vec<LevelGlyph>, StoreError> {
-        let mut stmt = self.conn.prepare("SELECT ch, art FROM level_glyphs ORDER BY id")?;
+    /// The glyphs learned at `resolution`, oldest first.
+    pub fn glyphs(&self, resolution: &str) -> Result<Vec<StoredGlyph>, StoreError> {
+        let mut stmt = self.conn.prepare("SELECT id, kind, ch, art FROM glyphs WHERE resolution = ?1 ORDER BY id")?;
         let rows = stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+            .query_map([resolution], |r| {
+                Ok(StoredGlyph { id: r.get(0)?, kind: kind_at(r, 1)?, glyph: LearnedGlyph { ch: char_at(r, 2)?, rows: art_at(r, 3)? } })
+            })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        rows.into_iter()
-            .map(|(ch, art)| match ch.chars().next() {
-                Some(ch) => Ok(LevelGlyph { ch, rows: art.lines().map(str::to_string).collect() }),
-                None => Err(StoreError::Range("empty level glyph character")),
-            })
-            .collect()
+        Ok(rows)
     }
 
-    pub fn add_level_glyph(&self, glyph: &LevelGlyph) -> Result<(), StoreError> {
-        self.conn.execute("INSERT INTO level_glyphs (ch, art) VALUES (?1, ?2)", params![glyph.ch.to_string(), glyph.rows.join("\n")])?;
+    /// Store a learned glyph; `false` when its character already has MAX_GLYPHS_PER_CHAR here.
+    pub fn add_glyph(&self, resolution: &str, kind: GlyphKind, glyph: &LearnedGlyph) -> Result<bool, StoreError> {
+        let added = self.conn.execute(
+            "INSERT INTO glyphs (resolution, kind, ch, art)
+             SELECT ?1, ?2, ?3, ?4
+             WHERE (SELECT COUNT(*) FROM glyphs WHERE resolution = ?1 AND kind = ?2 AND ch = ?3) < ?5",
+            params![resolution, kind.as_str(), glyph.ch.to_string(), glyph.rows.join("
+"), MAX_GLYPHS_PER_CHAR],
+        )?;
+        Ok(added == 1)
+    }
+
+    /// Resolutions with learned glyphs or unknown glyphs waiting, in no particular order.
+    pub fn glyph_resolutions(&self) -> Result<Vec<String>, StoreError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT resolution FROM glyphs UNION SELECT resolution FROM unknown_glyphs WHERE NOT dismissed")?;
+        let rows = stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<Vec<String>>>()?;
+        Ok(rows)
+    }
+
+    /// Add imported glyphs at `resolution`, skipping exact copies of ones already
+    /// there (the user asked for them, so MAX_GLYPHS_PER_CHAR doesn't apply). Returns
+    /// how many were added.
+    pub fn import_glyphs(&self, resolution: &str, glyphs: &[(GlyphKind, LearnedGlyph)]) -> Result<usize, StoreError> {
+        let tx = self.conn.unchecked_transaction()?;
+        let mut added = 0;
+        for (kind, glyph) in glyphs {
+            added += tx.execute(
+                "INSERT INTO glyphs (resolution, kind, ch, art)
+                 SELECT ?1, ?2, ?3, ?4
+                 WHERE NOT EXISTS (SELECT 1 FROM glyphs WHERE resolution = ?1 AND kind = ?2 AND ch = ?3 AND art = ?4)",
+                params![resolution, kind.as_str(), glyph.ch.to_string(), glyph.rows.join("\n")],
+            )?;
+        }
+        tx.commit()?;
+        Ok(added)
+    }
+
+    /// `false` when no learned glyph has that id.
+    pub fn forget_glyph(&self, id: i64) -> Result<bool, StoreError> {
+        Ok(self.conn.execute("DELETE FROM glyphs WHERE id = ?1", [id])? == 1)
+    }
+
+    /// Waiting and dismissed alike.
+    pub fn unknown_glyphs(&self, resolution: &str) -> Result<Vec<UnknownGlyph>, StoreError> {
+        let mut stmt = self.conn.prepare("SELECT id, kind, art, dismissed FROM unknown_glyphs WHERE resolution = ?1 ORDER BY id")?;
+        let rows = stmt
+            .query_map([resolution], |r| {
+                Ok(UnknownGlyph { id: r.get(0)?, kind: kind_at(r, 1)?, rows: art_at(r, 2)?, dismissed: r.get(3)? })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// A waiting (not dismissed) unknown glyph.
+    pub fn unknown_glyph(&self, id: i64) -> Result<Option<UnknownGlyph>, StoreError> {
+        Ok(self
+            .conn
+            .query_row("SELECT id, kind, art, dismissed FROM unknown_glyphs WHERE id = ?1 AND NOT dismissed", [id], |r| {
+                Ok(UnknownGlyph { id: r.get(0)?, kind: kind_at(r, 1)?, rows: art_at(r, 2)?, dismissed: r.get(3)? })
+            })
+            .optional()?)
+    }
+
+    pub fn add_unknown_glyph(&self, resolution: &str, kind: GlyphKind, rows: &[String], t: i64) -> Result<i64, StoreError> {
+        self.conn.execute(
+            "INSERT INTO unknown_glyphs (resolution, kind, art, first_seen) VALUES (?1, ?2, ?3, ?4)",
+            params![resolution, kind.as_str(), rows.join("
+"), t],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Hide a waiting unknown glyph; it's kept so the shape isn't recorded again.
+    /// `false` when no waiting unknown glyph has that id.
+    pub fn dismiss_unknown_glyph(&self, id: i64) -> Result<bool, StoreError> {
+        Ok(self.conn.execute("UPDATE unknown_glyphs SET dismissed = 1 WHERE id = ?1 AND NOT dismissed", [id])? == 1)
+    }
+
+    /// Delete an unknown glyph that a learned glyph now reads.
+    pub fn delete_unknown_glyph(&self, id: i64) -> Result<(), StoreError> {
+        self.conn.execute("DELETE FROM unknown_glyphs WHERE id = ?1", [id])?;
         Ok(())
     }
 
-    pub fn clear_level_glyphs(&self) -> Result<usize, StoreError> {
-        Ok(self.conn.execute("DELETE FROM level_glyphs", [])?)
+    /// The user named an unknown glyph: it becomes a learned glyph `ch` at its resolution
+    /// (even past MAX_GLYPHS_PER_CHAR: the user asked for it). `false` when there's no such entry.
+    pub fn assign_unknown_glyph(&self, id: i64, ch: char) -> Result<bool, StoreError> {
+        let tx = self.conn.unchecked_transaction()?;
+        let added = tx.execute(
+            "INSERT INTO glyphs (resolution, kind, ch, art) SELECT resolution, kind, ?2, art FROM unknown_glyphs WHERE id = ?1 AND NOT dismissed",
+            params![id, ch.to_string()],
+        )?;
+        tx.execute("DELETE FROM unknown_glyphs WHERE id = ?1", [id])?;
+        tx.commit()?;
+        Ok(added == 1)
     }
 
     /// Where the live view starts (unix seconds); 0 until the first reset.

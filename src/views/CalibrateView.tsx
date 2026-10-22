@@ -1,6 +1,6 @@
 import { useRef, useState, type MouseEvent } from "react";
 import { formatPct } from "../lib/format";
-import { forgetLevelDigits, getCalibrationFrame, previewRegions, saveCalibration, type AppError, type CalibrationFrame, type Rect, type RegionPreview } from "../lib/ipc";
+import { getCalibrationFrame, previewRegions, saveCalibration, type AppError, type CalibrationFrame, type Rect, type RegionPreview } from "../lib/ipc";
 
 type Target = "exp" | "map" | "level";
 const TARGETS: readonly Target[] = ["exp", "map", "level"];
@@ -85,13 +85,6 @@ export function CalibrateView() {
     else setError(res.error);
   };
 
-  const forgetDigits = async () => {
-    begin();
-    const res = await forgetLevelDigits();
-    if (res.success) setMessage("Learned level digits forgotten. They're relearned from your EXP readings as you play.");
-    else setError(res.error);
-  };
-
   const active = rects[target];
   return (
     <>
@@ -100,7 +93,7 @@ export function CalibrateView() {
           Open MapleStory, then grab a frame. Draw the <b style={{ color: COLORS.exp }}>EXP box</b> tightly around the numbers after
           "EXP." (leave room on the right for longer numbers). Check that the <b style={{ color: COLORS.map }}>map box</b> covers the
           street and map name under the minimap title, and that the <b style={{ color: COLORS.level }}>level box</b> covers only
-          the number after "LV." (not the "LV." itself). The app learns the level digits by itself while you play.
+          the number after "LV." (not the "LV." itself). The app learns the level digits by itself while you play; see Glyphs.
         </p>
         <div className="row">
           <button className="btn" onClick={() => void grab()}>Grab frame</button>
@@ -121,7 +114,6 @@ export function CalibrateView() {
             ) : (
               <span className="caption">No level box: the level comes from the EXP readings alone. Drag on the frame to add one.</span>
             )}
-            <button className="btn" onClick={() => void forgetDigits()}>Forget learned digits</button>
           </div>
         )}
         {active && (

@@ -11,6 +11,8 @@ src-tauri/gen/schemas/
 *.db-wal
 *.db-shm
 *.log
+# Glyph libraries exported from the Glyphs page (a user's data, like the database)
+glyphs-*.json
 
 # glyph-collect recordings (dev tool, see src-tauri/src/bin/glyph_collect.rs)
 frames*.txt

@@ -6,7 +6,7 @@ import { err, ok, type Result } from "./result";
 const count = z.number().int().nonnegative();
 
 export const AppErrorSchema = z.object({
-  kind: z.enum(["storage", "capture", "invalid", "notFound"]),
+  kind: z.enum(["storage", "capture", "invalid", "notFound", "file"]),
   message: z.string(),
 });
 export type AppError = z.infer<typeof AppErrorSchema> | { kind: "ipc"; message: string };
@@ -14,6 +14,7 @@ export type AppError = z.infer<typeof AppErrorSchema> | { kind: "ipc"; message: 
 export const ReaderStatusSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("ok") }),
   z.object({ kind: z.literal("expUnreadable") }),
+  z.object({ kind: z.literal("expNeedsGlyphs") }),
   z.object({ kind: z.literal("mapUnreadable") }),
   z.object({ kind: z.literal("notCalibrated") }),
   z.object({ kind: z.literal("captureFailed"), detail: z.string() }),
@@ -73,6 +74,25 @@ export const RegionPreviewSchema = z.object({
 });
 export type RegionPreview = z.infer<typeof RegionPreviewSchema>;
 
+const GlyphKindSchema = z.enum(["exp", "level"]);
+export type GlyphKind = z.infer<typeof GlyphKindSchema>;
+/** A glyph's centred ink as ASCII art, one string per row: ' ' = none … '@' = full. */
+const ArtSchema = z.array(z.string());
+export const GlyphsSchema = z.object({
+  /** The resolution shown; null until the first frame arrives. */
+  resolution: z.string().nullable(),
+  /** The resolution whose glyphs are reading the screen now. */
+  inUse: z.string().nullable(),
+  /** Every resolution with a library, smallest first. */
+  resolutions: z.array(z.string()),
+  /** `id` is null for a built-in glyph, which can't be forgotten. */
+  learned: z.array(z.object({ id: z.number().int().nullable(), kind: GlyphKindSchema, ch: z.string().length(1), art: ArtSchema })),
+  unknown: z.array(z.object({ id: z.number().int(), kind: GlyphKindSchema, art: ArtSchema })),
+  missingExp: z.string(),
+  missingLevel: z.string(),
+});
+export type Glyphs = z.infer<typeof GlyphsSchema>;
+
 /** Tauri rejects command promises with the serialized AppError; anything else is an IPC failure. */
 export function toAppError(e: unknown): AppError {
   const parsed = AppErrorSchema.safeParse(e);
@@ -95,7 +115,18 @@ export const getLiveChart = (windowMinutes: 120 | 180) => call("get_live_chart",
 export const getCalibrationFrame = () => call("get_calibration_frame", CalibrationFrameSchema);
 export const previewRegions = (c: Calibration) => call("preview_regions", RegionPreviewSchema, c);
 export const saveCalibration = (c: Calibration) => call("save_calibration", z.null(), c);
-export const forgetLevelDigits = () => call("forget_level_digits", z.null());
+/** The glyph library of `resolution`, or of the one in use when null. */
+export const getGlyphs = (resolution: string | null) => call("get_glyphs", GlyphsSchema, { resolution });
+/** Saves a resolution's learned glyphs to a file the user picks: its path, or null if cancelled. */
+export const exportGlyphs = (resolution: string) => call("export_glyphs", z.string().nullable(), { resolution });
+/** Adds the glyphs of a library file the user picks: what was added, or null if cancelled. */
+export const importGlyphs = () =>
+  call("import_glyphs", z.object({ resolution: z.string(), added: count, total: count }).nullable());
+/** Names an unknown glyph: it's learned as `ch`. */
+export const assignGlyph = (id: number, ch: string) => call("assign_glyph", z.null(), { id, ch });
+export const forgetGlyph = (id: number) => call("forget_glyph", z.null(), { id });
+/** Drops an unknown glyph that isn't part of a readout. */
+export const dismissGlyph = (id: number) => call("dismiss_glyph", z.null(), { id });
 /** Saves what the live chart shows as a snapshot: its id, or null if there was nothing to save. */
 export const saveSnapshot = (name: string, windowMinutes: 120 | 180) => call("save_snapshot", z.number().int().nullable(), { name, windowMinutes });
 /** Ends the session and starts the live view afresh; saves nothing. */

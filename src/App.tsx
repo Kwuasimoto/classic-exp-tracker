@@ -8,16 +8,18 @@ import { BACKDROPS, saveBackdrop, savedBackdrop } from "./lib/backgrounds";
 import { statusText } from "./lib/format";
 import { useTick } from "./lib/useTick";
 import { CalibrateView } from "./views/CalibrateView";
+import { GlyphsView } from "./views/GlyphsView";
 import { HistoryView } from "./views/HistoryView";
 import { LiveView } from "./views/LiveView";
 
-type Tab = "live" | "history" | "calibrate";
+type Tab = "live" | "history" | "calibrate" | "glyphs";
 
 const ICON = { fill: "none", stroke: "currentColor", strokeWidth: 2.2, strokeLinecap: "round", strokeLinejoin: "round" } as const;
 const TABS: ReadonlyArray<{ id: Tab; label: string; icon: ReactNode }> = [
   { id: "live", label: "Live", icon: <><polyline points="3 17 9 11 13 15 21 7" /><polyline points="15 7 21 7 21 13" /></> },
   { id: "history", label: "History", icon: <><circle cx="12" cy="12" r="9" /><polyline points="12 7 12 12 15 14" /></> },
   { id: "calibrate", label: "Calibrate", icon: <><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18M9 21V9" /></> },
+  { id: "glyphs", label: "Glyphs", icon: <><polyline points="4 7 4 4 20 4 20 7" /><line x1="9" y1="20" x2="15" y2="20" /><line x1="12" y1="4" x2="12" y2="20" /></> },
 ];
 
 export default function App() {
@@ -57,9 +59,10 @@ export default function App() {
           </div>
         </nav>
         <main className="content">
-          {tab === "live" && <LiveView tick={tick} onCalibrate={() => setTab("calibrate")} />}
+          {tab === "live" && <LiveView tick={tick} onCalibrate={() => setTab("calibrate")} onGlyphs={() => setTab("glyphs")} />}
           {tab === "history" && <HistoryView />}
           {tab === "calibrate" && <CalibrateView />}
+          {tab === "glyphs" && <GlyphsView tick={tick} />}
         </main>
       </div>
     </div>

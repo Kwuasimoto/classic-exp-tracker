@@ -4,7 +4,7 @@
 use serde::Serialize;
 
 use super::glyphs::REFERENCES;
-use super::ReadError;
+use super::{LearnedGlyph, ReadError};
 use crate::geom::Crop;
 
 /// Pixels with luminance ≥ this are text; used to find the text rows and the
@@ -18,7 +18,7 @@ pub const HALF_WIDTH: i32 = 6;
 /// closer than the nearest reference of another character…
 const MIN_MARGIN: f32 = 1.5;
 /// …and closer than this (sum of squared ink differences).
-const MAX_DISTANCE: f32 = 8.0;
+pub const MAX_DISTANCE: f32 = 8.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -116,6 +116,19 @@ pub fn centred(glyph: &Glyph) -> Vec<Vec<f32>> {
 /// Ink levels of the ASCII art used for references: ' ' = 0/9 … '@' = 9/9.
 const ART_LEVELS: &[u8; 10] = b" .:-=+*#%@";
 
+/// Rows a glyph's art may have: the text line's height, generously.
+const MAX_ART_ROWS: usize = 64;
+
+/// Whether `rows` is glyph art: 1–MAX_ART_ROWS rows of 2 × HALF_WIDTH + 1 ink levels.
+pub fn valid_art(rows: &[String]) -> bool {
+    let width = 2 * HALF_WIDTH as usize + 1;
+    (1..=MAX_ART_ROWS).contains(&rows.len()) && rows.iter().all(|r| r.len() == width && r.bytes().all(|b| ART_LEVELS.contains(&b)))
+}
+
+fn art_level(b: u8) -> f32 {
+    ART_LEVELS.iter().position(|&l| l == b).unwrap_or(0) as f32 / 9.0
+}
+
 /// Centred ink as ASCII art, the format of every stored reference.
 pub fn to_art(centred: &[Vec<f32>]) -> Vec<String> {
     centred
@@ -124,35 +137,57 @@ pub fn to_art(centred: &[Vec<f32>]) -> Vec<String> {
         .collect()
 }
 
+/// A glyph back from its ASCII art, so stored shapes can be compared like screen glyphs.
+pub fn from_art(rows: &[String]) -> Glyph {
+    Glyph { x: 0, ink: rows.iter().map(|r| r.bytes().map(art_level).collect()).collect() }
+}
+
 /// Sum of squared ink differences; `None` if the line heights differ.
 fn distance(centred: &[Vec<f32>], art: &[impl AsRef<str>]) -> Option<f32> {
     if centred.len() != art.len() {
         return None;
     }
-    let level = |b: u8| ART_LEVELS.iter().position(|&l| l == b).unwrap_or(0) as f32 / 9.0;
     Some(
         centred
             .iter()
             .zip(art)
-            .flat_map(|(a, r)| a.iter().zip(r.as_ref().bytes()).map(move |(a, r)| (a - level(r)) * (a - level(r))))
+            .flat_map(|(a, r)| a.iter().zip(r.as_ref().bytes()).map(move |(a, r)| (a - art_level(r)) * (a - art_level(r))))
             .sum(),
     )
 }
 
-/// The nearest reference's character, if it is close and clearly closer than
-/// any other character's. Otherwise `None`, and the read fails.
-pub fn nearest<'a, R: AsRef<str> + 'a>(glyph: &Glyph, references: impl IntoIterator<Item = (char, &'a [R])>) -> Option<char> {
-    let centred = centred(glyph);
-    let mut ranked: Vec<(f32, char)> =
-        references.into_iter().filter_map(|(ch, art)| distance(&centred, art).map(|d| (d, ch))).collect();
+/// How far `glyph` is from a stored shape; `None` if their heights differ.
+pub fn distance_to(glyph: &Glyph, art: &[impl AsRef<str>]) -> Option<f32> {
+    distance(&centred(glyph), art)
+}
+
+fn distances<'a, R: AsRef<str> + 'a>(
+    centred: &[Vec<f32>],
+    references: impl IntoIterator<Item = (char, &'a [R])>,
+) -> impl Iterator<Item = (f32, char)> {
+    references.into_iter().filter_map(|(ch, art)| distance(centred, art).map(|d| (d, ch)))
+}
+
+/// The nearest character, if it is close and clearly closer than any other
+/// character's. Otherwise `None`, and the read fails.
+fn best(mut ranked: Vec<(f32, char)>) -> Option<char> {
     ranked.sort_by(|a, b| a.0.total_cmp(&b.0));
     let &(best, ch) = ranked.first()?;
     let runner_up = ranked.iter().find(|(_, c)| *c != ch).map_or(f32::INFINITY, |&(d, _)| d);
     (best <= MAX_DISTANCE && runner_up >= MIN_MARGIN * best).then_some(ch)
 }
 
-pub fn classify(glyph: &Glyph) -> Option<char> {
-    nearest(glyph, REFERENCES.iter().map(|r| (r.ch, r.rows)))
+pub fn nearest<'a, R: AsRef<str> + 'a>(glyph: &Glyph, references: impl IntoIterator<Item = (char, &'a [R])>) -> Option<char> {
+    best(distances(&centred(glyph), references).collect())
+}
+
+/// The glyph's character, from the built-in references and the glyphs learned at
+/// this resolution together.
+pub fn classify(glyph: &Glyph, learned: &[LearnedGlyph]) -> Option<char> {
+    let centred = centred(glyph);
+    let built_in = distances(&centred, REFERENCES.iter().map(|r| (r.ch, r.rows)));
+    let learned = distances(&centred, learned.iter().map(|l| (l.ch, l.rows.as_slice())));
+    best(built_in.chain(learned).collect())
 }
 
 /// Parse `<digits/commas>[<int>.<2 digits>%]`.
@@ -176,14 +211,25 @@ pub fn parse(text: &str) -> Result<ExpReading, ReadError> {
     Ok(ExpReading { exp, pct_bp })
 }
 
-pub fn read_exp(crop: &Crop) -> Result<ExpReading, ReadError> {
-    let glyphs = segment(crop)?;
-    let chars: Vec<Option<char>> = glyphs.iter().map(classify).collect();
-    if let Some(i) = chars.iter().position(Option::is_none) {
-        let line = chars.iter().map(|c| c.unwrap_or('?')).collect();
-        return Err(ReadError::UnknownGlyph { column: glyphs[i].x, line });
+/// The readout's glyphs, each with the character it reads as (`None`: unknown).
+pub fn read_line(crop: &Crop, learned: &[LearnedGlyph]) -> Result<Vec<(Glyph, Option<char>)>, ReadError> {
+    Ok(segment(crop)?.into_iter().map(|g| {
+        let ch = classify(&g, learned);
+        (g, ch)
+    }).collect())
+}
+
+/// The reading a line of glyphs spells, if every glyph is known.
+pub fn reading(line: &[(Glyph, Option<char>)]) -> Result<ExpReading, ReadError> {
+    if let Some((glyph, _)) = line.iter().find(|(_, ch)| ch.is_none()) {
+        let text = line.iter().map(|(_, ch)| ch.unwrap_or('?')).collect();
+        return Err(ReadError::UnknownGlyph { column: glyph.x, line: text });
     }
-    parse(&chars.into_iter().flatten().collect::<String>())
+    parse(&line.iter().filter_map(|(_, ch)| *ch).collect::<String>())
+}
+
+pub fn read_exp(crop: &Crop, learned: &[LearnedGlyph]) -> Result<ExpReading, ReadError> {
+    reading(&read_line(crop, learned)?)
 }
 
 #[cfg(test)]
@@ -193,8 +239,20 @@ mod tests {
 
     #[test]
     fn reads_the_fixture() {
-        let reading = read_exp(&fixture("exp_326_0.10.png")).expect("fixture is readable");
+        let reading = read_exp(&fixture("exp_326_0.10.png"), &[]).expect("fixture is readable");
         assert_eq!(reading, ExpReading { exp: 326, pct_bp: 10 });
+    }
+
+    #[test]
+    fn learned_glyphs_read_a_stretched_screen() {
+        // A monitor stretching the game ×2: the built-in shapes no longer match.
+        let base = fixture("exp_326_0.10.png").to_image();
+        let stretched = Crop::from_image(&image::imageops::resize(&base, base.width() * 2, base.height() * 2, image::imageops::FilterType::Nearest));
+        assert!(read_exp(&stretched, &[]).is_err());
+        let glyphs = segment(&stretched).expect("text found");
+        let learned: Vec<LearnedGlyph> =
+            glyphs.iter().zip("326[0.10%]".chars()).map(|(g, ch)| LearnedGlyph { ch, rows: to_art(&centred(g)) }).collect();
+        assert_eq!(read_exp(&stretched, &learned), Ok(ExpReading { exp: 326, pct_bp: 10 }));
     }
 
     #[test]

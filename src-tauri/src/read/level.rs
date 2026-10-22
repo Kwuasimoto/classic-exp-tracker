@@ -8,20 +8,13 @@
 //! EXP readings, so a box that changed before the tracker caught up isn't learned.
 
 use super::exp::{centred, nearest, to_art, Glyph};
-use super::ReadError;
+use super::{LearnedGlyph, ReadError};
 use crate::geom::Crop;
 
 /// Digit pixels are white: every channel at least this bright (the tiles are orange).
 const WHITE_MIN: u8 = 200;
 /// Ink 0 at this whiteness (the tiles' blue channel is ≈ 0x10–0x20), 1 at 255.
 const WHITE_FLOOR: f32 = 32.0;
-
-/// A learned digit: its character and centred ink as ASCII art.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LevelGlyph {
-    pub ch: char,
-    pub rows: Vec<String>,
-}
 
 fn whiteness(px: [u8; 4]) -> u8 {
     px[0].min(px[1]).min(px[2])
@@ -57,7 +50,7 @@ pub fn segment(crop: &Crop) -> Result<Vec<Glyph>, ReadError> {
 }
 
 /// The level, if every digit matches a learned one.
-pub fn read_level(glyphs: &[Glyph], learned: &[LevelGlyph]) -> Option<u32> {
+pub fn read_level(glyphs: &[Glyph], learned: &[LearnedGlyph]) -> Option<u32> {
     let digits: Option<String> =
         glyphs.iter().map(|g| nearest(g, learned.iter().map(|l| (l.ch, l.rows.as_slice())))).collect();
     digits?.parse().ok()
@@ -67,7 +60,7 @@ pub fn read_level(glyphs: &[Glyph], learned: &[LevelGlyph]) -> Option<u32> {
 /// Learns nothing if the digit count differs, a glyph's height differs from the
 /// digits already learned (something else is in the box), or a glyph already
 /// reads as a different digit (the box isn't showing `level`).
-pub fn learn(glyphs: &[Glyph], learned: &[LevelGlyph], level: u32) -> Result<Vec<LevelGlyph>, String> {
+pub fn learn(glyphs: &[Glyph], learned: &[LearnedGlyph], level: u32) -> Result<Vec<LearnedGlyph>, String> {
     let digits: Vec<char> = level.to_string().chars().collect();
     if digits.len() != glyphs.len() {
         return Err(format!("level box has {} glyph(s), level {level} has {} digit(s)", glyphs.len(), digits.len()));
@@ -82,7 +75,7 @@ pub fn learn(glyphs: &[Glyph], learned: &[LevelGlyph], level: u32) -> Result<Vec
         match nearest(glyph, learned.iter().map(|l| (l.ch, l.rows.as_slice()))) {
             Some(read) if read == ch => {}
             Some(read) => return Err(format!("a glyph reads as {read:?}, but level {level} has {ch:?} there")),
-            None => new.push(LevelGlyph { ch, rows: to_art(&centred(glyph)) }),
+            None => new.push(LearnedGlyph { ch, rows: to_art(&centred(glyph)) }),
         }
     }
     Ok(new)

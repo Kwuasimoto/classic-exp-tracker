@@ -15,6 +15,9 @@ pub enum AppError {
     Invalid(String),
     #[error("not found: {0}")]
     NotFound(String),
+    /// Reading or writing a file the user picked (glyph library export/import).
+    #[error("file: {0}")]
+    File(String),
 }
 
 impl From<StoreError> for AppError {

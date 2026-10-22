@@ -8,13 +8,17 @@ use log::{info, warn};
 
 use crate::geom::Crop;
 use crate::read::exp::Glyph;
-use crate::read::level::{self, LevelGlyph};
+use crate::read::level;
+use crate::read::{GlyphKind, LearnedGlyph};
 
 const STEADY_FRAMES: u32 = 3;
 /// Accepted EXP readings, with the box and the tracker's level both unchanged,
 /// before an unknown digit is learned: right after a level-up the box can show the
 /// new level before the EXP readout confirms it.
 const LEARN_AFTER_READS: u32 = 3;
+/// Frames the box must hold still before digits it can't read go to the Glyphs page:
+/// long enough for learning from the EXP readings to have had its chance.
+const REPORT_UNKNOWN_AFTER_FRAMES: u32 = 30;
 
 #[derive(Default)]
 pub struct LevelBox {
@@ -24,12 +28,14 @@ pub struct LevelBox {
     reads_as: Option<u32>,
     /// Consecutive frames the box has looked the same, including this one.
     still_frames: u32,
-    learned: Vec<LevelGlyph>,
+    learned: Vec<LearnedGlyph>,
     /// Whether the box's current pixels were already tried for learning.
     learn_tried: bool,
     /// Accepted EXP readings since the box last changed, all at `steady_level`.
     steady_reads: u32,
     steady_level: Option<u32>,
+    /// Whether the box's current pixels were already reported as unknown.
+    unknown_reported: bool,
 }
 
 impl LevelBox {
@@ -44,6 +50,7 @@ impl LevelBox {
         self.crop = crop;
         self.learn_tried = false;
         self.steady_reads = 0;
+        self.unknown_reported = false;
         self.reread();
     }
 
@@ -60,7 +67,7 @@ impl LevelBox {
     /// Learn the digits the box shows but can't read yet, labelled from `level`, once
     /// the box and the level have held over LEARN_AFTER_READS accepted readings.
     /// Returns the new digits, already in use.
-    pub fn learn(&mut self, level: u32) -> Vec<LevelGlyph> {
+    pub fn learn(&mut self, level: u32) -> Vec<LearnedGlyph> {
         let due = self.reads_as.is_none()
             && !self.glyphs.is_empty()
             && !self.learn_tried
@@ -87,10 +94,21 @@ impl LevelBox {
     }
 
     /// Replace the learned digits; the box is read again on the next frame.
-    pub fn set_learned(&mut self, digits: Vec<LevelGlyph>) {
+    pub fn set_learned(&mut self, digits: Vec<LearnedGlyph>) {
         self.learned = digits;
         self.crop = None;
         self.reads_as = None;
+    }
+
+    /// The digits no learned glyph matches, once per box that has held still for
+    /// REPORT_UNKNOWN_AFTER_FRAMES and shows one or two glyphs (a level, not something
+    /// passing over the box). For the Glyphs page.
+    pub fn take_unknown(&mut self) -> Vec<Glyph> {
+        if self.unknown_reported || self.still_frames < REPORT_UNKNOWN_AFTER_FRAMES || !(1..=2).contains(&self.glyphs.len()) {
+            return Vec::new();
+        }
+        self.unknown_reported = true;
+        self.glyphs.iter().filter(|g| !GlyphKind::Level.recognises(g, &self.learned)).cloned().collect()
     }
 
     /// The level the box shows, once it has held still.

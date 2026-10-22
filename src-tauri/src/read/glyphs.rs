@@ -6,6 +6,10 @@
 //! Built 2026-10-16 by averaging ~7,600 centred glyphs from a 10-minute recording
 //! of the EXP readout at 1920x1080 (`glyph-collect record`).
 
+/// The screen setup these references were recorded at. Elsewhere the text is usually
+/// drawn at another size, and the app learns that resolution's glyphs (see screen/exp_learner.rs).
+pub const BUILT_IN_RESOLUTION: &str = "1920x1080";
+
 pub struct Reference {
     pub ch: char,
     pub rows: &'static [&'static str],
