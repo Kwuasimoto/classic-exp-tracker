@@ -66,10 +66,14 @@ async function call<S extends z.ZodType>(cmd: string, schema: S, args?: Record<s
   return parsed.success ? ok(parsed.data) : err({ kind: "ipc", message: `unexpected ${cmd} payload: ${parsed.error.message}` });
 }
 
+/** The live chart's windows, as the backend accepts them (rates::WINDOWS_MINUTES). */
+export const WINDOWS_MINUTES = [120, 180] as const;
+export type WindowMinutes = (typeof WINDOWS_MINUTES)[number];
+
 export const getLiveSnapshot = () => call("get_live_snapshot", TickSchema);
-export const getLiveChart = (windowMinutes: 120 | 180) => call("get_live_chart", z.array(BarSchema), { windowMinutes });
+export const getLiveChart = (windowMinutes: WindowMinutes) => call("get_live_chart", z.array(BarSchema), { windowMinutes });
 /** Saves what the live chart shows as a snapshot: its id, or null if there was nothing to save. */
-export const saveSnapshot = (name: string, windowMinutes: 120 | 180) => call("save_snapshot", z.number().int().nullable(), { name, windowMinutes });
+export const saveSnapshot = (name: string, windowMinutes: WindowMinutes) => call("save_snapshot", z.number().int().nullable(), { name, windowMinutes });
 /** Ends the session and starts the live view afresh; saves nothing. */
 export const resetSession = () => call("reset_session", z.null());
 export const getSnapshots = () => call("get_snapshots", z.array(SnapshotSchema));

@@ -1,16 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RateChart } from "../components/RateChart";
 import { formatDateTime, formatHours, formatPct } from "../lib/format";
-import { getLiveChart, resetSession, saveSnapshot, type AppError, type Bar, type Tick } from "../lib/ipc";
+import { getLiveChart, resetSession, saveSnapshot, WINDOWS_MINUTES, type AppError, type Bar, type Tick, type WindowMinutes } from "../lib/ipc";
 import { expToLevel, liveRates } from "../lib/live";
 
-type WindowMinutes = 120 | 180;
 const TOAST_MS = 3000;
 const whole = (n: number) => Math.round(n).toLocaleString("en-US");
 
 export function LiveView({ tick }: { tick: Tick | null }) {
   const [bars, setBars] = useState<Bar[]>([]);
-  const [windowMinutes, setWindowMinutes] = useState<WindowMinutes>(120);
+  const [windowMinutes, setWindowMinutes] = useState<WindowMinutes>(WINDOWS_MINUTES[0]);
   const [error, setError] = useState<AppError | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   // Chart requests go out every second and can finish out of order: keep only the newest.
@@ -104,7 +103,7 @@ export function LiveView({ tick }: { tick: Tick | null }) {
               </svg>
             </button>
             <div className="segmented" role="group" aria-label="Chart window">
-              {([120, 180] as const).map((m) => (
+              {WINDOWS_MINUTES.map((m) => (
                 <button key={m} className={m === windowMinutes ? "current" : ""} aria-pressed={m === windowMinutes} onClick={() => setWindowMinutes(m)}>
                   {m / 60}H
                 </button>

@@ -7,7 +7,7 @@
 //! calls it once the box and the level have been steady across several accepted
 //! EXP readings, so a box that changed before the tracker caught up isn't learned.
 
-use super::{LearnedGlyph, ReadError};
+use super::{LearnedGlyph, ReadError, ART_LEVELS};
 use crate::geom::Crop;
 
 /// Digit pixels are white: every channel at least this bright (the tiles are orange).
@@ -92,8 +92,6 @@ fn centred(glyph: &Glyph) -> Vec<Vec<f32>> {
         .collect()
 }
 
-/// Ink levels of the ASCII art used for references: ' ' = 0/9 … '@' = 9/9.
-const ART_LEVELS: &[u8; 10] = b" .:-=+*#%@";
 
 fn art_level(b: u8) -> f32 {
     ART_LEVELS.iter().position(|&l| l == b).unwrap_or(0) as f32 / 9.0

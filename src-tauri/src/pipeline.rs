@@ -123,7 +123,8 @@ struct Pipeline {
     resolution: Option<String>,
     keys: HashMap<SessionKey, i64>,
     pending: Vec<Effect>,
-    tried_resolution: Option<(u32, u32)>,
+    /// The last resolution whose boxes (or lack of them) were logged.
+    logged_resolution: Option<(u32, u32)>,
     capture_error: Option<String>,
     storage_error: Option<String>,
     notify_error: Option<String>,
@@ -147,7 +148,7 @@ impl Pipeline {
             resolution: None,
             keys: HashMap::new(),
             pending: Vec::new(),
-            tried_resolution: None,
+            logged_resolution: None,
             capture_error: None,
             storage_error: None,
             notify_error: None,
@@ -227,14 +228,14 @@ impl Pipeline {
         self.frames_flowing();
         self.use_glyphs_for(width, height);
         let boxes = boxes_for(width, height);
-        if self.tried_resolution != Some((width, height)) {
+        if self.logged_resolution != Some((width, height)) {
             match boxes {
                 Some(boxes) => info!("boxes for {width}x{height} scaled from {}x{}: {boxes:?}", NATIVE.0, NATIVE.1),
                 None => warn!(
                     "{width}x{height} is not 16:9; EXP can only be read at a 16:9 resolution with the game full screen"
                 ),
             }
-            self.tried_resolution = Some((width, height));
+            self.logged_resolution = Some((width, height));
         }
         match boxes {
             Some(boxes) => {

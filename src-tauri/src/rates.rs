@@ -32,8 +32,9 @@ pub fn live_range(now: i64, window_minutes: u32) -> (i64, i64) {
     (last - (bars - 1) * BUCKET_SECS, last)
 }
 
-/// The longest live chart window, in minutes.
-pub const MAX_WINDOW_MINUTES: u32 = 180;
+/// The live chart's windows, in minutes (2H and 3H); the last is the longest.
+pub const WINDOWS_MINUTES: [u32; 2] = [120, 180];
+const MAX_WINDOW_MINUTES: u32 = WINDOWS_MINUTES[WINDOWS_MINUTES.len() - 1];
 
 /// Earliest minute needed to compute the SMA of a bar starting at `first_bar`.
 pub fn rows_from(first_bar: i64) -> i64 {

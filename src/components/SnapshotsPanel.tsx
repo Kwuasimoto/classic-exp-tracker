@@ -4,7 +4,7 @@ import { RateChart } from "./RateChart";
 import { formatClock, formatDateTime, formatExp, formatHours } from "../lib/format";
 import { deleteSnapshot, getSnapshotChart, getSnapshots, renameSnapshot, type AppError, type Bar, type Snapshot } from "../lib/ipc";
 
-/** Snapshots saved by the Live view's reset: rename, delete, and a chart of the selected one. */
+/** Snapshots saved from the Live chart: rename, delete, and a chart of the selected one. */
 export function SnapshotsPanel({ onError }: { onError: (e: AppError) => void }) {
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [selected, setSelected] = useState<number | null>(null);

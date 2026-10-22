@@ -159,7 +159,6 @@ pub enum StoreError {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MapRecord {
     pub id: MapId,
-    pub name: String,
     pub signature: Signature,
 }
 
@@ -251,10 +250,10 @@ impl Store {
     }
 
     pub fn maps(&self) -> Result<Vec<MapRecord>, StoreError> {
-        let mut stmt = self.conn.prepare("SELECT id, name, signature, cut_by_box FROM maps ORDER BY id")?;
+        let mut stmt = self.conn.prepare("SELECT id, signature, cut_by_box FROM maps ORDER BY id")?;
         let rows = stmt
             .query_map([], |r| {
-                Ok(MapRecord { id: r.get(0)?, name: r.get(1)?, signature: Signature { counts: r.get(2)?, cut: r.get(3)? } })
+                Ok(MapRecord { id: r.get(0)?, signature: Signature { counts: r.get(1)?, cut: r.get(2)? } })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)

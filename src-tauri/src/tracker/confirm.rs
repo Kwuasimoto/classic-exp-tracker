@@ -5,7 +5,7 @@
 use crate::geom::Crop;
 use crate::read::map_strip::Signature;
 
-pub const CONFIRM_FRAMES: usize = 3;
+const CONFIRM_FRAMES: usize = 3;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ConfirmOutcome {

@@ -69,7 +69,7 @@ impl MapOcr {
     }
 }
 
-pub fn normalize(text: &str) -> String {
+fn normalize(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
@@ -78,7 +78,7 @@ pub fn normalize(text: &str) -> String {
 /// v/x, holding at least one letter, that spells a valid numeral up to XXXIX
 /// becomes a number: "the burnt land li" → "the burnt land 2". Expects
 /// `normalize`d text.
-pub fn numeral_to_number(text: &str) -> String {
+fn numeral_to_number(text: &str) -> String {
     let Some((head, last)) = text.rsplit_once(' ') else { return text.to_string() };
     if !last.chars().any(|c| c.is_ascii_alphabetic()) {
         return text.to_string();
@@ -104,7 +104,7 @@ fn roman_value(roman: &str) -> Option<u32> {
     (1..40).find(|&n: &u32| format!("{}{}", "X".repeat((n / 10) as usize), ONES[(n % 10) as usize]) == roman)
 }
 
-pub fn title_case(text: &str) -> String {
+fn title_case(text: &str) -> String {
     text.split(' ')
         .map(|word| {
             let mut chars = word.chars();

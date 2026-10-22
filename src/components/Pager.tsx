@@ -16,5 +16,5 @@ export function usePages<T>(items: T[]) {
       <button className="btn" disabled={current === pages - 1} onClick={() => setPage(current + 1)}>Next</button>
     </div>
   );
-  return { rows, pager, firstPage: () => setPage(0) };
+  return { rows, pager };
 }

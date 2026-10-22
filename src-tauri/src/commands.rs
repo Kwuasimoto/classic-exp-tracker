@@ -8,7 +8,7 @@ use tauri::State;
 use crate::error::AppError;
 use crate::now_unix;
 use crate::pipeline::{AppState, Tick};
-use crate::rates::{self, Bar};
+use crate::rates::{self, Bar, MinuteRow};
 use crate::store::SnapshotRecord;
 
 type AppStateRef<'a> = State<'a, Arc<AppState>>;
@@ -24,13 +24,24 @@ fn valid_name(name: &str) -> Result<&str, AppError> {
     Ok(name)
 }
 
-/// The live chart windows: 2H and 3H.
+/// One of the live chart's windows.
 fn valid_window(window_minutes: u32) -> Result<(), AppError> {
-    if matches!(window_minutes, 120 | rates::MAX_WINDOW_MINUTES) {
+    if rates::WINDOWS_MINUTES.contains(&window_minutes) {
         Ok(())
     } else {
-        Err(AppError::Invalid(format!("window must be 120 or 180 minutes, got {window_minutes}")))
+        Err(AppError::Invalid(format!("window must be one of {:?} minutes, got {window_minutes}", rates::WINDOWS_MINUTES)))
     }
+}
+
+/// The stored minutes from `from` (but not before the last reset) to `to`, plus the
+/// minute in progress, which isn't stored until it ends. The live minute is read under
+/// the store lock: the pipeline swaps it for the stored row under the same lock.
+fn live_rows(state: &AppState, from: i64, to: i64) -> Result<Vec<MinuteRow>, AppError> {
+    let since = *state.live_since.read().expect("live since lock poisoned");
+    let store = state.store.lock().expect("store lock poisoned");
+    let mut rows = store.minutes_between(from.max(since), to)?;
+    rows.extend(*state.live_minute.read().expect("live minute lock poisoned"));
+    Ok(rows)
 }
 
 #[tauri::command]
@@ -42,14 +53,7 @@ pub fn get_live_snapshot(state: AppStateRef<'_>) -> Tick {
 pub fn get_live_chart(state: AppStateRef<'_>, window_minutes: u32) -> Result<Vec<Bar>, AppError> {
     valid_window(window_minutes)?;
     let (first, last) = rates::live_range(now_unix(), window_minutes);
-    // The live view starts at the last reset.
-    let since = *state.live_since.read().expect("live since lock poisoned");
-    let store = state.store.lock().expect("store lock poisoned");
-    let mut rows = store.minutes_between(rates::rows_from(first).max(since), last + rates::BUCKET_SECS)?;
-    // The minute in progress isn't stored until it ends; count it so the rate is live. Read under
-    // the store lock: the pipeline swaps it for the stored row under the same lock.
-    rows.extend(*state.live_minute.read().expect("live minute lock poisoned"));
-    drop(store);
+    let rows = live_rows(&state, rates::rows_from(first), last + rates::BUCKET_SECS)?;
     Ok(rates::bars_range(&rows, first, last))
 }
 
@@ -62,12 +66,9 @@ pub fn save_snapshot(state: AppStateRef<'_>, name: String, window_minutes: u32) 
     valid_window(window_minutes)?;
     let now = now_unix();
     let (first, _) = rates::live_range(now, window_minutes);
-    let since = *state.live_since.read().expect("live since lock poisoned");
     let tick = state.live.read().expect("live lock poisoned").clone();
+    let rows = live_rows(&state, first, now)?;
     let store = state.store.lock().expect("store lock poisoned");
-    let mut rows = store.minutes_between(first.max(since), now)?;
-    // Read under the store lock, as in get_live_chart.
-    rows.extend(*state.live_minute.read().expect("live minute lock poisoned"));
     let id = if rows.is_empty() { None } else { Some(store.create_snapshot(name, now, tick.map_name.as_deref(), tick.level, &rows)?) };
     log::info!("snapshot {id:?} saved with {} minute(s)", rows.len());
     Ok(id)

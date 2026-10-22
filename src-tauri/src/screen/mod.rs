@@ -10,7 +10,7 @@ use crate::geom::Crop;
 use crate::read::exp::{read_line, reading, ExpReading, Glyph, Line};
 use crate::read::font::{ncc, MIN_LEAD, MIN_SCORE};
 use crate::read::map_strip::{read_strip, Signature};
-use crate::read::{LearnedGlyph, ReadError};
+use crate::read::{LearnedGlyph, ReadError, ART_LEVELS};
 use crate::tracker::{ConfirmOutcome, MapConfirmer, Tracker};
 use level_box::LevelBox;
 
@@ -28,15 +28,13 @@ struct LastExp {
     split: bool,
 }
 
-/// A glyph's brightness for the log, one line per row, darkest to brightest as
-/// " .:-=+*#%@".
+/// A glyph's brightness for the log, one line per row (see ART_LEVELS).
 fn brightness_art(glyph: &Glyph) -> String {
-    const LEVELS: &[u8; 10] = b" .:-=+*#%@";
     let lums = &glyph.patch.lums;
     let (lo, hi) = lums.iter().fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), &v| (lo.min(v), hi.max(v)));
     let level = |v: f32| if hi > lo { ((v - lo) / (hi - lo) * 9.0).round() as usize } else { 0 };
     lums.chunks(glyph.patch.width.max(1))
-        .map(|row| format!("\n    |{}|", row.iter().map(|&v| LEVELS[level(v)] as char).collect::<String>()))
+        .map(|row| format!("\n    |{}|", row.iter().map(|&v| ART_LEVELS[level(v)] as char).collect::<String>()))
         .collect()
 }
 
@@ -90,7 +88,7 @@ impl Screen {
         self.count_frame(t);
         let read = self.read_exp_box(exp);
         let exp = self.exp_log.record(t, read);
-        let signature = self.map_log.record(t, read_strip(&map).map(|strip| strip.signature));
+        let signature = self.map_log.record(t, read_strip(&map));
         let map_readable = signature.is_some();
         let new_map = signature.and_then(|signature| match self.confirmer.feed(signature, map) {
             ConfirmOutcome::Changed { signature, strips } => Some((signature, strips)),

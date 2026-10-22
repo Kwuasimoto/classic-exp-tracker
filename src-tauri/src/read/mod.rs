@@ -18,6 +18,10 @@ pub enum ReadError {
     Parse(String),
 }
 
+/// Brightness as ASCII art, darkest to brightest: stored level digits (level.rs) and
+/// unrecognised EXP glyphs in the log (screen/mod.rs).
+pub const ART_LEVELS: &[u8; 10] = b" .:-=+*#%@";
+
 /// A level digit learned on this PC: its character and
 /// centred ink as ASCII art (see level::to_art).
 #[derive(Clone, Debug, PartialEq, Eq)]

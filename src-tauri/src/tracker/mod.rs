@@ -4,8 +4,8 @@
 mod confirm;
 mod level;
 
-pub use confirm::{ConfirmOutcome, MapConfirmer, CONFIRM_FRAMES};
-pub use level::{exp_to_next, TotalBounds};
+pub use confirm::{ConfirmOutcome, MapConfirmer};
+use level::{exp_to_next, TotalBounds};
 
 use std::collections::BTreeMap;
 
@@ -38,12 +38,12 @@ pub enum Effect {
     Minute { minute_start: i64, key: SessionKey, exp_gained: u64, training_secs: u32 },
 }
 
-pub const TRAINING_GRACE_SECS: i64 = 120;
-pub const MAX_SAMPLE_GAP_SECS: i64 = 3;
-pub const RETURN_WINDOW_SECS: i64 = 600;
-pub const LEVEL_UP_FROM_BP: u32 = 8_000;
-pub const LEVEL_UP_TO_BP: u32 = 2_000;
-pub const MAX_CONSECUTIVE_REJECTIONS: u32 = 5;
+const TRAINING_GRACE_SECS: i64 = 120;
+const MAX_SAMPLE_GAP_SECS: i64 = 3;
+const RETURN_WINDOW_SECS: i64 = 600;
+const LEVEL_UP_FROM_BP: u32 = 8_000;
+const LEVEL_UP_TO_BP: u32 = 2_000;
+const MAX_CONSECUTIVE_REJECTIONS: u32 = 5;
 
 #[derive(Clone, Copy, Debug)]
 struct ActiveSession {

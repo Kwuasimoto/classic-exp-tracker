@@ -32,9 +32,20 @@ impl TotalBounds {
     pub fn estimate(self) -> u64 {
         self.lo + (self.hi - self.lo) / 2
     }
+
+    pub fn contains(self, total: u64) -> bool {
+        (self.lo..=self.hi).contains(&total)
+    }
+
+    /// The one level whose table total lies inside the bounds; `None` if none or several do.
+    pub fn matching_level(self) -> Option<u32> {
+        let mut fits = (1..=MAX_LEVEL).filter(|&l| exp_to_next(l).is_some_and(|t| self.contains(t)));
+        let level = fits.next()?;
+        fits.next().is_none().then_some(level)
+    }
 }
 
-pub const MAX_LEVEL: u32 = 99;
+const MAX_LEVEL: u32 = 99;
 
 /// EXP needed to go from `level` to `level + 1` (levels 1–99).
 ///
@@ -60,19 +71,6 @@ pub fn exp_to_next(level: u32) -> Option<u64> {
         // Levels 90–99: previous level × 2.1, rounded down (fits the table; no formula published)
         _ => exp_to_next(level - 1)? * 21 / 10,
     })
-}
-
-impl TotalBounds {
-    /// The one level whose table total lies inside the bounds; `None` if none or several do.
-    pub fn matching_level(self) -> Option<u32> {
-        let mut fits = (1..=MAX_LEVEL).filter(|&l| exp_to_next(l).is_some_and(|t| (self.lo..=self.hi).contains(&t)));
-        let level = fits.next()?;
-        fits.next().is_none().then_some(level)
-    }
-
-    pub fn contains(self, total: u64) -> bool {
-        (self.lo..=self.hi).contains(&total)
-    }
 }
 
 #[cfg(test)]

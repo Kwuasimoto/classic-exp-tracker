@@ -6,7 +6,7 @@ use super::ReadError;
 use crate::geom::Crop;
 
 /// Flat background of the name strip (measured 2026-10-15).
-pub const STRIP_BG: [u8; 3] = [153, 187, 204];
+const STRIP_BG: [u8; 3] = [153, 187, 204];
 const BG_TOLERANCE: u8 = 6;
 /// Text pixels: every channel ≥ this.
 const TEXT_MIN_CHANNEL: u8 = 215;
@@ -50,12 +50,7 @@ impl Signature {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct StripRead {
-    pub signature: Signature,
-}
-
-pub fn read_strip(crop: &Crop) -> Result<StripRead, ReadError> {
+pub fn read_strip(crop: &Crop) -> Result<Signature, ReadError> {
     if crop.height <= EDGE_PROBE_ROW {
         return Err(ReadError::Blank);
     }
@@ -80,7 +75,7 @@ pub fn read_strip(crop: &Crop) -> Result<StripRead, ReadError> {
     if counts.iter().all(|&c| c == 0) {
         return Err(ReadError::Blank);
     }
-    Ok(StripRead { signature: Signature { counts, cut: edge.is_none() } })
+    Ok(Signature { counts, cut: edge.is_none() })
 }
 
 #[cfg(test)]
@@ -90,25 +85,25 @@ mod tests {
 
     #[test]
     fn reads_the_fixture_signature() {
-        let read = read_strip(&fixture("map_victoria_road_perion.png")).expect("readable");
+        let signature = read_strip(&fixture("map_victoria_road_perion.png")).expect("readable");
         // Measured on 2026-10-15: minimap edge 235 columns in, 514 text pixels.
-        assert_eq!(read.signature.counts.len(), 235);
-        assert_eq!(read.signature.counts.iter().map(|&c| u32::from(c)).sum::<u32>(), 514);
-        assert!(!read.signature.cut);
+        assert_eq!(signature.counts.len(), 235);
+        assert_eq!(signature.counts.iter().map(|&c| u32::from(c)).sum::<u32>(), 514);
+        assert!(!signature.cut);
     }
 
     #[test]
     fn a_narrower_map_box_still_matches_the_same_map() {
-        let full = read_strip(&fixture("map_victoria_road_perion.png")).expect("readable").signature;
+        let full = read_strip(&fixture("map_victoria_road_perion.png")).expect("readable");
         let image = fixture("map_victoria_road_perion.png");
         let narrow = image.sub(crate::geom::Rect { x: 0, y: 0, w: image.width - 60, h: image.height }).expect("fits");
-        let cut = read_strip(&narrow).expect("readable").signature;
+        let cut = read_strip(&narrow).expect("readable");
         assert!(cut.cut && cut.matches(&full) && full.matches(&cut));
     }
 
     #[test]
     fn a_window_over_the_minimap_still_matches_the_same_map() {
-        let full = read_strip(&fixture("map_victoria_road_perion.png")).expect("readable").signature;
+        let full = read_strip(&fixture("map_victoria_road_perion.png")).expect("readable");
         let name_len = full.counts.iter().rposition(|&c| c > 0).expect("has text") + 1;
         let ended_at = |len: usize| Signature { counts: full.counts[..len].to_vec(), cut: false };
         // A window over the background after the name (seen 2026-10-17 with the inventory open).
