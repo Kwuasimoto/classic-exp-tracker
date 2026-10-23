@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RateChart } from "../components/RateChart";
 import { formatDateTime, formatHours, formatPct } from "../lib/format";
-import { getLiveChart, resetSession, saveSnapshot, WINDOWS_MINUTES, type AppError, type Bar, type Tick, type WindowMinutes } from "../lib/ipc";
+import { getLiveChart, renameMap, resetSession, saveSnapshot, WINDOWS_MINUTES, type AppError, type Bar, type Tick, type WindowMinutes } from "../lib/ipc";
 import { expToLevel, liveRates } from "../lib/live";
 
 const TOAST_MS = 3000;
@@ -12,6 +12,8 @@ export function LiveView({ tick }: { tick: Tick | null }) {
   const [windowMinutes, setWindowMinutes] = useState<WindowMinutes>(WINDOWS_MINUTES[0]);
   const [error, setError] = useState<AppError | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  // The map being renamed: only ever opened by the user's click, never by the app.
+  const [naming, setNaming] = useState<{ mapId: number; name: string } | null>(null);
   // Chart requests go out every second and can finish out of order: keep only the newest.
   const latestRequest = useRef(0);
 
@@ -41,6 +43,14 @@ export function LiveView({ tick }: { tick: Tick | null }) {
     setToast(res.data === null ? "Nothing to save yet" : "Saved to History");
   };
 
+  const saveMapName = async () => {
+    if (!naming) return;
+    const res = await renameMap(naming.mapId, naming.name);
+    if (!res.success) return setError(res.error);
+    setNaming(null);
+    setToast("Map renamed");
+  };
+
   const reset = async () => {
     const res = await resetSession();
     if (!res.success) return setError(res.error);
@@ -62,7 +72,40 @@ export function LiveView({ tick }: { tick: Tick | null }) {
       <section className="panel row" style={{ flexWrap: "nowrap", gap: 16 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="label">Current map</div>
-          <h1>{tick?.mapName ?? "Waiting for map…"}</h1>
+          {naming ? (
+            <div className="row" style={{ flexWrap: "nowrap", gap: 8 }}>
+              <input
+                value={naming.name}
+                autoFocus
+                aria-label="Map name"
+                style={{ flex: 1, minWidth: 0 }}
+                onChange={(e) => setNaming({ mapId: naming.mapId, name: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void saveMapName();
+                  if (e.key === "Escape") setNaming(null);
+                }}
+              />
+              <button className="btn primary" onClick={() => void saveMapName()}>Save</button>
+              <button className="btn" onClick={() => setNaming(null)}>Cancel</button>
+            </div>
+          ) : (
+            <div className="row" style={{ flexWrap: "nowrap", gap: 8 }}>
+              <h1>{tick?.shopping ? "Shopping" : tick?.mapId == null ? "Waiting for map…" : (tick.mapName ?? "Unrecognised map")}</h1>
+              {tick?.mapId != null && !tick.shopping && (
+                <button
+                  className="icon-btn"
+                  aria-label="Rename map"
+                  title={tick.mapName === null ? "This map isn't on the map list: name it" : "Rename this map"}
+                  onClick={() => setNaming({ mapId: tick.mapId as number, name: tick.mapName ?? "" })}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M12 20h9" />
+                    <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          )}
         </div>
         <div className={level === null ? "badge pending" : "badge"} title={level === null ? "Narrowing down your level from the EXP readings" : undefined}>
           LV. {level ?? "Determining…"}

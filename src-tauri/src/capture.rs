@@ -36,7 +36,7 @@ pub struct Shared {
 
 #[derive(Debug)]
 pub enum CaptureMsg {
-    Regions { t: i64, width: u32, height: u32, exp: Crop, map: Crop, level: Crop },
+    Regions { t: i64, width: u32, height: u32, exp: Crop, map: Crop, level: Crop, bar: Crop },
     /// A frame at a resolution the pipeline has no boxes for (yet).
     NoBoxes { width: u32, height: u32 },
     Closed,
@@ -99,7 +99,8 @@ impl GraphicsCaptureApiHandler for Handler {
                     && r.height == height
                     && r.boxes.exp.fits_in(width, height)
                     && r.boxes.map.fits_in(width, height)
-                    && r.boxes.level.fits_in(width, height) =>
+                    && r.boxes.level.fits_in(width, height)
+                    && r.boxes.bar.fits_in(width, height) =>
             {
                 CaptureMsg::Regions {
                     t: now_unix(),
@@ -108,6 +109,7 @@ impl GraphicsCaptureApiHandler for Handler {
                     exp: copy_region(frame, r.boxes.exp)?,
                     map: copy_region(frame, r.boxes.map)?,
                     level: copy_region(frame, r.boxes.level)?,
+                    bar: copy_region(frame, r.boxes.bar)?,
                 }
             }
             _ => CaptureMsg::NoBoxes { width, height },

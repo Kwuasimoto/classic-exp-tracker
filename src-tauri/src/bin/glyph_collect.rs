@@ -1,15 +1,18 @@
-//! DEV ONLY (feature `dev-tools`, never shipped): tools for testing the EXP reader.
+//! DEV ONLY (feature `dev-tools`, never shipped): tools for testing the screen readers.
 //!
-//! record: print the EXP box's pixels for each frame as text, to test the reader with.
+//! record: print a box's pixels as text each time they change, to test readers with.
 //! replay: run the EXP reader over a recording and print what each frame read as.
 //! scores: print how closely each glyph of each distinct line in a recording matched.
 //! live / png: print the lines the reader can't read, with the closest characters.
+//! maps: confirm maps in a recording of the map box (optionally a sub-rectangle of it) and
+//! print what OCR reads for each and the map list name it matches, as the app does.
 //!
 //!   cargo run --manifest-path src-tauri/Cargo.toml --features dev-tools --bin glyph-collect -- record <x> <y> <w> <h> <seconds> > frames.txt
 //!   cargo run --manifest-path src-tauri/Cargo.toml --features dev-tools --bin glyph-collect -- replay frames.txt
 //!   cargo run --manifest-path src-tauri/Cargo.toml --features dev-tools --bin glyph-collect -- scores frames.txt
 //!   cargo run --manifest-path src-tauri/Cargo.toml --features dev-tools --bin glyph-collect -- live <x> <y> <w> <h> <seconds>
 //!   cargo run --manifest-path src-tauri/Cargo.toml --features dev-tools --bin glyph-collect -- png <path> <x> <y> <w> <h>
+//!   cargo run --manifest-path src-tauri/Cargo.toml --features dev-tools --bin glyph-collect -- maps frames.txt [<x> <y> <w> <h>]
 
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -20,6 +23,10 @@ use std::time::{Duration, Instant};
 use classic_exp_tracker_lib::capture::{self, CaptureMsg, Regions, Shared};
 use classic_exp_tracker_lib::geom::{Boxes, Crop, Rect};
 use classic_exp_tracker_lib::read::exp::{read_exp, read_line};
+use classic_exp_tracker_lib::read::map_names::{match_name, NameMatch};
+use classic_exp_tracker_lib::read::map_strip::{read_strip, Signature};
+use classic_exp_tracker_lib::read::ocr::MapOcr;
+use classic_exp_tracker_lib::tracker::{ConfirmOutcome, MapConfirmer};
 
 /// Unreadable lines, keyed by what they read as with the closest characters of each
 /// glyph not recognised, with a count.
@@ -104,6 +111,37 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             return Ok(());
         }
+        Some("maps") => {
+            let sub = match args.len() {
+                2 => None,
+                6 => Some(Rect { x: num(2)?, y: num(3)?, w: num(4)?, h: num(5)? }),
+                _ => return Err("usage: glyph-collect maps <file> [<x> <y> <w> <h>]".into()),
+            };
+            let ocr = MapOcr::new()?;
+            let mut confirmer = MapConfirmer::new();
+            // Each map found so far: a look of it and what it was named.
+            let mut seen: Vec<(Signature, String)> = Vec::new();
+            for (t, frame) in load_recording(args.get(1).ok_or("missing recording path")?)? {
+                let crop = match sub {
+                    Some(r) => frame.sub(r).ok_or("sub-rectangle outside the recording")?,
+                    None => frame,
+                };
+                let Ok(signature) = read_strip(&crop) else { continue };
+                let ConfirmOutcome::Changed { signature, strips } = confirmer.feed(signature, crop) else { continue };
+                if let Some((_, name)) = seen.iter().find(|(s, _)| s.matches(&signature)) {
+                    println!("{t} known look: {name}");
+                    continue;
+                }
+                let read = ocr.label(&strips)?;
+                let name = match read.as_deref().map(match_name) {
+                    Some(NameMatch::Listed(name)) => name.to_string(),
+                    _ => "UNRECOGNISED".to_string(),
+                };
+                println!("{t} new look: OCR {read:?} -> {name}");
+                seen.push((signature, name));
+            }
+            return Ok(());
+        }
         Some("png") => {
             let path = args.get(1).ok_or("missing png path")?;
             let rect = Rect { x: num(2)?, y: num(3)?, w: num(4)?, h: num(5)? };
@@ -119,17 +157,22 @@ fn main() -> Result<(), Box<dyn Error>> {
             *shared.regions.write().map_err(|_| "regions lock poisoned")? = Some(Regions {
                 width: monitor.width()?,
                 height: monitor.height()?,
-                boxes: Boxes { exp: rect, map: rect, level: rect },
+                boxes: Boxes { exp: rect, map: rect, level: rect, bar: rect },
             });
             let (tx, rx) = sync_channel(4);
             let control = capture::start(tx, shared)?;
             let deadline = Instant::now() + Duration::from_secs(seconds.into());
             let mut frames = 0;
+            let mut last: Option<Crop> = None;
             while Instant::now() < deadline {
                 if let Ok(CaptureMsg::Regions { t, exp, .. }) = rx.recv_timeout(Duration::from_secs(1)) {
                     frames += 1;
                     if record {
-                        print_pixels(t, &exp);
+                        // An unchanged box adds nothing to a recording.
+                        if last.as_ref() != Some(&exp) {
+                            print_pixels(t, &exp);
+                            last = Some(exp);
+                        }
                     } else {
                         collect_rejected(&exp, &mut rejected);
                     }
@@ -141,7 +184,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 return Ok(());
             }
         }
-        _ => return Err("usage: glyph-collect record|live <x> <y> <w> <h> <seconds> | replay|scores <file> | png <path> <x> <y> <w> <h>".into()),
+        _ => return Err("usage: glyph-collect record|live <x> <y> <w> <h> <seconds> | replay|scores|maps <file> | png <path> <x> <y> <w> <h>".into()),
     }
     for (what, count) in &rejected {
         println!("{count}x {what}");

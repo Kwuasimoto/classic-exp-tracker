@@ -50,6 +50,27 @@ impl Signature {
     }
 }
 
+/// The collapsed minimap's title bar is flat #dddddd behind its black text; the expanded
+/// minimap's is white with a blue frame, and a map is never this grey (measured
+/// 2026-10-22, 1366x768).
+const COLLAPSED_BAR: [u8; 3] = [0xdd, 0xdd, 0xdd];
+const COLLAPSED_TOLERANCE: u8 = 10;
+/// Share of the bar box that must be that grey (the rest is the bar's text).
+const COLLAPSED_SHARE: f32 = 0.5;
+
+/// Whether the minimap is collapsed to its title bar, as the game does in shops.
+pub fn is_collapsed_minimap(bar: &Crop) -> bool {
+    let total = bar.width as usize * bar.height as usize;
+    let grey = (0..bar.height)
+        .flat_map(|y| (0..bar.width).map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            let p = bar.px(x, y);
+            (0..3).all(|i| p[i].abs_diff(COLLAPSED_BAR[i]) <= COLLAPSED_TOLERANCE)
+        })
+        .count();
+    total > 0 && grey as f32 >= COLLAPSED_SHARE * total as f32
+}
+
 pub fn read_strip(crop: &Crop) -> Result<Signature, ReadError> {
     if crop.height <= EDGE_PROBE_ROW {
         return Err(ReadError::Blank);
@@ -82,6 +103,17 @@ pub fn read_strip(crop: &Crop) -> Result<Signature, ReadError> {
 mod tests {
     use super::*;
     use crate::geom::fixture;
+
+    #[test]
+    fn a_collapsed_minimap_is_its_grey_title_bar() {
+        // The bar box at 1366x768 measured in a shop (83% grey) and on a map (0%).
+        let filled = |rgb: [u8; 3], grey_rows: u32| {
+            let rgba = (0..13u32).flat_map(|y| (0..120).flat_map(move |_| if y < grey_rows { [0xdd, 0xdd, 0xdd, 255] } else { [rgb[0], rgb[1], rgb[2], 255] })).collect();
+            Crop::new(120, 13, rgba).expect("sized")
+        };
+        assert!(is_collapsed_minimap(&filled([0, 0, 0], 11)), "grey behind black text");
+        assert!(!is_collapsed_minimap(&filled([0xff, 0xff, 0xff], 0)), "the expanded minimap's white title bar");
+    }
 
     #[test]
     fn reads_the_fixture_signature() {

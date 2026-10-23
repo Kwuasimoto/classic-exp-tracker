@@ -9,7 +9,7 @@ use log::{info, warn};
 use crate::geom::Crop;
 use crate::read::exp::{read_line, reading, ExpReading, Glyph, Line};
 use crate::read::font::{ncc, MIN_LEAD, MIN_SCORE};
-use crate::read::map_strip::{read_strip, Signature};
+use crate::read::map_strip::{is_collapsed_minimap, read_strip, Signature};
 use crate::read::{LearnedGlyph, ReadError, ART_LEVELS};
 use crate::tracker::{ConfirmOutcome, MapConfirmer, Tracker};
 use level_box::LevelBox;
@@ -42,6 +42,8 @@ fn brightness_art(glyph: &Glyph) -> String {
 pub struct FrameRead {
     pub exp: Option<ExpReading>,
     pub map_readable: bool,
+    /// The minimap is collapsed to its title bar: the player is in a shop.
+    pub shopping: bool,
     /// A map confirmed on this frame, with the strips that confirmed it (for OCR).
     pub new_map: Option<(Signature, Vec<Crop>)>,
 }
@@ -84,7 +86,7 @@ impl Screen {
     }
 
     /// Read this frame's regions.
-    pub fn read(&mut self, t: i64, exp: &Crop, map: Crop, level: Crop) -> FrameRead {
+    pub fn read(&mut self, t: i64, exp: &Crop, map: Crop, level: Crop, bar: &Crop) -> FrameRead {
         self.count_frame(t);
         let read = self.read_exp_box(exp);
         let exp = self.exp_log.record(t, read);
@@ -95,7 +97,7 @@ impl Screen {
             ConfirmOutcome::Unchanged => None,
         });
         self.level_box.observe(level);
-        FrameRead { exp, map_readable, new_map }
+        FrameRead { exp, map_readable, new_map, shopping: is_collapsed_minimap(bar) }
     }
 
     /// The EXP readout. A box that looks as it did last frame reads as it did then;

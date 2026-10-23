@@ -20,11 +20,15 @@ use crate::read::ocr::MapOcr;
 use crate::read::LearnedGlyph;
 use crate::rates::{self, MinuteRow};
 use crate::screen::{FrameRead, Screen};
-use crate::store::{Store, StoreError};
+use crate::read::map_names::{match_name, NameMatch};
+use crate::store::{NamedBy, Store, StoreError};
 use crate::tracker::{Effect, MapId, Sample, SessionKey, Tracker};
 
 pub const TICK_EVENT: &str = "tracker-tick";
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
+/// Reads of a map without a name per visit, NAME_RETRY_SECS apart (see resolve_map).
+const NAME_RETRIES: u32 = 4;
+const NAME_RETRY_SECS: i64 = 15;
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", content = "detail", rename_all = "camelCase")]
 pub enum ReaderStatus {
@@ -44,7 +48,12 @@ pub enum ReaderStatus {
 #[serde(rename_all = "camelCase")]
 pub struct Tick {
     pub status: ReaderStatus,
+    /// The map on screen, once confirmed, and its name: `None` for a map not on the map
+    /// list that the user hasn't named ("Unrecognised map").
+    pub map_id: Option<i64>,
     pub map_name: Option<String>,
+    /// In a shop (the minimap is collapsed): shown instead of the map.
+    pub shopping: bool,
     pub exp: Option<u64>,
     pub pct_bp: Option<u32>,
     pub total_est: Option<u64>,
@@ -54,7 +63,7 @@ pub struct Tick {
 
 impl Default for Tick {
     fn default() -> Self {
-        Self { status: ReaderStatus::Starting, map_name: None, exp: None, pct_bp: None, total_est: None, level: None }
+        Self { status: ReaderStatus::Starting, map_id: None, map_name: None, shopping: false, exp: None, pct_bp: None, total_est: None, level: None }
     }
 }
 
@@ -119,6 +128,11 @@ struct Pipeline {
     screen: Screen,
     tracker: Tracker,
     current_map: Option<MapId>,
+    /// Reads of the current map's name this visit, and when the next is due (it has none yet).
+    name_retries: u32,
+    retry_name_at: Option<i64>,
+    /// The minimap is collapsed: the player is in a shop.
+    shopping: bool,
     /// The resolution the level digits in use were learned at.
     resolution: Option<String>,
     keys: HashMap<SessionKey, i64>,
@@ -145,6 +159,9 @@ impl Pipeline {
             screen: Screen::new(),
             tracker: Tracker::new(),
             current_map: None,
+            name_retries: 0,
+            retry_name_at: None,
+            shopping: false,
             resolution: None,
             keys: HashMap::new(),
             pending: Vec::new(),
@@ -160,7 +177,9 @@ impl Pipeline {
             self.handle_requests();
             self.ensure_capture();
             match self.rx.recv_timeout(Duration::from_millis(500)) {
-                Ok(CaptureMsg::Regions { t, width, height, exp, map, level }) => self.on_regions(t, width, height, exp, map, level),
+                Ok(CaptureMsg::Regions { t, width, height, exp, map, level, bar }) => {
+                    self.on_regions(t, width, height, exp, map, level, &bar)
+                }
                 Ok(CaptureMsg::NoBoxes { width, height }) => self.on_new_screen(width, height),
                 Ok(CaptureMsg::Closed) => {}
                 Err(RecvTimeoutError::Timeout) => {}
@@ -246,19 +265,31 @@ impl Pipeline {
         }
     }
 
-    fn on_regions(&mut self, t: i64, width: u32, height: u32, exp: Crop, map: Crop, level: Crop) {
+    #[allow(clippy::too_many_arguments)]
+    fn on_regions(&mut self, t: i64, width: u32, height: u32, exp: Crop, map: Crop, level: Crop, bar: &Crop) {
         self.frames_flowing();
         self.use_glyphs_for(width, height);
-        let FrameRead { exp, map_readable, new_map } = self.screen.read(t, &exp, map, level);
+        if self.retry_name_at.is_some_and(|at| t >= at) {
+            self.retry_name_at = None;
+            self.screen.reconfirm_map();
+        }
+        let FrameRead { exp, map_readable, new_map, shopping } = self.screen.read(t, &exp, map, level, bar);
         if let Some((signature, strips)) = &new_map {
             self.resolve_map(t, signature, strips);
         }
-        let fx = self.tracker.on_sample(Sample { t, exp, map: self.current_map });
+        if shopping != self.shopping {
+            info!("{}", if shopping { "minimap collapsed: in a shop" } else { "minimap back: left the shop" });
+            self.shopping = shopping;
+        }
+        // In a shop the tracker sees no map (time there isn't training); the map from
+        // before is kept, so coming back out to it carries on.
+        let map = if shopping { None } else { self.current_map };
+        let fx = self.tracker.on_sample(Sample { t, exp, map });
         let learned = self.screen.sync_level(&mut self.tracker, exp);
         self.save_glyphs(&learned);
         // Also publishes the minute in progress, before the tick: the UI reloads the chart on each tick.
         self.apply(fx);
-        self.publish(match (exp, map_readable) {
+        self.publish(match (exp, map_readable || shopping) {
             (None, _) => ReaderStatus::ExpUnreadable,
             (Some(_), false) => ReaderStatus::MapUnreadable,
             (Some(_), true) => ReaderStatus::Ok,
@@ -309,27 +340,80 @@ impl Pipeline {
         self.storage_error = Some(e.to_string());
     }
 
+    /// A map confirmed on screen: find it by any of its looks, or by the list name its
+    /// strip reads as, or save it. A map without a name is read again up to NAME_RETRIES
+    /// times this visit: OCR often reads a name cut short once and whole a moment later.
     fn resolve_map(&mut self, t: i64, signature: &Signature, strips: &[Crop]) {
-        let result = self.find_map(signature).and_then(|found| match found {
-            Some(id) => {
-                info!("map confirmed: known map #{id}");
-                Ok(id)
+        match self.place_map(t, signature, strips) {
+            Ok((id, named)) => {
+                if self.current_map != Some(id) {
+                    self.name_retries = 0;
+                }
+                self.current_map = Some(id);
+                self.retry_name_at = (!named && self.name_retries < NAME_RETRIES).then(|| {
+                    self.name_retries += 1;
+                    t + NAME_RETRY_SECS
+                });
             }
-            None => {
-                let name = self.label(strips);
-                let id = self.state.store.lock().expect("store lock poisoned").insert_map(&name, signature, t)?;
-                info!("map confirmed: new map #{id}, OCR label {name:?}");
-                Ok(id)
-            }
-        });
-        match result {
-            Ok(id) => self.current_map = Some(id),
             Err(e) => {
                 self.storage_failed("looking up or saving a map", e);
-                // Re-confirm on upcoming frames so the lookup is retried.
-                self.screen.reconfirm_map();
+                // Tried again later, not on the next frames: each try runs OCR.
+                self.retry_name_at = Some(t + NAME_RETRY_SECS);
             }
         }
+    }
+
+    /// The map and whether it has a name. Only a map without one is read with OCR, and
+    /// it's named only from the map list (read::map_names); the user's names stay.
+    fn place_map(&self, t: i64, signature: &Signature, strips: &[Crop]) -> Result<(MapId, bool), StoreError> {
+        let known = self.find_map(signature)?;
+        if let Some(id) = known
+            && let Some((name, _)) = self.state.store.lock().expect("store lock poisoned").map_name(id)?
+        {
+            info!("map confirmed: {name:?} (#{id})");
+            return Ok((id, true));
+        }
+        let ocr = self.read_name(strips);
+        let listed = match ocr.as_deref().map(match_name) {
+            Some(NameMatch::Listed(name)) => Some(name),
+            _ => None,
+        };
+        let store = self.state.store.lock().expect("store lock poisoned");
+        Ok(match (known, listed) {
+            (Some(id), Some(name)) => match store.map_by_name(name)? {
+                Some(other) if other != id => {
+                    store.move_looks(id, other)?;
+                    info!("unrecognised map #{id} reads as {name:?} (OCR {ocr:?}): it is map #{other}");
+                    (other, true)
+                }
+                _ => {
+                    store.set_map_name(id, name, NamedBy::List)?;
+                    info!("unrecognised map #{id} reads as {name:?} (OCR {ocr:?}): named");
+                    (id, true)
+                }
+            },
+            (Some(id), None) => {
+                info!("map confirmed: unrecognised map #{id} (OCR {ocr:?} is not on the map list)");
+                (id, false)
+            }
+            (None, Some(name)) => match store.map_by_name(name)? {
+                Some(id) => {
+                    store.add_signature(id, signature)?;
+                    info!("map confirmed: {name:?} (#{id}), seen in a new look (OCR {ocr:?})");
+                    (id, true)
+                }
+                None => {
+                    let id = store.insert_map(Some((name, NamedBy::List)), signature, t)?;
+                    info!("map confirmed: new map #{id} {name:?} (OCR {ocr:?})");
+                    (id, true)
+                }
+            },
+            (None, None) => {
+                let id = store.insert_map(None, signature, t)?;
+                info!("map confirmed: new unrecognised map #{id} (OCR {ocr:?} is not on the map list)");
+                (id, false)
+            }
+        })
     }
 
     fn find_map(&self, signature: &Signature) -> Result<Option<MapId>, StoreError> {
@@ -337,16 +421,19 @@ impl Pipeline {
         Ok(maps.into_iter().find(|m| m.signature.matches(signature)).map(|m| m.id))
     }
 
-    /// OCR label for a new map. Failures produce a visible name.
-    fn label(&self, strips: &[Crop]) -> String {
-        match &self.ocr {
-            Ok(ocr) => match ocr.label(strips) {
-                Ok(Some(name)) => name,
-                Ok(None) => "Unnamed map".to_string(),
-                Err(e) => format!("Unnamed map (OCR failed: {e})"),
-            },
-            Err(e) => format!("Unnamed map (OCR unavailable: {e})"),
-        }
+    /// What OCR reads on the strips; `None` when it reads nothing or fails (logged).
+    fn read_name(&self, strips: &[Crop]) -> Option<String> {
+        let ocr = match &self.ocr {
+            Ok(ocr) => ocr,
+            Err(e) => {
+                warn!("map name not read: OCR unavailable: {e}");
+                return None;
+            }
+        };
+        ocr.label(strips).unwrap_or_else(|e| {
+            warn!("map name not read: OCR failed: {e}");
+            None
+        })
     }
 
     /// Apply effects in order; on a storage error keep the rest queued for the next call.
@@ -406,7 +493,7 @@ impl Pipeline {
     fn publish(&mut self, reader: ReaderStatus) {
         let found = self.current_map.map(|id| self.state.store.lock().expect("store lock poisoned").map_name(id));
         let map_name = match found {
-            Some(Ok(name)) => name,
+            Some(Ok(name)) => name.map(|(name, _)| name),
             Some(Err(e)) => {
                 self.storage_failed("loading the map name", e);
                 None
@@ -425,7 +512,9 @@ impl Pipeline {
         let baseline = self.tracker.baseline();
         let tick = Tick {
             status,
+            map_id: self.current_map,
             map_name,
+            shopping: self.shopping,
             exp: baseline.map(|r| r.exp),
             pct_bp: baseline.map(|r| r.pct_bp),
             total_est: self.tracker.total_estimate(),

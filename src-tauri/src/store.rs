@@ -13,7 +13,7 @@ use crate::tracker::MapId;
 
 /// The `calibration` table (boxes drawn per resolution) is unread since 0.4.0, when the
 /// app started placing its boxes itself (geom::boxes_for); its rows are left as they are.
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 const SCHEMA: &str = "
 BEGIN;
 CREATE TABLE maps (
@@ -142,6 +142,35 @@ PRAGMA user_version = 6;
 COMMIT;
 ";
 
+/// Version 8 (0.5.0): maps start from scratch. Names from OCR alone were wrong about a
+/// third of the time, and one map was saved once per look (resolution, minimap width).
+/// A map now has a name only from the map list (read::map_names) or from the user, and
+/// any number of looks. Sessions keep their minutes and lose their map; snapshots keep
+/// the names they were saved with. The database is copied first (Store::open).
+const MIGRATION_8: &str = "
+PRAGMA foreign_keys = OFF;
+BEGIN;
+UPDATE sessions SET map_id = NULL;
+DROP TABLE maps;
+CREATE TABLE maps (
+    id INTEGER PRIMARY KEY,
+    name TEXT,
+    named_by TEXT CHECK (named_by IN ('list', 'user')),
+    first_seen INTEGER NOT NULL,
+    CHECK ((name IS NULL) = (named_by IS NULL))
+);
+CREATE TABLE map_signatures (
+    id INTEGER PRIMARY KEY,
+    map_id INTEGER NOT NULL REFERENCES maps(id),
+    signature BLOB NOT NULL,
+    cut_by_box INTEGER NOT NULL
+);
+CREATE INDEX map_signatures_map ON map_signatures(map_id);
+PRAGMA user_version = 8;
+COMMIT;
+PRAGMA foreign_keys = ON;
+";
+
 /// Learned shapes kept per character and resolution: enough for the sub-pixel
 /// positions a character lands at, without growing forever.
 const MAX_GLYPHS_PER_CHAR: i64 = 8;
@@ -154,8 +183,28 @@ pub enum StoreError {
     Range(&'static str),
     #[error("database was written by a newer version of the app (schema {0})")]
     NewerSchema(i64),
+    #[error("could not back up the database before upgrading it: {0}")]
+    Backup(#[from] std::io::Error),
 }
 
+/// Where a map's name came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NamedBy {
+    /// The map list (read::map_names).
+    List,
+    User,
+}
+
+impl NamedBy {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::List => "list",
+            Self::User => "user",
+        }
+    }
+}
+
+/// One look of a map: its name strip's signature at some resolution and minimap width.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MapRecord {
     pub id: MapId,
@@ -209,7 +258,14 @@ fn art_at(row: &Row, idx: usize) -> rusqlite::Result<Vec<String>> {
 }
 
 impl Store {
+    /// Before migration 8 deletes the saved maps, the file is copied next to itself.
     pub fn open(path: &Path) -> Result<Self, StoreError> {
+        let version: i64 = Connection::open(path)?.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if (1..8).contains(&version) {
+            let backup = path.with_file_name(format!("tracker.backup-v{version}.db"));
+            std::fs::copy(path, &backup)?;
+            log::info!("database backed up to {} before upgrading it to version 8", backup.display());
+        }
         Self::init(Connection::open(path)?)
     }
 
@@ -246,11 +302,15 @@ impl Store {
             // matches the game's font and reads no EXP glyphs, so new databases skip it.
             conn.execute_batch("PRAGMA user_version = 7;")?;
         }
+        if version < 8 {
+            conn.execute_batch(MIGRATION_8)?;
+        }
         Ok(Self { conn })
     }
 
+    /// Every look of every map.
     pub fn maps(&self) -> Result<Vec<MapRecord>, StoreError> {
-        let mut stmt = self.conn.prepare("SELECT id, signature, cut_by_box FROM maps ORDER BY id")?;
+        let mut stmt = self.conn.prepare("SELECT map_id, signature, cut_by_box FROM map_signatures ORDER BY id")?;
         let rows = stmt
             .query_map([], |r| {
                 Ok(MapRecord { id: r.get(0)?, signature: Signature { counts: r.get(1)?, cut: r.get(2)? } })
@@ -259,16 +319,56 @@ impl Store {
         Ok(rows)
     }
 
-    pub fn map_name(&self, id: MapId) -> Result<Option<String>, StoreError> {
-        Ok(self.conn.query_row("SELECT name FROM maps WHERE id = ?1", [id], |r| r.get(0)).optional()?)
+    /// The map's name, `None` while it has none (or there's no such map).
+    pub fn map_name(&self, id: MapId) -> Result<Option<(String, NamedBy)>, StoreError> {
+        let row: Option<(Option<String>, Option<String>)> =
+            self.conn.query_row("SELECT name, named_by FROM maps WHERE id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
+        Ok(match row {
+            Some((Some(name), Some(by))) => Some((name, if by == "user" { NamedBy::User } else { NamedBy::List })),
+            _ => None,
+        })
     }
 
-    pub fn insert_map(&self, name: &str, signature: &Signature, t: i64) -> Result<MapId, StoreError> {
-        self.conn.execute(
-            "INSERT INTO maps (name, signature, cut_by_box, first_seen) VALUES (?1, ?2, ?3, ?4)",
-            params![name, signature.counts.as_slice(), signature.cut, t],
+    /// The map with this name, if one has it.
+    pub fn map_by_name(&self, name: &str) -> Result<Option<MapId>, StoreError> {
+        Ok(self.conn.query_row("SELECT id FROM maps WHERE name = ?1 ORDER BY id LIMIT 1", [name], |r| r.get(0)).optional()?)
+    }
+
+    /// A new map with its first look; `name` is `None` for a map not on the list.
+    pub fn insert_map(&self, name: Option<(&str, NamedBy)>, signature: &Signature, t: i64) -> Result<MapId, StoreError> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "INSERT INTO maps (name, named_by, first_seen) VALUES (?1, ?2, ?3)",
+            params![name.map(|(n, _)| n), name.map(|(_, by)| by.as_str()), t],
         )?;
-        Ok(self.conn.last_insert_rowid())
+        let id = tx.last_insert_rowid();
+        tx.execute(
+            "INSERT INTO map_signatures (map_id, signature, cut_by_box) VALUES (?1, ?2, ?3)",
+            params![id, signature.counts.as_slice(), signature.cut],
+        )?;
+        tx.commit()?;
+        Ok(id)
+    }
+
+    /// Another look of a known map (another resolution or minimap width).
+    pub fn add_signature(&self, map_id: MapId, signature: &Signature) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO map_signatures (map_id, signature, cut_by_box) VALUES (?1, ?2, ?3)",
+            params![map_id, signature.counts.as_slice(), signature.cut],
+        )?;
+        Ok(())
+    }
+
+    /// Map `from` turned out to be `into`: its looks move over, so it's found as `into`
+    /// from now on. `from` stays (its sessions and queued writes still refer to it).
+    pub fn move_looks(&self, from: MapId, into: MapId) -> Result<(), StoreError> {
+        self.conn.execute("UPDATE map_signatures SET map_id = ?2 WHERE map_id = ?1", params![from, into])?;
+        Ok(())
+    }
+
+    /// `false` when no map has that id.
+    pub fn set_map_name(&self, id: MapId, name: &str, by: NamedBy) -> Result<bool, StoreError> {
+        Ok(self.conn.execute("UPDATE maps SET name = ?2, named_by = ?3 WHERE id = ?1", params![id, name, by.as_str()])? == 1)
     }
 
     pub fn start_session(&self, map_id: Option<MapId>, t: i64) -> Result<i64, StoreError> {
@@ -432,9 +532,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn version_8_starts_maps_afresh_and_keeps_sessions() {
+        // A version-7 database with a map and a session on it.
+        let conn = Connection::open_in_memory().unwrap();
+        for sql in [SCHEMA, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6, "PRAGMA user_version = 7;"] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.execute_batch(
+            "INSERT INTO maps (id, name, signature, first_seen) VALUES (1, 'Unno', x'01', 0);
+             INSERT INTO sessions (id, map_id, started_at) VALUES (1, 1, 0);
+             INSERT INTO minutes (minute_start, session_id, exp_gained, training_secs) VALUES (0, 1, 100, 60);",
+        )
+        .unwrap();
+        let store = Store::init(conn).unwrap();
+        let map_id: Option<i64> = store.conn.query_row("SELECT map_id FROM sessions", [], |r| r.get(0)).unwrap();
+        assert_eq!(map_id, None);
+        assert_eq!(store.minutes_between(0, 60).unwrap().len(), 1);
+        assert!(store.maps().unwrap().is_empty());
+
+        // A second look of a named map belongs to the same map.
+        let look = |n| Signature { counts: vec![n], cut: false };
+        let id = store.insert_map(Some(("Perion", NamedBy::List)), &look(1), 0).unwrap();
+        store.add_signature(store.map_by_name("Perion").unwrap().unwrap(), &look(2)).unwrap();
+        assert_eq!(store.maps().unwrap().iter().map(|m| m.id).collect::<Vec<_>>(), [id, id]);
+    }
+
+    #[test]
     fn prune_keeps_snapshots_recent_minutes_and_the_open_session() {
         let store = Store::open_in_memory().unwrap();
-        let map = store.insert_map("Map", &Signature { counts: vec![1], cut: false }, 0).unwrap();
+        let map = store.insert_map(Some(("Map", NamedBy::List)), &Signature { counts: vec![1], cut: false }, 0).unwrap();
         let old = store.start_session(Some(map), 0).unwrap();
         store.add_minute(0, old, 100, 60).unwrap();
         store.end_session(old, 60).unwrap();

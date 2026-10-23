@@ -25,7 +25,9 @@ export type ReaderStatus = z.infer<typeof ReaderStatusSchema>;
 
 export const TickSchema = z.object({
   status: ReaderStatusSchema,
+  mapId: z.number().int().nullable(),
   mapName: z.string().nullable(),
+  shopping: z.boolean(),
   exp: count.nullable(),
   pctBp: count.nullable(),
   totalEst: count.nullable(),
@@ -74,6 +76,8 @@ export const getLiveSnapshot = () => call("get_live_snapshot", TickSchema);
 export const getLiveChart = (windowMinutes: WindowMinutes) => call("get_live_chart", z.array(BarSchema), { windowMinutes });
 /** Saves what the live chart shows as a snapshot: its id, or null if there was nothing to save. */
 export const saveSnapshot = (name: string, windowMinutes: WindowMinutes) => call("save_snapshot", z.number().int().nullable(), { name, windowMinutes });
+/** Names a map; OCR never renames it after this. */
+export const renameMap = (mapId: number, name: string) => call("rename_map", z.null(), { mapId, name });
 /** Ends the session and starts the live view afresh; saves nothing. */
 export const resetSession = () => call("reset_session", z.null());
 export const getSnapshots = () => call("get_snapshots", z.array(SnapshotSchema));

@@ -1,0 +1,280 @@
+# MapleStory Classic World map names, one per line, as the game shows them.
+# From the MapleStory Classic Wiki (https://mapleclassic.wiki/wiki/Category:Maps), the
+# name_en field of each map page, fetched 2026-10-22. Licensed CC BY-NC-SA 4.0
+# (https://creativecommons.org/licenses/by-nc-sa/4.0/) by the wiki's contributors; see LICENSE.md here.
+1st Accompaniment (1st Stage)
+1st Accompaniment (2nd Stage)
+1st Accompaniment (3rd Stage)
+1st Accompaniment (4th stage)
+1st Accompaniment (Bonus)
+1st Accompaniment (Exit)
+1st Accompaniment (Last Stage)
+3-Way Road-Split
+A Hill West of Henesys
+A Look-Out Shed Around the Beach
+A Split Road
+Amherst
+Amherst Department Store
+Amherst Townstreet
+Amherst Weapon Store
+An Empty House
+Another Entrance
+Another Path
+Ant Tunnel For Bowman
+Ant Tunnel I
+Ant Tunnel II
+Ant Tunnel III
+Ant Tunnel IV
+Ant Tunnel Park
+B1 (Area 1)
+B1 (Area 2)
+B1 (Subway Depot)
+B2 (Area 1)
+B2 (Area 2)
+B2 (Subway Depot)
+B3 (Area 1)
+B3 (Area 2)
+B3 (Area 3)
+B3 (Subway Depot)
+Beach Hunting Ground
+Before Takeoff (To Orbis)
+Black Map with Mob
+Bowman Instructional School
+Caution Falling Down
+Clang and Lorang
+Construction Site North of Kerning City
+Damp Forest
+Damp Tree-Forest
+Dangerous Croko I
+Dangerous Croko II
+Dangerous Forest
+Dangerous Steam
+Dangerous Valley
+Dangerous Valley II
+Dark Cave
+Deep Ant Tunnel I
+Deep Ant Tunnel II
+Deep Forest
+Deep Valley I
+Deep Valley II
+Deep Valley III
+Downstairs at the Forest
+Drake Hunting Ground
+Drake's Meal Table
+Dungeon, Southern Forest I
+Dungeon, Southern Forest II
+Dungeon, Southern Forest III
+Dungeon, Southern Forest IV
+East Domain of Perion
+East Entrance to Mushroom Town
+East Rocky Mountain I
+East Rocky Mountain II
+East Rocky Mountain III
+East Rocky Mountain IV
+East Rocky Mountain V
+East Rocky Mountain VI
+East Rocky Mountain VII
+Ellinia
+Ellinia Department Store
+Ellinia Station
+Ellinia Weapon Store
+Florina Beach
+Forest West of Henesys
+Free Market (1)
+Free Market (10)
+Free Market (11)
+Free Market (2)
+Free Market (3)
+Free Market (4)
+Free Market (5)
+Free Market (6)
+Free Market (7)
+Free Market (8)
+Free Market (9)
+Free Market Entrance
+Golem's Temple I
+Golem's Temple II
+Golem's Temple III
+Golem's Temple IV
+Henesys
+Henesys Department Store
+Henesys Dungeon Entrance
+Henesys Hair Salon
+Henesys Hunting Ground I
+Henesys Hunting Ground II
+Henesys Hunting Ground III
+Henesys Market
+Henesys Park
+Henesys Plastic Surgery
+Henesys Skin-Care
+Henesys Town Hall
+Henesys Townstreet
+Henesys Weapon Store
+Hot Sand
+Hunting Ground in the Deep Forest I
+Hunting Ground in the Deep Forest II
+Hunting Ground Middle of the Forest I
+Hunting Ground Middle of the Forest II
+In a Small Forest
+Kerning City
+Kerning City Civic Center
+Kerning City Construction Site
+Kerning City Hair Salon
+Kerning City Middle Forest I
+Kerning City Middle Forest II
+Kerning City Middle Forest III
+Kerning City Pharmacy
+Kerning City Repair Shop
+Kerning City Self-Defence Item Store
+L Forest I
+L Forest II
+L Forest III
+Land of Wild Boar
+Line 1 (Area 1)
+Line 1 (Area 2)
+Line 1 (Area 3)
+Line 1 (Area 4)
+Line 2 (Area 1)
+Line 2 (Area 2)
+Line 2 (Area 3)
+Lith Harbor
+Lith Harbor Armor Shop
+Lith Harbor Department Store
+Lith Harbor Weapon Shop
+Lorang and Clang
+Lorang Lorang
+Lorang Lorang Lorang
+Magic Library
+Magician's Tree Dungeon
+Marr's Forest
+Monkey Forest I
+Monkey Forest II
+Monkey Swamp I
+Monkey Swamp II
+Monkey Swamp III
+Mushroom Garden
+Mushroom Town
+Mushroom Town - West Entrance
+Mushroom Town Townstreet
+Niora Hospital
+Northern Top of Construction Site
+Over the Wall
+Perion
+Perion Department Store
+Perion Dungeon Entrance
+Perion Street Corner
+Perion Weapon Store
+Pet-Walking Road
+Pig Park
+Pig Park II
+Regular Sauna
+Right Around Lith Harbor
+Rocky Road I
+Rocky Road II
+Rocky Road III
+Sanctuary Entrance I
+Sanctuary Entrance II
+Sanctuary Entrance III
+Sanctuary Entrance IV
+Sleepy Dungeon I
+Sleepy Dungeon II
+Sleepy Dungeon III
+Sleepy Dungeon IV
+Sleepy Dungeon V
+Sleepywood
+Sleepywood Hotel
+Snail Field of Flowers
+Snail Garden
+Snail Hunting Ground I
+Snail Hunting Ground II
+Snail Hunting Ground III
+Someone Else's House
+Southperry
+Southperry Armor Store
+Subway Ticketing Booth
+Sunset Sky
+Swampy Land in a Deep Forest
+The Blue Mushroom Forest
+The Breathing Rock
+The Burnt Land I
+The Burnt Land II
+The Burnt Land III
+The Burnt Land IV
+The Burnt Land V
+The Cave of Evil Eye I
+The Cave of Evil Eye II
+The Cave of Evil Eye III
+The Cave of Evil Eye IV
+The Cursed Sanctuary
+The Deep Forest of Patience (Step 1)
+The Deep Forest of Patience (Step 2)
+The Deep Forest of Patience (Step 3)
+The Deep Forest of Patience (Step 4)
+The Deep Forest of Patience (Step 5)
+The Deep Forest of Patience (Step 6)
+The Deep Forest of Patience (Step 7)
+The Entrance of Golem's Temple
+The Field East of Amherst
+The Field South of Ellinia
+The Field Up North of Ellinia
+The Field West of Amherst
+The Forest East of Henesys
+The Forest North of Ellinia
+The Forest of Evil I
+The Forest of Evil II
+The Forest of Patience (Step 1)
+The Forest of Patience (Step 2)
+The Forest of Patience (Step 3)
+The Forest of Patience (Step 4)
+The Forest of Patience (Step 5)
+The Forest of Wisdom
+The Forest South of Ellinia
+The Grave of Mushmom
+The Hill East of Henesys
+The Land of Wild Boar II
+The Pig Beach
+The Rain-Forest East of Henesys
+The Resting Spot, Pig Park
+The Road to the Dungeon
+The Swamp of Despair I
+The Swamp of Despair II
+The Swamp of Despair III
+The Tree That Grew I
+The Tree That Grew II
+The Tree That Grew III
+The Tree Tunnel At the Forest Up North
+The Tunnel That Lost Light I
+The Tunnel That Lost Light II
+Thicket Around the Beach I
+Thicket Around the Beach II
+Thicket Around the Beach III
+Thief's Construction Site
+Thieves' Hideout
+Tomato Field
+Transfer Area
+Tree Dungeon, Forest Up North I
+Tree Dungeon, Forest Up North II
+Tree Dungeon, Forest Up North III
+Tree Dungeon, Forest Up North IV
+Tree Dungeon, Forest Up North IX
+Tree Dungeon, Forest Up North V
+Tree Dungeon, Forest Up North VI
+Tree Dungeon, Forest Up North VII
+Tree Dungeon, Forest Up North VIII
+Tree Dungeon, Monkey Forest I
+Tree Dungeon, Monkey Forest II
+Truth Booth
+Utah's Pig Farm
+Victoria Road
+VIP Sauna
+Warrior's Rocky Mountain
+Warriors' Sanctuary
+West Domain of Perion
+West Rocky Mountain I
+West Rocky Mountain II
+West Rocky Mountain III
+West Rocky Mountain IV
+West Street Corner of Perion
+White Map
+White Map with Mob
+Wild Kargo's Area

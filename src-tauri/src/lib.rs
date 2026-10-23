@@ -90,6 +90,7 @@ pub fn run() {
             commands::get_live_chart,
             commands::save_snapshot,
             commands::reset_session,
+            commands::rename_map,
             commands::get_snapshots,
             commands::get_snapshot_chart,
             commands::rename_snapshot,

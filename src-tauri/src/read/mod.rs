@@ -3,6 +3,7 @@
 pub mod exp;
 pub mod font;
 pub mod level;
+pub mod map_names;
 pub mod map_strip;
 pub mod ocr;
 

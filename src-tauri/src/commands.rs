@@ -9,7 +9,7 @@ use crate::error::AppError;
 use crate::now_unix;
 use crate::pipeline::{AppState, Tick};
 use crate::rates::{self, Bar, MinuteRow};
-use crate::store::SnapshotRecord;
+use crate::store::{NamedBy, SnapshotRecord};
 
 type AppStateRef<'a> = State<'a, Arc<AppState>>;
 
@@ -85,6 +85,19 @@ pub fn reset_session(state: AppStateRef<'_>) -> Result<(), AppError> {
     state.end_session_requested.store(true, Ordering::Release);
     log::info!("reset: live view starts at {since}");
     Ok(())
+}
+
+/// The user names a map (one not on the map list, or one named wrongly). OCR never
+/// renames it after this.
+#[tauri::command(async)]
+pub fn rename_map(state: AppStateRef<'_>, map_id: i64, name: String) -> Result<(), AppError> {
+    let name = valid_name(&name)?;
+    if state.store.lock().expect("store lock poisoned").set_map_name(map_id, name, NamedBy::User)? {
+        log::info!("map #{map_id} named {name:?} by the user");
+        Ok(())
+    } else {
+        Err(AppError::NotFound(format!("map {map_id}")))
+    }
 }
 
 #[tauri::command(async)]

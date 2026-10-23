@@ -27,6 +27,9 @@ pub struct Boxes {
     pub map: Rect,
     /// The "LV." number.
     pub level: Rect,
+    /// Where the minimap's collapsed title bar shows its text: the game collapses the
+    /// minimap in shops (map_strip::is_collapsed_minimap).
+    pub bar: Rect,
 }
 
 /// The game's own resolution: its EXP font is drawn one screen pixel per font pixel
@@ -40,6 +43,7 @@ const NATIVE_BOXES: Boxes = Boxes {
     exp: Rect { x: 747, y: 738, w: 100, h: 10 },
     map: Rect { x: 46, y: 24, w: 243, h: 38 },
     level: Rect { x: 321, y: 740, w: 40, h: 21 },
+    bar: Rect { x: 46, y: 3, w: 120, h: 13 },
 };
 
 /// How far a screen's shape may be from the game's 16:9 (1366x768 itself is 0.04% off).
@@ -62,7 +66,12 @@ pub fn boxes_for(width: u32, height: u32) -> Option<Boxes> {
         let y1 = ((f64::from(r.y + r.h) * sy).ceil() as u32).min(height);
         Rect { x: x0, y: y0, w: x1.saturating_sub(x0), h: y1.saturating_sub(y0) }
     };
-    Some(Boxes { exp: scale(NATIVE_BOXES.exp), map: scale(NATIVE_BOXES.map), level: scale(NATIVE_BOXES.level) })
+    Some(Boxes {
+        exp: scale(NATIVE_BOXES.exp),
+        map: scale(NATIVE_BOXES.map),
+        level: scale(NATIVE_BOXES.level),
+        bar: scale(NATIVE_BOXES.bar),
+    })
 }
 
 pub fn resolution_key(width: u32, height: u32) -> String {

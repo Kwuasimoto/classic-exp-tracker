@@ -35,15 +35,20 @@ impl MapOcr {
         Ok(Self { engine: OcrEngine::TryCreateFromUserProfileLanguages()? })
     }
 
-    /// Most-voted normalized text across all strips and variants, title-cased.
-    /// `None` when OCR returns no text at all.
+    /// The map name: the most-voted normalized last line across all strips and variants,
+    /// title-cased. OCR reads the whole strip, which it reads far better than the name line
+    /// alone (measured 2026-10-22), but only the last line is the name: the first is the
+    /// street ("Victoria Road"), itself a map's name. A read with one line could be either,
+    /// so it doesn't vote. `None` when no read had both lines.
     pub fn label(&self, strips: &[Crop]) -> Result<Option<String>, OcrError> {
         let mut votes: HashMap<String, usize> = HashMap::new();
         for strip in strips {
             let img = strip.to_image();
             for (scale, filter) in VARIANTS {
                 let up = resize(&img, img.width() * scale, img.height() * scale, filter);
-                let text = numeral_to_number(&normalize(&self.recognize(&up)?));
+                let lines = self.recognize(&up)?;
+                let [.., _, name] = &lines[..] else { continue };
+                let text = numeral_to_number(&normalize(name));
                 if !text.is_empty() {
                     *votes.entry(text).or_default() += 1;
                 }
@@ -55,7 +60,8 @@ impl MapOcr {
             .map(|(text, _)| title_case(&text)))
     }
 
-    fn recognize(&self, img: &image::RgbaImage) -> Result<String, OcrError> {
+    /// The lines of text OCR finds, top to bottom.
+    fn recognize(&self, img: &image::RgbaImage) -> Result<Vec<String>, OcrError> {
         let mut bgra = img.as_raw().clone();
         for px in bgra.chunks_exact_mut(4) {
             px.swap(0, 2);
@@ -65,7 +71,8 @@ impl MapOcr {
         let width = i32::try_from(img.width()).map_err(|_| OcrError::TooLarge)?;
         let height = i32::try_from(img.height()).map_err(|_| OcrError::TooLarge)?;
         let bitmap = SoftwareBitmap::CreateCopyFromBuffer(&writer.DetachBuffer()?, BitmapPixelFormat::Bgra8, width, height)?;
-        Ok(self.engine.RecognizeAsync(&bitmap)?.join()?.Text()?.to_string_lossy())
+        let lines = self.engine.RecognizeAsync(&bitmap)?.join()?.Lines()?;
+        Ok(lines.into_iter().map(|line| line.Text().map(|t| t.to_string_lossy())).collect::<Result<_, _>>()?)
     }
 }
 
@@ -141,6 +148,6 @@ mod tests {
     fn labels_the_fixture() {
         let ocr = MapOcr::new().expect("Windows OCR available");
         let label = ocr.label(&[fixture("map_victoria_road_perion.png")]).expect("OCR runs");
-        assert_eq!(label.as_deref(), Some("Victoria Road Perion"));
+        assert_eq!(label.as_deref(), Some("Perion"), "the name line only, not the street above it");
     }
 }
