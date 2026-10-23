@@ -74,7 +74,8 @@ pub fn run() {
             store.close_open_sessions()?;
             store.prune(rates::keep_from(now_unix()))?;
             let live_since = store.live_since()?;
-            let state = Arc::new(pipeline::AppState::new(store, live_since));
+            let locked_map = store.locked_map()?;
+            let state = Arc::new(pipeline::AppState::new(store, live_since, locked_map));
             app.manage(Arc::clone(&state));
             pipeline::spawn(app.handle().clone(), state)?;
             // The window starts hidden (tauri.conf.json) so it doesn't flash on the game's monitor.
@@ -91,6 +92,8 @@ pub fn run() {
             commands::save_snapshot,
             commands::reset_session,
             commands::rename_map,
+            commands::lock_map,
+            commands::unlock_map,
             commands::get_snapshots,
             commands::get_snapshot_chart,
             commands::rename_snapshot,

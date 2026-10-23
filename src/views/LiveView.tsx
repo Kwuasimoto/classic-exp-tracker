@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RateChart } from "../components/RateChart";
 import { formatDateTime, formatHours, formatPct } from "../lib/format";
-import { getLiveChart, renameMap, resetSession, saveSnapshot, WINDOWS_MINUTES, type AppError, type Bar, type Tick, type WindowMinutes } from "../lib/ipc";
+import { getLiveChart, lockMap, renameMap, resetSession, saveSnapshot, unlockMap, WINDOWS_MINUTES, type AppError, type Bar, type Tick, type WindowMinutes } from "../lib/ipc";
 import { expToLevel, liveRates } from "../lib/live";
 
 const TOAST_MS = 3000;
@@ -51,6 +51,15 @@ export function LiveView({ tick }: { tick: Tick | null }) {
     setToast("Map renamed");
   };
 
+  const toggleLock = async () => {
+    if (!tick) return;
+    const res = tick.lockedMap !== null ? await unlockMap() : tick.mapId !== null ? await lockMap(tick.mapId) : null;
+    if (res === null) return;
+    if (!res.success) return setError(res.error);
+    setToast(tick.lockedMap !== null ? "Unlocked: every map counts" : "Locked: only this map counts");
+    void refreshChart();
+  };
+
   const reset = async () => {
     const res = await resetSession();
     if (!res.success) return setError(res.error);
@@ -66,6 +75,10 @@ export function LiveView({ tick }: { tick: Tick | null }) {
   const rates = liveRates(bars, tick);
   const toLevel = expToLevel(tick);
   const level = tick?.level ?? null;
+  const locked = tick?.lockedMap != null;
+  const lockedName = tick?.lockedName ?? "the locked map";
+  // Locked, but somewhere else: the EXP here isn't counted.
+  const away = locked && (tick.shopping || tick.mapId !== tick.lockedMap);
 
   return (
     <>
@@ -104,8 +117,23 @@ export function LiveView({ tick }: { tick: Tick | null }) {
                   </svg>
                 </button>
               )}
+              {(locked || (tick?.mapId != null && !tick.shopping)) && (
+                <button
+                  className={locked ? "icon-btn current" : "icon-btn"}
+                  aria-label={locked ? "Unlock map" : "Lock to this map"}
+                  aria-pressed={locked}
+                  title={locked ? `Locked to ${lockedName}: only its EXP counts. Click to count every map.` : "Lock to this map: count only its EXP and time"}
+                  onClick={() => void toggleLock()}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill={locked ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <rect x="5" y="11" width="14" height="10" rx="2" />
+                    <path d={locked ? "M8 11V7a4 4 0 0 1 8 0v4" : "M8 11V7a4 4 0 0 1 7.5-2"} />
+                  </svg>
+                </button>
+              )}
             </div>
           )}
+          {away && <div className="caption">Locked to {lockedName}: EXP here isn't counted</div>}
         </div>
         <div className={level === null ? "badge pending" : "badge"} title={level === null ? "Narrowing down your level from the EXP readings" : undefined}>
           LV. {level ?? "Determining…"}
@@ -115,7 +143,7 @@ export function LiveView({ tick }: { tick: Tick | null }) {
       {toast && <div className="toast" role="status">{toast}</div>}
 
       <div className="stats">
-        <Stat label="EXP / hr" accent value={rates.expPerHour === null ? "—" : whole(rates.expPerHour)} caption="last 60 min of training" />
+        <Stat label="EXP / hr" accent value={rates.expPerHour === null ? "—" : whole(rates.expPerHour)} caption={locked ? `last 60 min on ${lockedName}` : "last 60 min of training"} />
         <Stat label="% / hr" value={rates.pctPerHour === null ? "—" : `${rates.pctPerHour.toFixed(2)}%`} caption={level === null ? "of this level" : `of level ${level}`} />
         <Stat label="Time to level" value={rates.hoursToLevel === null ? "—" : formatHours(rates.hoursToLevel)} caption="at the current rate" />
         <Stat

@@ -38,8 +38,9 @@ fn valid_window(window_minutes: u32) -> Result<(), AppError> {
 /// the store lock: the pipeline swaps it for the stored row under the same lock.
 fn live_rows(state: &AppState, from: i64, to: i64) -> Result<Vec<MinuteRow>, AppError> {
     let since = *state.live_since.read().expect("live since lock poisoned");
+    let locked = *state.locked_map.read().expect("locked map lock poisoned");
     let store = state.store.lock().expect("store lock poisoned");
-    let mut rows = store.minutes_between(from.max(since), to)?;
+    let mut rows = store.minutes_between(from.max(since), to, locked)?;
     rows.extend(*state.live_minute.read().expect("live minute lock poisoned"));
     Ok(rows)
 }
@@ -69,7 +70,9 @@ pub fn save_snapshot(state: AppStateRef<'_>, name: String, window_minutes: u32) 
     let tick = state.live.read().expect("live lock poisoned").clone();
     let rows = live_rows(&state, first, now)?;
     let store = state.store.lock().expect("store lock poisoned");
-    let id = if rows.is_empty() { None } else { Some(store.create_snapshot(name, now, tick.map_name.as_deref(), tick.level, &rows)?) };
+    // Locked, the snapshot is the locked map's, wherever the player is now.
+    let map_name = if tick.locked_map.is_some() { tick.locked_name } else { tick.map_name };
+    let id = if rows.is_empty() { None } else { Some(store.create_snapshot(name, now, map_name.as_deref(), tick.level, &rows)?) };
     log::info!("snapshot {id:?} saved with {} minute(s)", rows.len());
     Ok(id)
 }
@@ -98,6 +101,27 @@ pub fn rename_map(state: AppStateRef<'_>, map_id: i64, name: String) -> Result<(
     } else {
         Err(AppError::NotFound(format!("map {map_id}")))
     }
+}
+
+/// Count only `map_id` in the live view (its chart, rates and snapshots) until unlocked.
+#[tauri::command(async)]
+pub fn lock_map(state: AppStateRef<'_>, map_id: i64) -> Result<(), AppError> {
+    let store = state.store.lock().expect("store lock poisoned");
+    if !store.has_map(map_id)? {
+        return Err(AppError::NotFound(format!("map {map_id}")));
+    }
+    store.set_locked_map(Some(map_id))?;
+    *state.locked_map.write().expect("locked map lock poisoned") = Some(map_id);
+    log::info!("map locked: the live view counts only map #{map_id}");
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn unlock_map(state: AppStateRef<'_>) -> Result<(), AppError> {
+    state.store.lock().expect("store lock poisoned").set_locked_map(None)?;
+    *state.locked_map.write().expect("locked map lock poisoned") = None;
+    log::info!("map unlocked: the live view counts every map");
+    Ok(())
 }
 
 #[tauri::command(async)]

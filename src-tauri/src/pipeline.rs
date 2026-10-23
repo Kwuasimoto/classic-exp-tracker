@@ -54,6 +54,9 @@ pub struct Tick {
     pub map_name: Option<String>,
     /// In a shop (the minimap is collapsed): shown instead of the map.
     pub shopping: bool,
+    /// The map the live view counts alone, and its name (`None` while unnamed).
+    pub locked_map: Option<i64>,
+    pub locked_name: Option<String>,
     pub exp: Option<u64>,
     pub pct_bp: Option<u32>,
     pub total_est: Option<u64>,
@@ -63,7 +66,14 @@ pub struct Tick {
 
 impl Default for Tick {
     fn default() -> Self {
-        Self { status: ReaderStatus::Starting, map_id: None, map_name: None, shopping: false, exp: None, pct_bp: None, total_est: None, level: None }
+        Self {
+            status: ReaderStatus::Starting,
+            map_id: None,
+            map_name: None,
+            shopping: false,
+            locked_map: None,
+            locked_name: None,
+            exp: None, pct_bp: None, total_est: None, level: None }
     }
 }
 
@@ -76,6 +86,8 @@ pub struct AppState {
     pub live_minute: RwLock<Option<MinuteRow>>,
     /// Where the live view starts (unix seconds); moved forward by a reset. Also in the database.
     pub live_since: RwLock<i64>,
+    /// The map the live view counts alone (the user locked it); also in the database.
+    pub locked_map: RwLock<Option<MapId>>,
     /// Set by commands, handled by the pipeline thread on its next loop.
     pub end_session_requested: AtomicBool,
     shutdown: AtomicBool,
@@ -83,13 +95,14 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(store: Store, live_since: i64) -> Self {
+    pub fn new(store: Store, live_since: i64, locked_map: Option<MapId>) -> Self {
         Self {
             store: Mutex::new(store),
             capture: Arc::new(Shared::default()),
             live: RwLock::new(Tick::default()),
             live_minute: RwLock::new(None),
             live_since: RwLock::new(live_since),
+            locked_map: RwLock::new(locked_map),
             end_session_requested: AtomicBool::new(false),
             shutdown: AtomicBool::new(false),
             thread: Mutex::new(None),
@@ -335,6 +348,19 @@ impl Pipeline {
         }
     }
 
+    /// A map's name for the UI; `None` without a map, while it has no name, or on a
+    /// storage error (logged).
+    fn name_of(&mut self, map: Option<MapId>) -> Option<String> {
+        let found = self.state.store.lock().expect("store lock poisoned").map_name(map?);
+        match found {
+            Ok(name) => name.map(|(name, _)| name),
+            Err(e) => {
+                self.storage_failed("loading a map name", e);
+                None
+            }
+        }
+    }
+
     fn storage_failed(&mut self, doing: &str, e: impl Display) {
         error!("database error while {doing}: {e}");
         self.storage_error = Some(e.to_string());
@@ -384,6 +410,12 @@ impl Pipeline {
                 Some(other) if other != id => {
                     store.move_looks(id, other)?;
                     info!("unrecognised map #{id} reads as {name:?} (OCR {ocr:?}): it is map #{other}");
+                    let mut locked = self.state.locked_map.write().expect("locked map lock poisoned");
+                    if *locked == Some(id) {
+                        store.set_locked_map(Some(other))?;
+                        *locked = Some(other);
+                        info!("map lock moved to map #{other} with its looks");
+                    }
                     (other, true)
                 }
                 _ => {
@@ -473,7 +505,8 @@ impl Pipeline {
             }
             done += 1;
         }
-        *self.state.live_minute.write().expect("live minute lock poisoned") = self.tracker.current_minute();
+        let locked = *self.state.locked_map.read().expect("locked map lock poisoned");
+        *self.state.live_minute.write().expect("live minute lock poisoned") = self.tracker.current_minute(locked);
         // Only the live chart reads stored minutes: delete those it can no longer show.
         let saved_minute = self.pending[..done].iter().any(|e| matches!(e, Effect::Minute { .. }));
         let pruned = if saved_minute { store.prune(rates::keep_from(crate::now_unix())) } else { Ok(()) };
@@ -491,15 +524,9 @@ impl Pipeline {
     }
 
     fn publish(&mut self, reader: ReaderStatus) {
-        let found = self.current_map.map(|id| self.state.store.lock().expect("store lock poisoned").map_name(id));
-        let map_name = match found {
-            Some(Ok(name)) => name.map(|(name, _)| name),
-            Some(Err(e)) => {
-                self.storage_failed("loading the map name", e);
-                None
-            }
-            None => None,
-        };
+        let locked_map = *self.state.locked_map.read().expect("locked map lock poisoned");
+        let map_name = self.name_of(self.current_map);
+        let locked_name = self.name_of(locked_map);
         let status = if let Some(e) = &self.capture_error {
             ReaderStatus::CaptureFailed(e.clone())
         } else if let Some(e) = &self.storage_error {
@@ -515,6 +542,8 @@ impl Pipeline {
             map_id: self.current_map,
             map_name,
             shopping: self.shopping,
+            locked_map,
+            locked_name,
             exp: baseline.map(|r| r.exp),
             pct_bp: baseline.map(|r| r.pct_bp),
             total_est: self.tracker.total_estimate(),

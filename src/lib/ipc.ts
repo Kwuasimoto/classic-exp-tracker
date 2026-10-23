@@ -28,6 +28,8 @@ export const TickSchema = z.object({
   mapId: z.number().int().nullable(),
   mapName: z.string().nullable(),
   shopping: z.boolean(),
+  lockedMap: z.number().int().nullable(),
+  lockedName: z.string().nullable(),
   exp: count.nullable(),
   pctBp: count.nullable(),
   totalEst: count.nullable(),
@@ -76,6 +78,9 @@ export const getLiveSnapshot = () => call("get_live_snapshot", TickSchema);
 export const getLiveChart = (windowMinutes: WindowMinutes) => call("get_live_chart", z.array(BarSchema), { windowMinutes });
 /** Saves what the live chart shows as a snapshot: its id, or null if there was nothing to save. */
 export const saveSnapshot = (name: string, windowMinutes: WindowMinutes) => call("save_snapshot", z.number().int().nullable(), { name, windowMinutes });
+/** Counts only this map in the live view (chart, rates, snapshots) until unlocked. */
+export const lockMap = (mapId: number) => call("lock_map", z.null(), { mapId });
+export const unlockMap = () => call("unlock_map", z.null());
 /** Names a map; OCR never renames it after this. */
 export const renameMap = (mapId: number, name: string) => call("rename_map", z.null(), { mapId, name });
 /** Ends the session and starts the live view afresh; saves nothing. */

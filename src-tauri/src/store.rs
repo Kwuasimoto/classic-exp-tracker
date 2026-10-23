@@ -329,6 +329,10 @@ impl Store {
         })
     }
 
+    pub fn has_map(&self, id: MapId) -> Result<bool, StoreError> {
+        Ok(self.conn.query_row("SELECT 1 FROM maps WHERE id = ?1", [id], |_| Ok(())).optional()?.is_some())
+    }
+
     /// The map with this name, if one has it.
     pub fn map_by_name(&self, name: &str) -> Result<Option<MapId>, StoreError> {
         Ok(self.conn.query_row("SELECT id FROM maps WHERE name = ?1 ORDER BY id LIMIT 1", [name], |r| r.get(0)).optional()?)
@@ -415,13 +419,16 @@ impl Store {
         Ok(())
     }
 
-    /// Minute totals across all sessions, `from` inclusive to `to` exclusive.
-    pub fn minutes_between(&self, from: i64, to: i64) -> Result<Vec<MinuteRow>, StoreError> {
+    /// Minute totals, `from` inclusive to `to` exclusive: across all sessions, or only the
+    /// sessions on `map` (the map the live view is locked to).
+    pub fn minutes_between(&self, from: i64, to: i64, map: Option<MapId>) -> Result<Vec<MinuteRow>, StoreError> {
         let mut stmt = self.conn.prepare(
-            "SELECT minute_start, SUM(exp_gained), SUM(training_secs) FROM minutes
-             WHERE minute_start >= ?1 AND minute_start < ?2 GROUP BY minute_start ORDER BY minute_start",
+            "SELECT m.minute_start, SUM(m.exp_gained), SUM(m.training_secs)
+             FROM minutes m JOIN sessions s ON s.id = m.session_id
+             WHERE m.minute_start >= ?1 AND m.minute_start < ?2 AND (?3 IS NULL OR s.map_id = ?3)
+             GROUP BY m.minute_start ORDER BY m.minute_start",
         )?;
-        let rows = stmt.query_map(params![from, to], minute_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let rows = stmt.query_map(params![from, to, map], minute_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
 
@@ -451,6 +458,22 @@ impl Store {
     /// Where the live view starts (unix seconds); 0 until the first reset.
     pub fn live_since(&self) -> Result<i64, StoreError> {
         Ok(self.conn.query_row("SELECT value FROM settings WHERE key = 'live_since'", [], |r| r.get(0)).optional()?.unwrap_or(0))
+    }
+
+    /// The map the live view is locked to, if any.
+    pub fn locked_map(&self) -> Result<Option<MapId>, StoreError> {
+        Ok(self.conn.query_row("SELECT value FROM settings WHERE key = 'locked_map'", [], |r| r.get(0)).optional()?)
+    }
+
+    pub fn set_locked_map(&self, map: Option<MapId>) -> Result<(), StoreError> {
+        match map {
+            Some(id) => self.conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('locked_map', ?1) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                [id],
+            )?,
+            None => self.conn.execute("DELETE FROM settings WHERE key = 'locked_map'", [])?,
+        };
+        Ok(())
     }
 
     pub fn set_live_since(&self, t: i64) -> Result<(), StoreError> {
@@ -547,7 +570,7 @@ mod tests {
         let store = Store::init(conn).unwrap();
         let map_id: Option<i64> = store.conn.query_row("SELECT map_id FROM sessions", [], |r| r.get(0)).unwrap();
         assert_eq!(map_id, None);
-        assert_eq!(store.minutes_between(0, 60).unwrap().len(), 1);
+        assert_eq!(store.minutes_between(0, 60, None).unwrap().len(), 1);
         assert!(store.maps().unwrap().is_empty());
 
         // A second look of a named map belongs to the same map.
@@ -555,6 +578,19 @@ mod tests {
         let id = store.insert_map(Some(("Perion", NamedBy::List)), &look(1), 0).unwrap();
         store.add_signature(store.map_by_name("Perion").unwrap().unwrap(), &look(2)).unwrap();
         assert_eq!(store.maps().unwrap().iter().map(|m| m.id).collect::<Vec<_>>(), [id, id]);
+    }
+
+    #[test]
+    fn a_locked_map_counts_only_its_own_sessions() {
+        let store = Store::open_in_memory().unwrap();
+        let look = Signature { counts: vec![1], cut: false };
+        let (field, town) = (store.insert_map(Some(("Field", NamedBy::List)), &look, 0).unwrap(), store.insert_map(None, &look, 0).unwrap());
+        for (map, exp) in [(field, 100), (town, 900)] {
+            let session = store.start_session(Some(map), 0).unwrap();
+            store.add_minute(0, session, exp, 60).unwrap();
+        }
+        assert_eq!(store.minutes_between(0, 60, None).unwrap()[0].exp_gained, 1_000);
+        assert_eq!(store.minutes_between(0, 60, Some(field)).unwrap()[0].exp_gained, 100);
     }
 
     #[test]
@@ -571,7 +607,7 @@ mod tests {
 
         store.prune(3_000).unwrap();
 
-        assert_eq!(store.minutes_between(0, 10_000).unwrap(), [MinuteRow { minute_start: 6_000, exp_gained: 50, training_secs: 60 }]);
+        assert_eq!(store.minutes_between(0, 10_000, None).unwrap(), [MinuteRow { minute_start: 6_000, exp_gained: 50, training_secs: 60 }]);
         let sessions: i64 = store.conn.query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0)).unwrap();
         assert_eq!(sessions, 1);
         assert_eq!(store.snapshot_minutes(snapshot).unwrap(), [MinuteRow { minute_start: 0, exp_gained: 200, training_secs: 120 }]);

@@ -36,6 +36,7 @@ There's nothing to calibrate: the app knows where the game draws EXP, the map na
 ## Use
 
 - **Live** shows your EXP/hr over the last 60 minutes of training, %/hr, time to level and EXP to level, with a chart of EXP per 10 minutes. Time in town or AFK doesn't lower the rate.
+- The **lock** next to the map name pins the live view to that map: while it's locked, the chart, EXP/hr, %/hr, time to level and saved snapshots count only EXP and training time on that map, so repot trips and quest turn-ins elsewhere don't touch the average. Everything is still recorded; unlocking counts every map again. The lock stays on across restarts and resets until you unlock it.
 - The **save** button left of 2H/3H saves what the chart shows to History as a snapshot. The **reset** button next to it starts a new session and saves nothing.
 - Only one copy of the app runs at a time; opening it again brings the open window forward.
 - The map's name comes from a list of the game's map names. A map not on that list shows as **Unrecognised map** and is still tracked; the pencil next to the name lets you name it (or rename any map), and the app never asks you to.

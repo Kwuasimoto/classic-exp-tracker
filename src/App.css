@@ -118,6 +118,7 @@ tr.selected td { background: rgba(255, 255, 255, 0.1); }
 /* Round icon-only button (e.g. the chart's reset). */
 .icon-btn { width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 999px; background: var(--inset); color: #b5b5b9; cursor: pointer; }
 .icon-btn:hover { background: #333338; color: var(--text); }
+.icon-btn.current { color: var(--accent); }
 
 /* Toast: floats over the window, takes no layout space, fades on its own (LiveView). */
 .toast {

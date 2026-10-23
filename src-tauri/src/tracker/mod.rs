@@ -278,10 +278,15 @@ impl Tracker {
         }
     }
 
-    /// The minute in progress (not yet flushed as `Minute` effects), summed over
-    /// sessions, so live rates can count it before it ends.
-    pub fn current_minute(&self) -> Option<MinuteRow> {
+    /// The minute in progress (not yet flushed as `Minute` effects), so live rates can
+    /// count it before it ends. With `map` (the live view is locked to it), only while the
+    /// open session is on that map: a session that ended mid-minute has already flushed
+    /// its part as a `Minute` effect, so the minute in progress is the open session's.
+    pub fn current_minute(&self, map: Option<MapId>) -> Option<MinuteRow> {
         let minute_start = self.minute?;
+        if map.is_some() && self.session.map(|s| s.map) != Some(map) {
+            return None;
+        }
         let (exp_gained, training_secs) = self.acc.values().fold((0, 0), |(e, s), &(de, ds)| (e + de, s + ds));
         (exp_gained > 0 || training_secs > 0).then_some(MinuteRow { minute_start, exp_gained, training_secs })
     }
@@ -347,10 +352,22 @@ mod tests {
         let mut tr = Tracker::new();
         tr.on_sample(Sample { t: 60, exp: reading(10_000, 1_000), map: MAP });
         tr.on_sample(Sample { t: 61, exp: reading(10_050, 1_005), map: MAP });
-        assert_eq!(tr.current_minute(), Some(MinuteRow { minute_start: 60, exp_gained: 50, training_secs: 1 }));
+        assert_eq!(tr.current_minute(None), Some(MinuteRow { minute_start: 60, exp_gained: 50, training_secs: 1 }));
         let fx = tr.on_sample(Sample { t: 120, exp: None, map: TOWN });
         assert_eq!(total_exp(&fx), 50);
-        assert_eq!(tr.current_minute(), None);
+        assert_eq!(tr.current_minute(None), None);
+    }
+
+    #[test]
+    fn a_locked_map_counts_only_its_own_gains_in_the_minute() {
+        let mut tr = Tracker::new();
+        tr.on_sample(Sample { t: 60, exp: reading(10_000, 1_000), map: MAP });
+        tr.on_sample(Sample { t: 61, exp: reading(10_050, 1_005), map: MAP });
+        assert_eq!(tr.current_minute(MAP).map(|m| m.exp_gained), Some(50));
+        // A quest turned in on another map: that session's EXP isn't counted while locked.
+        tr.on_sample(Sample { t: 62, exp: reading(10_950, 1_095), map: TOWN });
+        assert_eq!(tr.current_minute(None).map(|m| m.exp_gained), Some(900));
+        assert_eq!(tr.current_minute(MAP), None);
     }
 
     #[test]
