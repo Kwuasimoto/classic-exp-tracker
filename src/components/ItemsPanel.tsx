@@ -126,7 +126,7 @@ export function ItemsPanel({
       {shown.length === 0 ? (
         <p className="caption">{tab === "ignored" ? "No ignored items." : "No items seen in this tab yet."}</p>
       ) : (
-        <Scroller className="item-grid">
+        <Scroller className="item-grid" label="Items">
           {shown.map((i) => (
             <button
               key={i.id}

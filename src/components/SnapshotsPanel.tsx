@@ -108,14 +108,14 @@ export function SnapshotsPanel({ onError }: { onError: (e: AppError) => void }) 
                         }}
                       />
                     ) : (
-                      <>
+                      <button className="row-open" aria-pressed={s.id === selected} title={s.id === selected ? "Hide its chart" : "Show its chart"}>
                         <span className="cut" title={s.name}>{s.name}</span>
                         {s.auto ? (
                           <span className="cut caption">Auto · deleted after {formatDay(s.createdAt + KEEP_AUTO_SECS)}</span>
                         ) : (
                           <span className="cut caption" title={s.mapName ?? undefined}>{s.mapName ?? "No map"}</span>
                         )}
-                      </>
+                      </button>
                     )}
                   </td>
                   <td className="opt">{s.level ?? "—"}</td>

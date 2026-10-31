@@ -10,7 +10,7 @@ export function HistoryView({ status }: { status: ReactNode }) {
     <>
       <section className="panel page-head">
         <div className="page-head-main">
-          <span className="page-title">History</span>
+          <h1 className="page-title">History</h1>
         </div>
         {status}
       </section>

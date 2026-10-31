@@ -46,7 +46,7 @@ export function TranslatorView({ status: readerStatus }: { status: ReactNode }) 
     <>
       <section className="panel page-head">
         <div className="page-head-main">
-          <span className="page-title">Chat translator</span>
+          <h1 className="page-title">Chat translator</h1>
           <span className={enabled ? "ok-text translator-state" : "caption translator-state"}>{enabled ? "On" : "Off"}</span>
         </div>
         <div className="page-head-actions">

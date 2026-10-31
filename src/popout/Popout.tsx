@@ -48,7 +48,7 @@ export function Popout() {
   const { tick, error } = useTick();
   const [bars, setBars] = useState<Bar[]>([]);
   const [problem, setProblem] = useState<string | null>(null);
-  const root = useRef<HTMLDivElement>(null);
+  const root = useRef<HTMLElement>(null);
   // Chart requests go out every second and can finish out of order: keep only the newest.
   const latestRequest = useRef(0);
 
@@ -104,7 +104,8 @@ export function Popout() {
   };
 
   return (
-    <div ref={root} className={ok ? "popout" : "popout stale"} onMouseDown={drag}>
+    <main ref={root} className={ok ? "popout" : "popout stale"} onMouseDown={drag}>
+      <h1 className="sr-only">Classic EXP Tracker rates</h1>
       <span className="dot" title={ok ? "Reading OK" : (warning ?? "Starting…")} />
       <Ring pct={tick?.pctBp == null ? null : tick.pctBp / 100} pctPerHour={rates.pctPerHour} grindSecs={tick?.grindSecs ?? 0} />
       <div className="side">
@@ -132,6 +133,6 @@ export function Popout() {
       <button className="close" aria-label="Close the popout" title="Close" onClick={() => void getCurrentWindow().close().catch((e: unknown) => setProblem(`window: ${String(e)}`))}>
         ✕
       </button>
-    </div>
+    </main>
   );
 }

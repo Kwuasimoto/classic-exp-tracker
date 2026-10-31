@@ -10,7 +10,7 @@
   --meso: #f5c542;
   --ok: #51bb86;
   --warn: #f0a04b;
-  --bar: #55555d;
+  --bar: #66666e;
   /* The ledger column; the compressed window is sized from it (lib/windowSize.ts). */
   --ledger-width: 290px;
   --shadow: 0 7px 8px -4px rgba(0, 0, 0, 0.4), 0 12px 17px 2px rgba(0, 0, 0, 0.28), 0 5px 22px 4px rgba(0, 0, 0, 0.24);
@@ -28,8 +28,11 @@ body {
 }
 button, input, select { font: inherit; color: inherit; }
 :focus { outline: none; }
-/* Keyboard focus: a white ring inside the control (orange is reserved for EXP/hr). */
+/* Keyboard focus: a white ring inside the control (orange is reserved for EXP/hr); outside it on
+   light controls, where a ring inside would vanish. */
 :focus-visible { outline: 2px solid rgba(255, 255, 255, 0.75); outline-offset: -2px; }
+.btn.primary:focus-visible, .btn.current:focus-visible, .segmented button.current:focus-visible, .item-tab.current:focus-visible,
+.item-slot:focus-visible, .pot-pick:focus-visible { outline-offset: 2px; }
 
 /* Layout: title bar, then the rail + content, docked edge to edge on one ground and split by
    1 px hairlines. */
@@ -62,6 +65,7 @@ button, input, select { font: inherit; color: inherit; }
 /* Type. */
 .label { font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
 .label.accent { color: var(--accent); }
+h1.label { margin: 0; }
 .label.meso { color: var(--meso); }
 .caption { font-size: 12px; color: var(--muted); }
 h1 { margin: 2px 0 0; font-size: 28px; font-weight: 700; line-height: 1.1; }
@@ -106,6 +110,8 @@ table.snapshots { table-layout: fixed; }
 /* Narrow windows keep the name readable: level and training time go. */
 @media (max-width: 1040px) { table.snapshots .opt { display: none; } }
 .cut { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A History row's name: the button that opens it, looking like the text it is. */
+.row-open { display: block; width: 100%; min-width: 0; padding: 0; border: 0; background: none; text-align: left; cursor: pointer; }
 th.num, td.num { text-align: right; }
 th.meso { color: var(--meso); }
 .row-actions { display: flex; justify-content: flex-end; gap: 6px; }
@@ -129,6 +135,7 @@ tr.selected td { background: rgba(255, 255, 255, 0.1); }
   animation: toast-in 0.15s ease-out;
 }
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 8px); } }
+@media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
 
 /* Items panel (Mesos): laid out like the game's inventory, tabs over a grid of item squares. */
 .item-tabs { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 6px 4px; margin-bottom: 8px; }
@@ -313,3 +320,16 @@ code.path { word-break: break-all; }
 .compressed table.downloads tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .compressed table.downloads td { padding: 0; border: 0; min-width: 0; }
 .compressed table.downloads td:first-child { grid-column: 1 / -1; color: var(--muted); font-size: 12px; }
+
+/* Windows high contrast (forced colors): the system draws text and plain backgrounds itself, so
+   what a background alone showed gets a border: controls are outlined and the selected one is
+   in the system's highlight colours. */
+@media (forced-colors: active) {
+  .btn, .icon-btn, .rail-btn, .segmented button, .item-tab, .legend-key, .pot-line, input, select, .chat-target { border: 1px solid ButtonText; }
+  .segmented button.current, .rail-btn.current, .item-tab.current, .btn.current, .pot-pick.current, .item-slot.current, tr.selected td {
+    forced-color-adjust: none; background: Highlight; color: HighlightText;
+  }
+  .progress { border: 1px solid CanvasText; }
+  .progress > span { forced-color-adjust: none; background: Highlight; }
+  .panel.notice, .translator-empty { border: 1px solid CanvasText; }
+}

@@ -66,3 +66,5 @@ body { font-family: "Titillium Web", system-ui, sans-serif; color: var(--text); 
 .popout:hover .close, .close:focus-visible { opacity: 1; }
 .close:hover { background: #c42b1c; color: #ffffff; }
 .close:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Read by screen readers only. */
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

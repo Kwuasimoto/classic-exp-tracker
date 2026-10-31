@@ -17,7 +17,8 @@
         "height": 760,
         "visible": false,
         "decorations": false,
-        "shadow": false
+        "shadow": false,
+        "zoomHotkeysEnabled": true
       }
     ],
     "security": {

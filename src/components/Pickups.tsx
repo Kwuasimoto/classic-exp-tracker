@@ -8,7 +8,7 @@ export function Pickups({ pickedUp }: { pickedUp: PickedUp[] }) {
   return (
     <>
       <div className="label ledger-heading">Picked up</div>
-      <Scroller className="pickups">
+      <Scroller className="pickups" label="Picked up">
         {pickedUp.length === 0 ? (
           <p className="caption">Etc you pick up this session shows here, most valuable first.</p>
         ) : (

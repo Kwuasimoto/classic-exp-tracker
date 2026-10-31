@@ -76,7 +76,7 @@ export function MesoView({ tick, status }: { tick: Tick | null; status: ReactNod
     <>
       <section className="panel page-head">
         <div className="page-head-main">
-          <span className="label">Meso tracking</span>
+          <h1 className="label">Meso tracking</h1>
           <span className={why ? "page-title warn" : "page-title"} title={on ? (why ?? undefined) : "Reads the inventory's meso total, Etc stacks and quickslot potions. Uses more processing than EXP tracking."}>
             {on ? (why ?? "Counting") : "Off"}
           </span>

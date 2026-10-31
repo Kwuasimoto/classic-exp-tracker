@@ -147,7 +147,12 @@ export function RateChart({ series, fill = false, actions }: { series: Series; f
         {empty && <p className="chart-empty caption">Nothing recorded in this window yet</p>}
         {hasRoom && (
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={data} margin={{ top: 8, right: 4, bottom: 0, left: 4 }}>
+            <ComposedChart
+              data={data}
+              margin={{ top: 8, right: 4, bottom: 0, left: 4 }}
+              title={`Chart: ${[series.barLabel, series.lineLabel, series.second?.label].filter(Boolean).join(", ")}`}
+              desc="Each bar is 10 minutes. With the chart focused, the left and right arrow keys read each bar."
+            >
               <CartesianGrid vertical={false} stroke="var(--line)" />
               <XAxis
                 dataKey="start"

@@ -25,7 +25,7 @@ one solid ground, split by 1 px hairlines, in the Nexon launcher's black, white 
 | `--meso` | `#f5c542` | Profit/hr (Mesos page): its label and the rate line, as orange is for EXP/hr |
 | `--ok` | `#51bb86` | "Reading OK" |
 | `--warn` | `#f0a04b` | Reader problems, errors |
-| `--bar` | `#55555d` | EXP-per-10-min bars |
+| `--bar` | `#66666e` | EXP-per-10-min bars (3.3:1 on the ground, the minimum for graphics is 3:1) |
 
 Orange means "EXP/hr" and nothing else, so the eye can find the rate anywhere; meso gold
 means "Profit/hr" the same way.
@@ -47,6 +47,18 @@ Titillium Web (bundled from `@fontsource/titillium-web`, open licence), tabular 
   hairlines (the ledger's right edge, between stacked panels). 12×14 px inside.
 - Shadow: only the toast floats, with the MapleStory shadow (`--shadow`: `0 7px 8px -4px`,
   `0 12px 17px 2px`, `0 5px 22px 4px` in black at 40 / 28 / 24 %).
+
+## Accessibility
+
+- Keyboard: everything clickable is a button or link (a History row's name is its button); a
+  scroller that overflows takes focus. The focus ring is white, inside a control, and outside light
+  ones (primary and selected buttons, item squares), where a ring inside would vanish.
+- Every page has one heading (`h1`); icon-only buttons have an `aria-label`; the chart has a title
+  and description, and its arrow keys read each bar.
+- Contrast: text at least 4.5:1 (grey text is 6.4–7.3:1), graphics at least 3:1.
+- Windows high contrast (`forced-colors`): controls get a border, the selected one the system
+  highlight colours. Reduced motion: the toast doesn't slide. Ctrl +/− zooms (`zoomHotkeysEnabled`).
+- Checked with axe-core (WCAG 2.2 AA) on every page; keep it at zero violations.
 
 ## Components
 
