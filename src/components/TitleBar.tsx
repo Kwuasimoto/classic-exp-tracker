@@ -3,8 +3,9 @@ import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 /** The app's own title bar (the window has no native frame, see tauri.conf.json).
- *  `data-tauri-drag-region` makes the bar drag the window; double-click maximizes. */
-export function TitleBar() {
+ *  `data-tauri-drag-region` makes the bar drag the window; double-click maximizes. `error` is
+ *  a window error from elsewhere in the app (resizing for compressed mode), shown here too. */
+export function TitleBar({ error: appError }: { error: string | null }) {
   const [maximized, setMaximized] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Shown so a user can say which build they're running.
@@ -44,8 +45,8 @@ export function TitleBar() {
       <span className="titlebar-name" data-tauri-drag-region>
         CLASSIC EXP TRACKER
       </span>
-      {version && <span className="caption" data-tauri-drag-region>v{version}</span>}
-      {error && <span className="error titlebar-error" data-tauri-drag-region>{error}</span>}
+      {version && <span className="caption titlebar-version" data-tauri-drag-region>v{version}</span>}
+      {(error ?? appError) && <span className="error titlebar-error" data-tauri-drag-region>{error ?? appError}</span>}
       <div className="window-controls">
         <button aria-label="Minimize" onClick={run(() => win.minimize(), "minimize")}>
           <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5h10" stroke="currentColor" /></svg>

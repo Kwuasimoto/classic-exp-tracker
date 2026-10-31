@@ -3,6 +3,7 @@
 //! copied to memory, and sent to the pipeline. Nothing is written to disk.
 
 use std::sync::mpsc::{SyncSender, TrySendError};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
@@ -15,12 +16,12 @@ use windows_capture::settings::{
     SecondaryWindowSettings, Settings,
 };
 
-use crate::geom::{Boxes, Crop, Rect};
+use crate::geom::{Boxes, Corner, Crop, Rect, Scale};
 use crate::now_unix;
 
 pub const SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Regions {
     pub width: u32,
     pub height: u32,
@@ -32,11 +33,25 @@ pub struct Regions {
 pub struct Shared {
     /// The boxes for the current monitor resolution; `None` until known.
     pub regions: RwLock<Option<Regions>>,
+    /// Meso tracking is on: the inventory and quickslot are cropped too.
+    pub loot_enabled: AtomicBool,
+    /// The corner the inventory is kept in (the user's setting).
+    pub inventory_corner: RwLock<Corner>,
+}
+
+/// The inventory and quickslot, cropped only while meso tracking is on.
+#[derive(Debug)]
+pub struct LootCrops {
+    pub inventory: Crop,
+    pub quickslot: Crop,
+    /// Where each box's native pixels land in its crop (geom::Boxes).
+    pub inventory_at: Scale,
+    pub quickslot_at: Scale,
 }
 
 #[derive(Debug)]
 pub enum CaptureMsg {
-    Regions { t: i64, width: u32, height: u32, exp: Crop, map: Crop, level: Crop, bar: Crop },
+    Regions { t: i64, width: u32, height: u32, exp: Crop, map: Crop, level: Crop, bar: Crop, loot: Option<Box<LootCrops>> },
     /// A frame at a resolution the pipeline has no boxes for (yet).
     NoBoxes { width: u32, height: u32 },
     Closed,
@@ -100,8 +115,20 @@ impl GraphicsCaptureApiHandler for Handler {
                     && r.boxes.exp.fits_in(width, height)
                     && r.boxes.map.fits_in(width, height)
                     && r.boxes.level.fits_in(width, height)
-                    && r.boxes.bar.fits_in(width, height) =>
+                    && r.boxes.bar.fits_in(width, height)
+                    && r.boxes.inventory.fits_in(width, height)
+                    && r.boxes.quickslot.fits_in(width, height) =>
             {
+                let loot = if self.shared.loot_enabled.load(Ordering::Acquire) {
+                    Some(Box::new(LootCrops {
+                        inventory: copy_region(frame, r.boxes.inventory)?,
+                        quickslot: copy_region(frame, r.boxes.quickslot)?,
+                        inventory_at: r.boxes.inventory_at,
+                        quickslot_at: r.boxes.quickslot_at,
+                    }))
+                } else {
+                    None
+                };
                 CaptureMsg::Regions {
                     t: now_unix(),
                     width,
@@ -110,6 +137,7 @@ impl GraphicsCaptureApiHandler for Handler {
                     map: copy_region(frame, r.boxes.map)?,
                     level: copy_region(frame, r.boxes.level)?,
                     bar: copy_region(frame, r.boxes.bar)?,
+                    loot,
                 }
             }
             _ => CaptureMsg::NoBoxes { width, height },

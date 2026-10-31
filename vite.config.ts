@@ -8,6 +8,13 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(() => ({
   plugins: [react()],
 
+  // Two pages: the app (index.html) and the pinned popout (popout.html, commands::set_popout).
+  build: {
+    rollupOptions: {
+      input: { main: "index.html", popout: "popout.html" },
+    },
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors

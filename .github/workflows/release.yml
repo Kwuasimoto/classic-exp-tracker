@@ -1,0 +1,90 @@
+# Builds the Windows installer from this repository's source and attaches it to a draft GitHub
+# release tagged v<version> (the version in src-tauri/tauri.conf.json), at the commit it was built
+# from. The installer gets a signed build-provenance attestation, and its SHA-256 goes into the
+# release notes, so anyone can check that a download is exactly what this workflow built from
+# this source. Run it by hand from the Actions tab; review the draft, then publish it.
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12.4.1
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - run: pnpm install --frozen-lockfile
+
+      # The reader and tracker tests (they read the fixtures in src-tauri/tests/fixtures).
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+
+      - id: tauri
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: Classic EXP Tracker v__VERSION__
+          releaseBody: Release notes are added once the build is attested.
+          releaseDraft: true
+          prerelease: false
+
+      # Signed (Sigstore) provenance: this file, by this workflow, from this commit.
+      - uses: actions/attest@v4
+        with:
+          subject-path: src-tauri/target/release/bundle/nsis/*-setup.exe
+
+      - name: Release notes with the installer's SHA-256
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ steps.tauri.outputs.releaseId }}
+          VERSION: ${{ steps.tauri.outputs.appVersion }}
+        run: |
+          $installers = @(Get-Item src-tauri/target/release/bundle/nsis/*-setup.exe)
+          if ($installers.Count -ne 1) { throw "expected one installer, found $($installers.Count)" }
+          $exe = $installers[0]
+          $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash   # uppercase, as Get-FileHash shows it to users
+          $run = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+          $commit = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/commit/$env:GITHUB_SHA"
+          $body = @"
+          Windows 10 (2004 or later) or 11, 64-bit. Download ``$($exe.Name)`` below and run it; see the [README](https://github.com/$env:GITHUB_REPOSITORY#install) for setup. The installer isn't code-signed, so SmartScreen may warn: choose **More info**, then **Run anyway**.
+
+          ### Built from this source
+
+          This installer was built by the [Release workflow]($run) from commit [``$env:GITHUB_SHA``]($commit), and nothing else was uploaded.
+
+          **SHA-256:** ``$hash``
+
+          To check your download, in PowerShell:
+
+          ``````powershell
+          (Get-FileHash '.\$($exe.Name)' -Algorithm SHA256).Hash   # matches the SHA-256 above
+          gh attestation verify '.\$($exe.Name)' --repo $env:GITHUB_REPOSITORY   # GitHub's signed record that this workflow built it from this repo
+          ``````
+          "@
+          Set-Content -Path release-notes.md -Value $body -Encoding utf8NoBOM
+          gh api --method PATCH "repos/$env:GITHUB_REPOSITORY/releases/$env:RELEASE_ID" -F "body=@release-notes.md" --silent
+          "Installer: $($exe.Name)  SHA-256: $hash" >> $env:GITHUB_STEP_SUMMARY

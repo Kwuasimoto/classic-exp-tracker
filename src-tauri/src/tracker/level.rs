@@ -12,14 +12,16 @@ pub struct TotalBounds {
 }
 
 impl TotalBounds {
-    /// Total ∈ [exp·10000/(p+1), exp·10000/(p−1)]. `None` when p < 2 or exp = 0.
+    /// Total ∈ [exp·10000/(p+1), exp·10000/(p−1)]. `None` when p < 2 or exp = 0, and for a
+    /// percent alone (no counter to bound the total with).
     pub fn from_reading(r: ExpReading) -> Option<Self> {
-        if r.pct_bp < 2 || r.exp == 0 {
+        let ExpReading::Counter { exp, pct_bp } = r else { return None };
+        if pct_bp < 2 || exp == 0 {
             return None;
         }
-        let scaled = u128::from(r.exp) * 10_000;
-        let lo = scaled / u128::from(r.pct_bp + 1);
-        let hi = scaled.div_ceil(u128::from(r.pct_bp - 1));
+        let scaled = u128::from(exp) * 10_000;
+        let lo = scaled / u128::from(pct_bp + 1);
+        let hi = scaled.div_ceil(u128::from(pct_bp - 1));
         Some(Self { lo: u64::try_from(lo).ok()?, hi: u64::try_from(hi).ok()? })
     }
 

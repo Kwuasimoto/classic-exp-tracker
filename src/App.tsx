@@ -1,62 +1,129 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import "@fontsource/titillium-web/400.css";
 import "@fontsource/titillium-web/700.css";
 import "@fontsource/titillium-web/900.css";
 import "./App.css";
+import { ReaderStatus } from "./components/ReaderStatus";
 import { TitleBar } from "./components/TitleBar";
-import { BACKDROPS, saveBackdrop, savedBackdrop } from "./lib/backgrounds";
-import { statusText } from "./lib/format";
+import { onPopoutClosed, setPopout } from "./lib/ipc";
+import { saveLayout, savedLayout, type Layout } from "./lib/layout";
+import { savePopoutOpen, savedPopoutOpen } from "./lib/popout";
+import { compressedSize, currentSize, resizeWindow, saveExpandedSize, savedExpandedSize, type WindowSize } from "./lib/windowSize";
 import { useTick } from "./lib/useTick";
 import { HistoryView } from "./views/HistoryView";
 import { LiveView } from "./views/LiveView";
+import { MesoView } from "./views/MesoView";
 
-type Tab = "live" | "history";
+type Tab = "live" | "mesos" | "history";
 
 const ICON = { fill: "none", stroke: "currentColor", strokeWidth: 2.2, strokeLinecap: "round", strokeLinejoin: "round" } as const;
 const TABS: ReadonlyArray<{ id: Tab; label: string; icon: ReactNode }> = [
   { id: "live", label: "Live", icon: <><polyline points="3 17 9 11 13 15 21 7" /><polyline points="15 7 21 7 21 13" /></> },
+  { id: "mesos", label: "Mesos", icon: <><circle cx="12" cy="12" r="9" /><path d="M15 9.5a3 3 0 0 0-3-1.5c-1.7 0-3 .9-3 2s1.3 1.7 3 2 3 .9 3 2-1.3 2-3 2a3 3 0 0 1-3-1.5" /><line x1="12" y1="6" x2="12" y2="18" /></> },
   { id: "history", label: "History", icon: <><circle cx="12" cy="12" r="9" /><polyline points="12 7 12 12 15 14" /></> },
 ];
+// Arrows pointing in (compress) and out (expand).
+const COMPRESS = <><polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" /><line x1="14" y1="10" x2="21" y2="3" /><line x1="3" y1="21" x2="10" y2="14" /></>;
+// A pushpin: the popout pinned above the game.
+const PIN = <><line x1="12" y1="17" x2="12" y2="22" /><path d="M9 3h6l-1 6 3 3v2H7v-2l3-3z" /></>;
+const EXPAND = <><polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" /><line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" /></>;
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("live");
-  const [backdrop, setBackdrop] = useState(savedBackdrop);
+  const [layout, setLayout] = useState<Layout>(savedLayout);
+  const compressed = layout === "compressed";
   const { tick, error } = useTick();
-  const status = tick?.status ?? null;
+  const root = useRef<HTMLDivElement>(null);
+  const [windowError, setWindowError] = useState<string | null>(null);
+  const [popoutOpen, setPopoutOpen] = useState(false);
+  const status = <ReaderStatus status={tick?.status ?? null} error={error} />;
 
-  const chooseBackdrop = (id: string) => {
-    const next = BACKDROPS.find((b) => b.id === id);
-    if (!next) return;
-    setBackdrop(next);
-    saveBackdrop(id);
+  const resize = (size: WindowSize) =>
+    void resizeWindow(size).then((res) => setWindowError(res.success ? null : `resize: ${res.error}`));
+
+  const toggleLayout = () => {
+    const next: Layout = compressed ? "expanded" : "compressed";
+    if (next === "compressed") saveExpandedSize(currentSize());
+    else resize(savedExpandedSize());
+    setLayout(next);
+    saveLayout(next);
   };
 
+  const openPopout = (open: boolean) =>
+    void setPopout(open).then((res) => {
+      if (!res.success) return setWindowError(`popout: ${res.error.message}`);
+      setPopoutOpen(open);
+      savePopoutOpen(open);
+    });
+
+  // The popout reopens with the app if it was open; its own ✕ closes it.
+  useEffect(() => {
+    if (savedPopoutOpen()) openPopout(true);
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    void onPopoutClosed(() => {
+      setPopoutOpen(false);
+      savePopoutOpen(false);
+    }).then((res) => {
+      if (!res.success) return setWindowError(`popout: ${res.error.message}`);
+      if (disposed) res.data();
+      else unlisten = res.data;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  // Compressed: narrow the window to the rail and the ledger, keeping the expanded height.
+  useEffect(() => {
+    if (!compressed || !root.current) return;
+    const size = compressedSize(root.current, savedExpandedSize());
+    if (!size.success) return setWindowError(`resize: ${size.error}`);
+    resize(size.data);
+  }, [compressed]);
+
   return (
-    <div className="window" style={backdrop.css ?? undefined}>
-      <TitleBar />
+    <div ref={root} className={compressed ? "window compressed" : "window"}>
+      <TitleBar error={windowError} />
       <div className="shell">
-        <nav className="nav" aria-label="Screens">
+        <nav className="rail" aria-label="Screens">
           {TABS.map((t) => (
-            <button key={t.id} className={t.id === tab ? "nav-link current" : "nav-link"} aria-current={t.id === tab ? "page" : undefined} onClick={() => setTab(t.id)}>
+            <button
+              key={t.id}
+              className={t.id === tab ? "rail-btn current" : "rail-btn"}
+              aria-label={t.label}
+              title={t.label}
+              aria-current={t.id === tab ? "page" : undefined}
+              onClick={() => setTab(t.id)}
+            >
               <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" {...ICON}>{t.icon}</svg>
-              {t.label}
             </button>
           ))}
-          <div className="nav-footer">
-            <label className="picker">
-              <span className="label">Background</span>
-              <select value={backdrop.id} onChange={(e) => chooseBackdrop(e.target.value)}>
-                {BACKDROPS.map((b) => <option key={b.id} value={b.id}>{b.label}</option>)}
-              </select>
-            </label>
-            <div className={status?.kind === "ok" ? "reader-status ok" : "reader-status"} role="status">
-              {error ? error.message : status ? statusText(status) : "Starting…"}
-            </div>
-          </div>
+          <span style={{ flex: 1 }} />
+          <button
+            className={popoutOpen ? "rail-btn open" : "rail-btn"}
+            aria-label="Pin rates on top"
+            aria-pressed={popoutOpen}
+            title={popoutOpen ? "Close the pinned rates" : "Pin rates on top of the game"}
+            onClick={() => openPopout(!popoutOpen)}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" {...ICON}>{PIN}</svg>
+          </button>
+          <button
+            className="rail-btn"
+            aria-label="Compressed mode"
+            aria-pressed={compressed}
+            title={compressed ? "Expanded: show the charts" : "Compressed: hide the charts"}
+            onClick={toggleLayout}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" {...ICON}>{compressed ? EXPAND : COMPRESS}</svg>
+          </button>
         </nav>
         <main className="content">
-          {tab === "live" && <LiveView tick={tick} />}
-          {tab === "history" && <HistoryView />}
+          {tab === "live" && <LiveView tick={tick} status={status} />}
+          {tab === "mesos" && <MesoView tick={tick} status={status} />}
+          {tab === "history" && <HistoryView status={status} />}
         </main>
       </div>
     </div>

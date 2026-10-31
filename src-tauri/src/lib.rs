@@ -2,6 +2,9 @@ pub mod capture;
 mod commands;
 mod error;
 pub mod geom;
+mod grinds;
+pub mod items;
+mod loot;
 mod pipeline;
 pub mod rates;
 pub mod read;
@@ -11,7 +14,10 @@ pub mod tracker;
 
 use std::sync::Arc;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
+
+/// Sent to the main window when the popout closes.
+const POPOUT_CLOSED_EVENT: &str = "popout-closed";
 
 /// Current UTC time in unix seconds.
 pub fn now_unix() -> i64 {
@@ -68,14 +74,20 @@ pub fn run() {
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
-            let db = dir.join("tracker.db");
+            // Debug builds (`pnpm tauri dev`) keep their own database, so work in progress never
+            // upgrades or writes the one the installed app uses.
+            let db = dir.join(if cfg!(debug_assertions) { "tracker-dev.db" } else { "tracker.db" });
             log::info!("Classic EXP Tracker {} starting, database {}", app.package_info().version, db.display());
             let store = store::Store::open(&db)?;
             store.close_open_sessions()?;
             store.prune(rates::keep_from(now_unix()))?;
             let live_since = store.live_since()?;
+            let grind_secs = store.grind_secs()?;
+            let totals = store.totals()?;
             let locked_map = store.locked_map()?;
-            let state = Arc::new(pipeline::AppState::new(store, live_since, locked_map));
+            let loot_enabled = store.loot_enabled()?;
+            let corner = store.inventory_corner()?;
+            let state = Arc::new(pipeline::AppState::new(store, live_since, grind_secs, totals, locked_map, loot_enabled, corner));
             app.manage(Arc::clone(&state));
             pipeline::spawn(app.handle().clone(), state)?;
             // The window starts hidden (tauri.conf.json) so it doesn't flash on the game's monitor.
@@ -86,18 +98,51 @@ pub fn run() {
             window.show()?;
             Ok(())
         })
+        // Closing the main window closes the popout too, so the app exits; the main window
+        // hears when the popout closes, from its own ✕ or this.
+        .on_window_event(|window, event| {
+            if !matches!(event, tauri::WindowEvent::Destroyed) {
+                return;
+            }
+            let app = window.app_handle();
+            match window.label() {
+                "main" => {
+                    if let Some(popout) = app.get_webview_window(commands::POPOUT)
+                        && let Err(e) = popout.close()
+                    {
+                        log::warn!("could not close the popout with the main window: {e}");
+                    }
+                }
+                commands::POPOUT => {
+                    if let Err(e) = app.emit_to("main", POPOUT_CLOSED_EVENT, ()) {
+                        log::warn!("could not tell the main window the popout closed: {e}");
+                    }
+                }
+                _ => {}
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             commands::get_live_snapshot,
             commands::get_live_chart,
             commands::save_snapshot,
             commands::reset_session,
+            commands::reset_totals,
             commands::rename_map,
             commands::lock_map,
             commands::unlock_map,
+            commands::set_loot_enabled,
+            commands::set_inventory_corner,
+            commands::set_popout,
+            commands::get_items,
+            commands::item_names,
+            commands::name_item,
+            commands::ignore_item,
+            commands::set_main_potion,
             commands::get_snapshots,
             commands::get_snapshot_chart,
             commands::rename_snapshot,
             commands::delete_snapshot,
+            commands::keep_snapshot,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

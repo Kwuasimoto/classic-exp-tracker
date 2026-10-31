@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::fmt::Display;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
@@ -13,12 +13,15 @@ use log::{error, info, warn};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
-use crate::capture::{self, CaptureMsg, Control, Regions, Shared};
-use crate::geom::{boxes_for, resolution_key, Crop, NATIVE};
+use crate::capture::{self, CaptureMsg, Control, LootCrops, Regions, Shared};
+use crate::loot::LootReader;
+use crate::geom::{boxes_for, resolution_key, Corner, Crop, NATIVE};
+use crate::grinds;
+use crate::read::exp::ExpReading;
 use crate::read::map_strip::Signature;
 use crate::read::ocr::MapOcr;
 use crate::read::LearnedGlyph;
-use crate::rates::{self, MinuteRow};
+use crate::rates::{self, Loot, MinuteRow, Totals};
 use crate::screen::{FrameRead, Screen};
 use crate::read::map_names::{match_name, NameMatch};
 use crate::store::{NamedBy, Store, StoreError};
@@ -57,11 +60,92 @@ pub struct Tick {
     /// The map the live view counts alone, and its name (`None` while unnamed).
     pub locked_map: Option<i64>,
     pub locked_name: Option<String>,
+    /// EXP into the level: read off the counter, or (`exp_exact` false) worked out from the
+    /// percent while the readout shows only that (read::exp::ExpReading).
     pub exp: Option<u64>,
+    pub exp_exact: bool,
     pub pct_bp: Option<u32>,
     pub total_est: Option<u64>,
     /// Known once the readings fit exactly one level's table total.
     pub level: Option<u32>,
+    pub loot: LootStatus,
+    /// Training time since the live view started (seconds), across maps: the popout's clock.
+    pub grind_secs: u64,
+    /// EXP and mesos made on every map since the user last reset the totals.
+    pub totals: Totals,
+}
+
+/// Meso tracking, as the UI shows it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LootStatus {
+    pub enabled: bool,
+    /// The corner the inventory should be in, and whether its title is there.
+    pub corner: Corner,
+    pub found: bool,
+    /// The inventory's meso total reads, and its Etc tab is open.
+    pub inventory: bool,
+    /// The meso total as last read.
+    pub meso_total: Option<u64>,
+    pub etc_tab: bool,
+    /// The quickslot reads.
+    pub quickslot: bool,
+    /// Items seen that the user hasn't named or ignored yet (they count nothing until named).
+    pub unnamed_items: u32,
+    /// The Etc items picked up since the app started or the session was reset, highest
+    /// value first.
+    pub picked_up: Vec<PickedUp>,
+    /// The main HP and MP items, the only potions whose use costs mesos.
+    pub main_hp: Option<MainPotion>,
+    pub main_mp: Option<MainPotion>,
+    /// The quickslot layout read this frame; `None` when the quickslot didn't read.
+    pub quickslot_layout: Option<QuickslotLayout>,
+    /// The Use items on the quickslot when it last read, in slot order: the potions the user
+    /// can choose as main HP or MP.
+    pub quickslot_pots: Vec<QuickslotPot>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum QuickslotLayout {
+    /// The fan of four slots (the game's default).
+    Controller,
+    /// The 4×2 keys.
+    Keyboard,
+}
+
+/// A Use item on the quickslot and how many of it are there.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuickslotPot {
+    pub item_id: i64,
+    /// `None` while the item isn't named.
+    pub name: Option<String>,
+    pub count: u32,
+    /// The item's patch (RGB, read::inventory::PATCH wide, row by row).
+    pub patch: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MainPotion {
+    pub item_id: i64,
+    /// `None` while the item isn't named.
+    pub name: Option<String>,
+}
+
+/// One Etc item's pickups, for the Mesos page's list.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PickedUp {
+    pub item_id: i64,
+    /// `None` while the item isn't named.
+    pub name: Option<String>,
+    pub count: u32,
+    /// At its NPC price when each was counted: 0 for those picked up while unnamed.
+    pub value: u64,
+    /// The item's icon patch (RGB, read::inventory::PATCH wide, row by row).
+    pub patch: Vec<u8>,
 }
 
 impl Default for Tick {
@@ -73,7 +157,15 @@ impl Default for Tick {
             shopping: false,
             locked_map: None,
             locked_name: None,
-            exp: None, pct_bp: None, total_est: None, level: None }
+            exp: None,
+            exp_exact: false,
+            pct_bp: None,
+            total_est: None,
+            level: None,
+            loot: LootStatus::default(),
+            grind_secs: 0,
+            totals: Totals::default(),
+        }
     }
 }
 
@@ -86,24 +178,39 @@ pub struct AppState {
     pub live_minute: RwLock<Option<MinuteRow>>,
     /// Where the live view starts (unix seconds); moved forward by a reset. Also in the database.
     pub live_since: RwLock<i64>,
+    /// The stored grinding time (Store::grind_secs), without the minute in progress. Changed
+    /// only while holding `store`, with the database.
+    pub grind_secs: AtomicU64,
+    /// The stored totals (Store::totals), without the minute in progress. Changed only while
+    /// holding `store`, with the database.
+    pub totals: RwLock<Totals>,
     /// The map the live view counts alone (the user locked it); also in the database.
     pub locked_map: RwLock<Option<MapId>>,
     /// Set by commands, handled by the pipeline thread on its next loop.
     pub end_session_requested: AtomicBool,
+    /// The user named or ignored an item, or chose a main potion: the pipeline reloads its items.
+    pub items_changed: AtomicBool,
     shutdown: AtomicBool,
     thread: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl AppState {
-    pub fn new(store: Store, live_since: i64, locked_map: Option<MapId>) -> Self {
+    pub fn new(store: Store, live_since: i64, grind_secs: u64, totals: Totals, locked_map: Option<MapId>, loot_enabled: bool, corner: Corner) -> Self {
         Self {
             store: Mutex::new(store),
-            capture: Arc::new(Shared::default()),
+            capture: Arc::new(Shared {
+                loot_enabled: AtomicBool::new(loot_enabled),
+                inventory_corner: RwLock::new(corner),
+                ..Shared::default()
+            }),
             live: RwLock::new(Tick::default()),
             live_minute: RwLock::new(None),
             live_since: RwLock::new(live_since),
+            grind_secs: AtomicU64::new(grind_secs),
+            totals: RwLock::new(totals),
             locked_map: RwLock::new(locked_map),
             end_session_requested: AtomicBool::new(false),
+            items_changed: AtomicBool::new(false),
             shutdown: AtomicBool::new(false),
             thread: Mutex::new(None),
         }
@@ -146,10 +253,14 @@ struct Pipeline {
     retry_name_at: Option<i64>,
     /// The minimap is collapsed: the player is in a shop.
     shopping: bool,
+    loot: LootReader,
+    loot_status: LootStatus,
     /// The resolution the level digits in use were learned at.
     resolution: Option<String>,
     keys: HashMap<SessionKey, i64>,
     pending: Vec<Effect>,
+    /// The minute grinds were last checked for being over (see `file_grinds`).
+    grinds_checked: Option<i64>,
     /// The last resolution whose boxes (or lack of them) were logged.
     logged_resolution: Option<(u32, u32)>,
     capture_error: Option<String>,
@@ -175,9 +286,12 @@ impl Pipeline {
             name_retries: 0,
             retry_name_at: None,
             shopping: false,
+            loot: LootReader::default(),
+            loot_status: LootStatus::default(),
             resolution: None,
             keys: HashMap::new(),
             pending: Vec::new(),
+            grinds_checked: None,
             logged_resolution: None,
             capture_error: None,
             storage_error: None,
@@ -188,10 +302,15 @@ impl Pipeline {
     fn run(mut self) {
         while !self.state.shutdown.load(Ordering::Acquire) {
             self.handle_requests();
+            let minute = crate::now_unix().div_euclid(60);
+            if self.grinds_checked != Some(minute) {
+                self.grinds_checked = Some(minute);
+                self.file_grinds(false);
+            }
             self.ensure_capture();
             match self.rx.recv_timeout(Duration::from_millis(500)) {
-                Ok(CaptureMsg::Regions { t, width, height, exp, map, level, bar }) => {
-                    self.on_regions(t, width, height, exp, map, level, &bar)
+                Ok(CaptureMsg::Regions { t, width, height, exp, map, level, bar, loot }) => {
+                    self.on_regions(t, (width, height), exp, map, level, &bar, loot.as_deref())
                 }
                 Ok(CaptureMsg::NoBoxes { width, height }) => self.on_new_screen(width, height),
                 Ok(CaptureMsg::Closed) => {}
@@ -207,12 +326,47 @@ impl Pipeline {
             }
     }
 
-    /// Requests from commands: end the session (a reset).
+    /// Requests from commands: end the session (a reset), an item named.
     fn handle_requests(&mut self) {
+        if self.state.items_changed.swap(false, Ordering::AcqRel) {
+            self.loot.reload();
+        }
         if self.state.end_session_requested.swap(false, Ordering::AcqRel) {
             info!("session reset by the user");
+            self.loot.clear_pickups();
             let fx = self.tracker.end_session();
             self.apply(fx);
+            // A reset says the grind is done: save it now rather than after the wait.
+            self.file_grinds(true);
+        }
+    }
+
+    /// Save the grinds that are over as automatic snapshots (or drop them, too short), and
+    /// delete the automatic snapshots past their keep. Once a minute, at startup and on a reset.
+    fn file_grinds(&mut self, all: bool) {
+        let now = crate::now_unix();
+        let level = self.tracker.level();
+        let store = self.state.store.lock().expect("store lock poisoned");
+        let result = (|| -> Result<(), StoreError> {
+            for grind in grinds::finished(&store.unfiled_sessions()?, now, all) {
+                if !grind.worth_saving() {
+                    store.file_grind(&grind.sessions, None, None)?;
+                    continue;
+                }
+                let map_name = grind.map.map(|m| store.map_name(m)).transpose()?.flatten().map(|(name, _)| name);
+                let name = map_name.as_deref().unwrap_or("Unrecognised map");
+                let id = store.file_grind(&grind.sessions, Some((name, map_name.as_deref())), level)?;
+                info!("grind on {name} over ({}s training, sessions {:?}): snapshot {id:?}", grind.training_secs, grind.sessions);
+            }
+            let expired = store.delete_expired_snapshots(now - grinds::KEEP_AUTO_SECS)?;
+            if expired > 0 {
+                info!("deleted {expired} automatic snapshot(s) past their keep");
+            }
+            Ok(())
+        })();
+        drop(store);
+        if let Err(e) = result {
+            self.storage_failed("saving finished grinds as snapshots", e);
         }
     }
 
@@ -259,7 +413,8 @@ impl Pipeline {
     fn on_new_screen(&mut self, width: u32, height: u32) {
         self.frames_flowing();
         self.use_glyphs_for(width, height);
-        let boxes = boxes_for(width, height);
+        let corner = *self.state.capture.inventory_corner.read().expect("corner lock poisoned");
+        let boxes = boxes_for(width, height, corner);
         if self.logged_resolution != Some((width, height)) {
             match boxes {
                 Some(boxes) => info!("boxes for {width}x{height} scaled from {}x{}: {boxes:?}", NATIVE.0, NATIVE.1),
@@ -279,7 +434,7 @@ impl Pipeline {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn on_regions(&mut self, t: i64, width: u32, height: u32, exp: Crop, map: Crop, level: Crop, bar: &Crop) {
+    fn on_regions(&mut self, t: i64, (width, height): (u32, u32), exp: Crop, map: Crop, level: Crop, bar: &Crop, loot: Option<&LootCrops>) {
         self.frames_flowing();
         self.use_glyphs_for(width, height);
         if self.retry_name_at.is_some_and(|at| t >= at) {
@@ -297,7 +452,18 @@ impl Pipeline {
         // In a shop the tracker sees no map (time there isn't training); the map from
         // before is kept, so coming back out to it carries on.
         let map = if shopping { None } else { self.current_map };
-        let fx = self.tracker.on_sample(Sample { t, exp, map });
+        let read = self.loot.on_frame(&self.state.store.lock().expect("store lock poisoned"), t, loot, shopping);
+        let loot = match read {
+            Ok((loot, status)) => {
+                self.loot_status = status;
+                loot
+            }
+            Err(e) => {
+                self.storage_failed("saving a new item", e);
+                Loot::default()
+            }
+        };
+        let fx = self.tracker.on_sample(Sample { t, exp, map, loot });
         let learned = self.screen.sync_level(&mut self.tracker, exp);
         self.save_glyphs(&learned);
         // Also publishes the minute in progress, before the tick: the UI reloads the chart on each tick.
@@ -492,11 +658,15 @@ impl Pipeline {
                         info!("session #{id} ended");
                     })
                 }
-                Effect::Minute { minute_start, key, exp_gained, training_secs } => {
+                Effect::Minute { minute_start, key, exp_gained, training_secs, loot } => {
                     let id = *self.keys.get(&key).expect("SessionStarted is applied before its minutes");
                     store
-                        .add_minute(minute_start, id, exp_gained, training_secs)
-                        .map(|()| info!("session #{id} minute saved: +{exp_gained} EXP, {training_secs}s training"))
+                        .add_minute(minute_start, id, exp_gained, training_secs, loot)
+                        .map(|()| {
+                            self.state.grind_secs.fetch_add(u64::from(training_secs), Ordering::AcqRel);
+                            self.state.totals.write().expect("totals lock poisoned").add(minute_start, exp_gained, loot);
+                            info!("session #{id} minute saved: +{exp_gained} EXP, {training_secs}s training, {loot:?}");
+                        })
                 }
             };
             if let Err(e) = result {
@@ -537,6 +707,11 @@ impl Pipeline {
             reader
         };
         let baseline = self.tracker.baseline();
+        let live_minute = self.tracker.current_minute(None);
+        let mut totals = *self.state.totals.read().expect("totals lock poisoned");
+        if let Some(m) = live_minute {
+            totals.add(m.minute_start, m.exp_gained, m.loot);
+        }
         let tick = Tick {
             status,
             map_id: self.current_map,
@@ -544,10 +719,18 @@ impl Pipeline {
             shopping: self.shopping,
             locked_map,
             locked_name,
-            exp: baseline.map(|r| r.exp),
-            pct_bp: baseline.map(|r| r.pct_bp),
+            exp: baseline.and_then(|r| r.exp_in_level(self.tracker.total_estimate())),
+            exp_exact: matches!(baseline, Some(ExpReading::Counter { .. })),
+            pct_bp: baseline.map(ExpReading::pct_bp),
             total_est: self.tracker.total_estimate(),
             level: self.tracker.level(),
+            loot: LootStatus {
+                enabled: self.state.capture.loot_enabled.load(Ordering::Acquire),
+                corner: *self.state.capture.inventory_corner.read().expect("corner lock poisoned"),
+                ..self.loot_status.clone()
+            },
+            grind_secs: self.state.grind_secs.load(Ordering::Acquire) + live_minute.map_or(0, |m| u64::from(m.training_secs)),
+            totals,
         };
         *self.state.live.write().expect("live lock poisoned") = tick.clone();
         match self.app.emit(TICK_EVENT, &tick) {

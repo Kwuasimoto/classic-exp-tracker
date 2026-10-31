@@ -1,19 +1,24 @@
 //! Single-file SQLite storage, compiled into the exe. Parsed numbers only — never images.
 //! Default rollback journal (not WAL) so the data stays one file.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::Serialize;
 
-use crate::rates::MinuteRow;
+use crate::geom::Corner;
+use crate::grinds::SessionSpan;
+use crate::items::{ItemKind, PotionSlot};
+use crate::rates::{Loot, MinuteRow, Totals};
 use crate::read::LearnedGlyph;
 use crate::read::map_strip::Signature;
+use crate::tracker::loot::ItemId;
 use crate::tracker::MapId;
 
 /// The `calibration` table (boxes drawn per resolution) is unread since 0.4.0, when the
 /// app started placing its boxes itself (geom::boxes_for); its rows are left as they are.
-const SCHEMA_VERSION: i64 = 8;
+const SCHEMA_VERSION: i64 = 11;
 const SCHEMA: &str = "
 BEGIN;
 CREATE TABLE maps (
@@ -171,6 +176,54 @@ COMMIT;
 PRAGMA foreign_keys = ON;
 ";
 
+/// Version 9 (0.6.0): meso tracking. Items seen in the inventory's Etc tab or on the
+/// quickslot, named from the item list (read::items) by the user, each with the patches it
+/// was recognised by; and the mesos each minute made, beside its EXP. Adds only.
+const MIGRATION_9: &str = "
+BEGIN;
+CREATE TABLE items (
+    id INTEGER PRIMARY KEY,
+    name TEXT,
+    kind TEXT NOT NULL CHECK (kind IN ('etc', 'use')),
+    first_seen INTEGER NOT NULL
+);
+CREATE TABLE item_patches (
+    id INTEGER PRIMARY KEY,
+    item_id INTEGER NOT NULL REFERENCES items(id),
+    patch BLOB NOT NULL
+);
+CREATE INDEX item_patches_item ON item_patches(item_id);
+ALTER TABLE minutes ADD COLUMN meso INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE minutes ADD COLUMN etc_value INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE minutes ADD COLUMN potion_cost INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE snapshot_minutes ADD COLUMN meso INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE snapshot_minutes ADD COLUMN etc_value INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE snapshot_minutes ADD COLUMN potion_cost INTEGER NOT NULL DEFAULT 0;
+PRAGMA user_version = 9;
+COMMIT;
+";
+
+/// Version 10 (0.6.0): items the user doesn't want tracked (look-alikes that can't be told
+/// apart, say). Adds only.
+const MIGRATION_10: &str = "
+BEGIN;
+ALTER TABLE items ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0;
+PRAGMA user_version = 10;
+COMMIT;
+";
+
+/// Version 11 (0.8.0): automatic snapshots (grinds.rs). A session is filed once its grind is
+/// saved or dropped; until then its minutes outlive the live chart's window. Sessions from
+/// before are filed already, and snapshots from before are the user's own.
+const MIGRATION_11: &str = "
+BEGIN;
+ALTER TABLE sessions ADD COLUMN filed INTEGER NOT NULL DEFAULT 0;
+UPDATE sessions SET filed = 1;
+ALTER TABLE snapshots ADD COLUMN auto INTEGER NOT NULL DEFAULT 0;
+PRAGMA user_version = 11;
+COMMIT;
+";
+
 /// Learned shapes kept per character and resolution: enough for the sub-pixel
 /// positions a character lands at, without growing forever.
 const MAX_GLYPHS_PER_CHAR: i64 = 8;
@@ -204,6 +257,17 @@ impl NamedBy {
     }
 }
 
+/// An item and one patch it was recognised by (an item can have several).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ItemPatch {
+    pub item_id: ItemId,
+    pub kind: ItemKind,
+    pub name: Option<String>,
+    /// The user doesn't want it tracked: it's recognised, never counted.
+    pub ignored: bool,
+    pub patch: Vec<u8>,
+}
+
 /// One look of a map: its name strip's signature at some resolution and minimap width.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MapRecord {
@@ -224,6 +288,10 @@ pub struct SnapshotRecord {
     pub to: Option<i64>,
     pub exp_gained: u64,
     pub training_secs: u64,
+    pub loot: Loot,
+    /// Saved automatically from a grind, and deleted grinds::KEEP_AUTO_SECS after `created_at`
+    /// unless the user keeps it.
+    pub auto: bool,
 }
 
 pub struct Store {
@@ -244,8 +312,18 @@ fn col_u32(row: &Row, idx: usize) -> rusqlite::Result<u32> {
     u32::try_from(v).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(idx, v))
 }
 
+/// Columns from `idx`: meso, etc_value, potion_cost.
+fn loot_at(row: &Row, idx: usize) -> rusqlite::Result<Loot> {
+    Ok(Loot { meso: col_u64(row, idx)?, etc_value: col_u64(row, idx + 1)?, potion_cost: col_u64(row, idx + 2)? })
+}
+
 fn minute_row(row: &Row) -> rusqlite::Result<MinuteRow> {
-    Ok(MinuteRow { minute_start: row.get(0)?, exp_gained: col_u64(row, 1)?, training_secs: col_u32(row, 2)? })
+    Ok(MinuteRow { minute_start: row.get(0)?, exp_gained: col_u64(row, 1)?, training_secs: col_u32(row, 2)?, loot: loot_at(row, 3)? })
+}
+
+fn kind_at(row: &Row, idx: usize) -> rusqlite::Result<ItemKind> {
+    let s: String = row.get(idx)?;
+    ItemKind::parse(&s).ok_or_else(|| rusqlite::Error::InvalidColumnType(idx, s, rusqlite::types::Type::Text))
 }
 
 fn char_at(row: &Row, idx: usize) -> rusqlite::Result<char> {
@@ -258,13 +336,14 @@ fn art_at(row: &Row, idx: usize) -> rusqlite::Result<Vec<String>> {
 }
 
 impl Store {
-    /// Before migration 8 deletes the saved maps, the file is copied next to itself.
+    /// Before any upgrade (migration 8 deletes the saved maps), the file is copied next to itself.
     pub fn open(path: &Path) -> Result<Self, StoreError> {
         let version: i64 = Connection::open(path)?.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if (1..8).contains(&version) {
-            let backup = path.with_file_name(format!("tracker.backup-v{version}.db"));
+        if (1..SCHEMA_VERSION).contains(&version) {
+            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("tracker");
+            let backup = path.with_file_name(format!("{stem}.backup-v{version}.db"));
             std::fs::copy(path, &backup)?;
-            log::info!("database backed up to {} before upgrading it to version 8", backup.display());
+            log::info!("database backed up to {} before upgrading it to version {SCHEMA_VERSION}", backup.display());
         }
         Self::init(Connection::open(path)?)
     }
@@ -304,6 +383,15 @@ impl Store {
         }
         if version < 8 {
             conn.execute_batch(MIGRATION_8)?;
+        }
+        if version < 9 {
+            conn.execute_batch(MIGRATION_9)?;
+        }
+        if version < 10 {
+            conn.execute_batch(MIGRATION_10)?;
+        }
+        if version < 11 {
+            conn.execute_batch(MIGRATION_11)?;
         }
         Ok(Self { conn })
     }
@@ -385,14 +473,45 @@ impl Store {
         Ok(())
     }
 
-    pub fn add_minute(&self, minute_start: i64, session_id: i64, exp_gained: u64, training_secs: u32) -> Result<(), StoreError> {
-        self.conn.execute(
-            "INSERT INTO minutes (minute_start, session_id, exp_gained, training_secs) VALUES (?1, ?2, ?3, ?4)
+    /// Add to a minute, its training to the grinding time and its EXP and mesos to the
+    /// totals, in one transaction.
+    pub fn add_minute(&self, minute_start: i64, session_id: i64, exp_gained: u64, training_secs: u32, loot: Loot) -> Result<(), StoreError> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "INSERT INTO minutes (minute_start, session_id, exp_gained, training_secs, meso, etc_value, potion_cost)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT (minute_start, session_id) DO UPDATE SET
                exp_gained = exp_gained + excluded.exp_gained,
-               training_secs = training_secs + excluded.training_secs",
-            params![minute_start, session_id, to_i64(exp_gained, "exp_gained")?, i64::from(training_secs)],
+               training_secs = training_secs + excluded.training_secs,
+               meso = meso + excluded.meso,
+               etc_value = etc_value + excluded.etc_value,
+               potion_cost = potion_cost + excluded.potion_cost",
+            params![
+                minute_start,
+                session_id,
+                to_i64(exp_gained, "exp_gained")?,
+                i64::from(training_secs),
+                to_i64(loot.meso, "meso")?,
+                to_i64(loot.etc_value, "etc_value")?,
+                to_i64(loot.potion_cost, "potion_cost")?,
+            ],
         )?;
+        tx.execute(
+            "INSERT INTO settings (key, value) VALUES ('grind_secs', ?1) ON CONFLICT (key) DO UPDATE SET value = value + excluded.value",
+            [i64::from(training_secs)],
+        )?;
+        tx.execute(
+            "INSERT INTO settings (key, value) VALUES ('total_exp', ?1), ('total_meso', ?2), ('total_etc_value', ?3), ('total_potion_cost', ?4)
+             ON CONFLICT (key) DO UPDATE SET value = value + excluded.value",
+            params![
+                to_i64(exp_gained, "exp_gained")?,
+                to_i64(loot.meso, "meso")?,
+                to_i64(loot.etc_value, "etc_value")?,
+                to_i64(loot.potion_cost, "potion_cost")?,
+            ],
+        )?;
+        tx.execute("INSERT INTO settings (key, value) VALUES ('totals_since', ?1) ON CONFLICT (key) DO NOTHING", [minute_start])?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -406,13 +525,14 @@ impl Store {
         )?)
     }
 
-    /// Delete minutes from before `before`, and the ended sessions left without any.
-    /// The live view needs only its chart window; History keeps snapshots, which are copies.
+    /// Delete minutes from before `before`, and the ended sessions left without any. The live
+    /// view needs only its chart window; History keeps snapshots, which are copies. A session
+    /// not yet filed keeps its minutes: its grind may still be saved (grinds.rs).
     pub fn prune(&self, before: i64) -> Result<(), StoreError> {
         let tx = self.conn.unchecked_transaction()?;
-        tx.execute("DELETE FROM minutes WHERE minute_start < ?1", [before])?;
+        tx.execute("DELETE FROM minutes WHERE minute_start < ?1 AND session_id IN (SELECT id FROM sessions WHERE filed = 1)", [before])?;
         tx.execute(
-            "DELETE FROM sessions WHERE ended_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM minutes WHERE session_id = sessions.id)",
+            "DELETE FROM sessions WHERE filed = 1 AND ended_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM minutes WHERE session_id = sessions.id)",
             [],
         )?;
         tx.commit()?;
@@ -423,7 +543,7 @@ impl Store {
     /// sessions on `map` (the map the live view is locked to).
     pub fn minutes_between(&self, from: i64, to: i64, map: Option<MapId>) -> Result<Vec<MinuteRow>, StoreError> {
         let mut stmt = self.conn.prepare(
-            "SELECT m.minute_start, SUM(m.exp_gained), SUM(m.training_secs)
+            "SELECT m.minute_start, SUM(m.exp_gained), SUM(m.training_secs), SUM(m.meso), SUM(m.etc_value), SUM(m.potion_cost)
              FROM minutes m JOIN sessions s ON s.id = m.session_id
              WHERE m.minute_start >= ?1 AND m.minute_start < ?2 AND (?3 IS NULL OR s.map_id = ?3)
              GROUP BY m.minute_start ORDER BY m.minute_start",
@@ -455,6 +575,103 @@ impl Store {
         Ok(added == 1)
     }
 
+    /// Every patch of every item.
+    pub fn item_patches(&self) -> Result<Vec<ItemPatch>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT i.id, i.kind, i.name, i.ignored, p.patch FROM item_patches p JOIN items i ON i.id = p.item_id ORDER BY p.id",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(ItemPatch { item_id: r.get(0)?, kind: kind_at(r, 1)?, name: r.get(2)?, ignored: r.get(3)?, patch: r.get(4)? })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// An item seen for the first time, unnamed, with the patch it was seen by.
+    pub fn insert_item(&self, kind: ItemKind, patch: &[u8], t: i64) -> Result<ItemId, StoreError> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("INSERT INTO items (kind, first_seen) VALUES (?1, ?2)", params![kind.as_str(), t])?;
+        let id = tx.last_insert_rowid();
+        tx.execute("INSERT INTO item_patches (item_id, patch) VALUES (?1, ?2)", params![id, patch])?;
+        tx.commit()?;
+        Ok(id)
+    }
+
+    /// The user names an item from the item list. When another item of its kind already
+    /// has the name (the same item seen by another patch), `id`'s patches move to it and
+    /// that item's id is returned; otherwise `id`. `None` when there's no item `id`.
+    pub fn name_item(&self, id: ItemId, name: &str) -> Result<Option<ItemId>, StoreError> {
+        let tx = self.conn.unchecked_transaction()?;
+        let kind: Option<String> = tx.query_row("SELECT kind FROM items WHERE id = ?1", [id], |r| r.get(0)).optional()?;
+        let Some(kind) = kind else { return Ok(None) };
+        let named: Option<ItemId> = tx
+            .query_row("SELECT id FROM items WHERE name = ?1 AND kind = ?2 AND id != ?3", params![name, kind, id], |r| r.get(0))
+            .optional()?;
+        let into = match named {
+            Some(other) => {
+                tx.execute("UPDATE item_patches SET item_id = ?2 WHERE item_id = ?1", params![id, other])?;
+                tx.execute("DELETE FROM items WHERE id = ?1", [id])?;
+                other
+            }
+            None => {
+                tx.execute("UPDATE items SET name = ?2 WHERE id = ?1", params![id, name])?;
+                id
+            }
+        };
+        tx.commit()?;
+        Ok(Some(into))
+    }
+
+    /// The corner the user keeps the inventory in; top-right until they choose.
+    pub fn inventory_corner(&self) -> Result<Corner, StoreError> {
+        let v: Option<i64> = self.conn.query_row("SELECT value FROM settings WHERE key = 'inventory_corner'", [], |r| r.get(0)).optional()?;
+        Ok(v.and_then(Corner::from_i64).unwrap_or_default())
+    }
+
+    pub fn set_inventory_corner(&self, corner: Corner) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('inventory_corner', ?1) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            [corner.as_i64()],
+        )?;
+        Ok(())
+    }
+
+    /// Ignore an item (or track it again). `false` when there's no such item.
+    pub fn set_item_ignored(&self, id: ItemId, ignored: bool) -> Result<bool, StoreError> {
+        Ok(self.conn.execute("UPDATE items SET ignored = ?2 WHERE id = ?1", params![id, ignored])? == 1)
+    }
+
+    /// The item chosen as the main HP or MP potion, if any.
+    pub fn main_potion(&self, slot: PotionSlot) -> Result<Option<ItemId>, StoreError> {
+        Ok(self.conn.query_row("SELECT value FROM settings WHERE key = ?1", [slot.setting_key()], |r| r.get(0)).optional()?)
+    }
+
+    pub fn set_main_potion(&self, slot: PotionSlot, item: Option<ItemId>) -> Result<(), StoreError> {
+        match item {
+            Some(id) => self.conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                params![slot.setting_key(), id],
+            )?,
+            None => self.conn.execute("DELETE FROM settings WHERE key = ?1", [slot.setting_key()])?,
+        };
+        Ok(())
+    }
+
+    /// Whether meso tracking is on (off until the user turns it on).
+    pub fn loot_enabled(&self) -> Result<bool, StoreError> {
+        let v: Option<i64> = self.conn.query_row("SELECT value FROM settings WHERE key = 'loot_enabled'", [], |r| r.get(0)).optional()?;
+        Ok(v == Some(1))
+    }
+
+    pub fn set_loot_enabled(&self, on: bool) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('loot_enabled', ?1) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            [i64::from(on)],
+        )?;
+        Ok(())
+    }
+
     /// Where the live view starts (unix seconds); 0 until the first reset.
     pub fn live_since(&self) -> Result<i64, StoreError> {
         Ok(self.conn.query_row("SELECT value FROM settings WHERE key = 'live_since'", [], |r| r.get(0)).optional()?.unwrap_or(0))
@@ -476,11 +693,45 @@ impl Store {
         Ok(())
     }
 
-    pub fn set_live_since(&self, t: i64) -> Result<(), StoreError> {
+    /// Training time since the live view started (seconds), across maps: the popout's clock.
+    /// Kept as a running total because the minutes it adds up are pruned after a few hours.
+    pub fn grind_secs(&self) -> Result<u64, StoreError> {
+        let v: i64 = self.conn.query_row("SELECT value FROM settings WHERE key = 'grind_secs'", [], |r| r.get(0)).optional()?.unwrap_or(0);
+        u64::try_from(v).map_err(|_| StoreError::Range("grind_secs"))
+    }
+
+    /// EXP and mesos made since the user last reset the totals. Kept as running totals, like
+    /// the grinding time, so they outlive the pruned minutes and survive a restart.
+    pub fn totals(&self) -> Result<Totals, StoreError> {
+        let counter = |key: &'static str| -> Result<u64, StoreError> {
+            let v: i64 = self.conn.query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| r.get(0)).optional()?.unwrap_or(0);
+            u64::try_from(v).map_err(|_| StoreError::Range(key))
+        };
+        Ok(Totals {
+            exp: counter("total_exp")?,
+            loot: Loot { meso: counter("total_meso")?, etc_value: counter("total_etc_value")?, potion_cost: counter("total_potion_cost")? },
+            since: self.conn.query_row("SELECT value FROM settings WHERE key = 'totals_since'", [], |r| r.get(0)).optional()?,
+        })
+    }
+
+    /// Start the totals again from nothing.
+    pub fn reset_totals(&self) -> Result<(), StoreError> {
         self.conn.execute(
+            "DELETE FROM settings WHERE key IN ('total_exp', 'total_meso', 'total_etc_value', 'total_potion_cost', 'totals_since')",
+            [],
+        )?;
+        Ok(())
+    }
+
+    /// Start the live view at `t`, the grinding time back at 0.
+    pub fn set_live_since(&self, t: i64) -> Result<(), StoreError> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
             "INSERT INTO settings (key, value) VALUES ('live_since', ?1) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
             [t],
         )?;
+        tx.execute("INSERT INTO settings (key, value) VALUES ('grind_secs', 0) ON CONFLICT (key) DO UPDATE SET value = 0", [])?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -488,28 +739,76 @@ impl Store {
     /// minute add up: a session that ended mid-minute stored part of the minute in progress.
     pub fn create_snapshot(&self, name: &str, created_at: i64, map_name: Option<&str>, level: Option<u32>, rows: &[MinuteRow]) -> Result<i64, StoreError> {
         let tx = self.conn.unchecked_transaction()?;
-        tx.execute(
-            "INSERT INTO snapshots (name, created_at, map_name, level) VALUES (?1, ?2, ?3, ?4)",
-            params![name, created_at, map_name, level],
+        let id = insert_snapshot(&tx, name, created_at, map_name, level, false, rows)?;
+        tx.commit()?;
+        Ok(id)
+    }
+
+    /// Sessions not yet filed into a grind, with their training.
+    pub fn unfiled_sessions(&self) -> Result<Vec<SessionSpan>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT s.id, s.map_id, s.started_at, s.ended_at, COALESCE(SUM(m.training_secs), 0)
+             FROM sessions s LEFT JOIN minutes m ON m.session_id = s.id
+             WHERE s.filed = 0 GROUP BY s.id",
         )?;
-        let id = tx.last_insert_rowid();
-        for r in rows {
-            tx.execute(
-                "INSERT INTO snapshot_minutes (snapshot_id, minute_start, exp_gained, training_secs) VALUES (?1, ?2, ?3, ?4)
-                 ON CONFLICT (snapshot_id, minute_start) DO UPDATE SET
-                   exp_gained = exp_gained + excluded.exp_gained,
-                   training_secs = training_secs + excluded.training_secs",
-                params![id, r.minute_start, to_i64(r.exp_gained, "exp_gained")?, i64::from(r.training_secs)],
+        let rows = stmt
+            .query_map([], |r| Ok(SessionSpan { id: r.get(0)?, map: r.get(1)?, started_at: r.get(2)?, ended_at: r.get(3)?, training_secs: col_u64(r, 4)? }))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// File a finished grind's sessions, saving it first as an automatic snapshot named `name`
+    /// when given. The snapshot runs from the grind's first to its last minute of training, so
+    /// the wait that ended the grind isn't in it, and is dated by its end. In one transaction;
+    /// returns the snapshot's id.
+    pub fn file_grind(&self, sessions: &[i64], name: Option<(&str, Option<&str>)>, level: Option<u32>) -> Result<Option<i64>, StoreError> {
+        let tx = self.conn.unchecked_transaction()?;
+        let mut id = None;
+        if let Some((name, map_name)) = name {
+            let mut rows: BTreeMap<i64, MinuteRow> = BTreeMap::new();
+            let mut stmt = tx.prepare(
+                "SELECT minute_start, exp_gained, training_secs, meso, etc_value, potion_cost FROM minutes WHERE session_id = ?1",
             )?;
+            for session in sessions {
+                for r in stmt.query_map([session], minute_row)? {
+                    let r = r?;
+                    let row = rows.entry(r.minute_start).or_insert(MinuteRow { minute_start: r.minute_start, ..Default::default() });
+                    row.exp_gained += r.exp_gained;
+                    row.training_secs += r.training_secs;
+                    row.loot += r.loot;
+                }
+            }
+            drop(stmt);
+            let rows: Vec<MinuteRow> = rows.into_values().collect();
+            let trained = |r: &MinuteRow| r.training_secs > 0;
+            if let (Some(first), Some(last)) = (rows.iter().position(trained), rows.iter().rposition(trained)) {
+                let rows = &rows[first..=last];
+                let ended = rows[rows.len() - 1].minute_start + 60;
+                id = Some(insert_snapshot(&tx, name, ended, map_name, level, true, rows)?);
+            }
+        }
+        for session in sessions {
+            tx.execute("UPDATE sessions SET filed = 1 WHERE id = ?1", [session])?;
         }
         tx.commit()?;
         Ok(id)
     }
 
+    /// Delete the automatic snapshots that ended before `before`; returns how many.
+    pub fn delete_expired_snapshots(&self, before: i64) -> Result<usize, StoreError> {
+        Ok(self.conn.execute("DELETE FROM snapshots WHERE auto = 1 AND created_at < ?1", [before])?)
+    }
+
+    /// Keep an automatic snapshot for good. `false` when no snapshot has that id.
+    pub fn keep_snapshot(&self, id: i64) -> Result<bool, StoreError> {
+        Ok(self.conn.execute("UPDATE snapshots SET auto = 0 WHERE id = ?1", [id])? == 1)
+    }
+
     pub fn snapshots(&self) -> Result<Vec<SnapshotRecord>, StoreError> {
         let mut stmt = self.conn.prepare(
             "SELECT s.id, s.name, s.created_at, s.map_name, s.level, MIN(m.minute_start), MAX(m.minute_start) + 60,
-                    COALESCE(SUM(m.exp_gained), 0), COALESCE(SUM(m.training_secs), 0)
+                    COALESCE(SUM(m.exp_gained), 0), COALESCE(SUM(m.training_secs), 0),
+                    COALESCE(SUM(m.meso), 0), COALESCE(SUM(m.etc_value), 0), COALESCE(SUM(m.potion_cost), 0), s.auto
              FROM snapshots s LEFT JOIN snapshot_minutes m ON m.snapshot_id = s.id
              GROUP BY s.id ORDER BY s.created_at DESC",
         )?;
@@ -525,6 +824,8 @@ impl Store {
                     to: r.get(6)?,
                     exp_gained: col_u64(r, 7)?,
                     training_secs: col_u64(r, 8)?,
+                    loot: loot_at(r, 9)?,
+                    auto: r.get(12)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -533,7 +834,8 @@ impl Store {
 
     pub fn snapshot_minutes(&self, id: i64) -> Result<Vec<MinuteRow>, StoreError> {
         let mut stmt = self.conn.prepare(
-            "SELECT minute_start, exp_gained, training_secs FROM snapshot_minutes WHERE snapshot_id = ?1 ORDER BY minute_start",
+            "SELECT minute_start, exp_gained, training_secs, meso, etc_value, potion_cost
+             FROM snapshot_minutes WHERE snapshot_id = ?1 ORDER BY minute_start",
         )?;
         let rows = stmt.query_map([id], minute_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
@@ -550,12 +852,43 @@ impl Store {
     }
 }
 
+/// A snapshot and its own copy of `rows`, inside the caller's transaction.
+fn insert_snapshot(tx: &Connection, name: &str, created_at: i64, map_name: Option<&str>, level: Option<u32>, auto: bool, rows: &[MinuteRow]) -> Result<i64, StoreError> {
+    tx.execute(
+        "INSERT INTO snapshots (name, created_at, map_name, level, auto) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![name, created_at, map_name, level, auto],
+    )?;
+    let id = tx.last_insert_rowid();
+    for r in rows {
+        tx.execute(
+            "INSERT INTO snapshot_minutes (snapshot_id, minute_start, exp_gained, training_secs, meso, etc_value, potion_cost)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT (snapshot_id, minute_start) DO UPDATE SET
+               exp_gained = exp_gained + excluded.exp_gained,
+               training_secs = training_secs + excluded.training_secs,
+               meso = meso + excluded.meso,
+               etc_value = etc_value + excluded.etc_value,
+               potion_cost = potion_cost + excluded.potion_cost",
+            params![
+                id,
+                r.minute_start,
+                to_i64(r.exp_gained, "exp_gained")?,
+                i64::from(r.training_secs),
+                to_i64(r.loot.meso, "meso")?,
+                to_i64(r.loot.etc_value, "etc_value")?,
+                to_i64(r.loot.potion_cost, "potion_cost")?,
+            ],
+        )?;
+    }
+    Ok(id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn version_8_starts_maps_afresh_and_keeps_sessions() {
+    fn versions_8_and_9_start_maps_afresh_and_keep_sessions_and_minutes() {
         // A version-7 database with a map and a session on it.
         let conn = Connection::open_in_memory().unwrap();
         for sql in [SCHEMA, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6, "PRAGMA user_version = 7;"] {
@@ -570,7 +903,7 @@ mod tests {
         let store = Store::init(conn).unwrap();
         let map_id: Option<i64> = store.conn.query_row("SELECT map_id FROM sessions", [], |r| r.get(0)).unwrap();
         assert_eq!(map_id, None);
-        assert_eq!(store.minutes_between(0, 60, None).unwrap().len(), 1);
+        assert_eq!(store.minutes_between(0, 60, None).unwrap(), [MinuteRow { minute_start: 0, exp_gained: 100, training_secs: 60, ..Default::default() }]);
         assert!(store.maps().unwrap().is_empty());
 
         // A second look of a named map belongs to the same map.
@@ -587,29 +920,61 @@ mod tests {
         let (field, town) = (store.insert_map(Some(("Field", NamedBy::List)), &look, 0).unwrap(), store.insert_map(None, &look, 0).unwrap());
         for (map, exp) in [(field, 100), (town, 900)] {
             let session = store.start_session(Some(map), 0).unwrap();
-            store.add_minute(0, session, exp, 60).unwrap();
+            store.add_minute(0, session, exp, 60, Loot::default()).unwrap();
         }
         assert_eq!(store.minutes_between(0, 60, None).unwrap()[0].exp_gained, 1_000);
         assert_eq!(store.minutes_between(0, 60, Some(field)).unwrap()[0].exp_gained, 100);
     }
 
     #[test]
-    fn prune_keeps_snapshots_recent_minutes_and_the_open_session() {
+    fn prune_keeps_snapshots_recent_minutes_and_unfiled_sessions() {
         let store = Store::open_in_memory().unwrap();
         let map = store.insert_map(Some(("Map", NamedBy::List)), &Signature { counts: vec![1], cut: false }, 0).unwrap();
         let old = store.start_session(Some(map), 0).unwrap();
-        store.add_minute(0, old, 100, 60).unwrap();
+        store.add_minute(0, old, 100, 60, Loot::default()).unwrap();
         store.end_session(old, 60).unwrap();
         let open = store.start_session(None, 6_000).unwrap();
-        store.add_minute(6_000, open, 50, 60).unwrap();
-        let row = MinuteRow { minute_start: 0, exp_gained: 100, training_secs: 60 };
+        store.add_minute(6_000, open, 50, 60, Loot::default()).unwrap();
+        let loot = Loot { meso: 1, etc_value: 2, potion_cost: 3 };
+        let row = MinuteRow { minute_start: 0, exp_gained: 100, training_secs: 60, loot };
         let snapshot = store.create_snapshot("Saved", 60, None, None, &[row, row]).unwrap();
 
+        // Its grind not yet filed, the old session keeps its minute.
+        store.prune(3_000).unwrap();
+        assert_eq!(store.minutes_between(0, 10_000, None).unwrap().len(), 2);
+        store.file_grind(&[old], None, None).unwrap();
         store.prune(3_000).unwrap();
 
-        assert_eq!(store.minutes_between(0, 10_000, None).unwrap(), [MinuteRow { minute_start: 6_000, exp_gained: 50, training_secs: 60 }]);
+        assert_eq!(store.minutes_between(0, 10_000, None).unwrap(), [MinuteRow { minute_start: 6_000, exp_gained: 50, training_secs: 60, ..Default::default() }]);
         let sessions: i64 = store.conn.query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0)).unwrap();
         assert_eq!(sessions, 1);
-        assert_eq!(store.snapshot_minutes(snapshot).unwrap(), [MinuteRow { minute_start: 0, exp_gained: 200, training_secs: 120 }]);
+        assert_eq!(store.snapshot_minutes(snapshot).unwrap(), [MinuteRow { minute_start: 0, exp_gained: 200, training_secs: 120, loot: Loot { meso: 2, etc_value: 4, potion_cost: 6 } }]);
+        // The grinding time keeps the pruned minute's training, until a reset.
+        assert_eq!(store.grind_secs().unwrap(), 120);
+        store.set_live_since(6_000).unwrap();
+        assert_eq!(store.grind_secs().unwrap(), 0);
+        // So do the totals, through a session reset too, until their own reset.
+        assert_eq!(store.totals().unwrap(), Totals { exp: 150, loot: Loot::default(), since: Some(0) });
+        store.reset_totals().unwrap();
+        assert_eq!(store.totals().unwrap(), Totals::default());
+    }
+
+    #[test]
+    fn a_grind_is_saved_without_its_idle_ends_and_expires_unless_the_users() {
+        let store = Store::open_in_memory().unwrap();
+        let session = store.start_session(None, 0).unwrap();
+        // Loot before the first kill, two minutes of training, two idle minutes after.
+        for (minute, training) in [(0, 0), (60, 60), (120, 30), (180, 0), (240, 0)] {
+            store.add_minute(minute, session, 10, training, Loot { meso: 5, ..Loot::default() }).unwrap();
+        }
+        store.end_session(session, 300).unwrap();
+        let id = store.file_grind(&[session], Some(("Field", Some("Field"))), Some(30)).unwrap();
+        let saved = &store.snapshots().unwrap()[0];
+        assert_eq!((Some(saved.id), saved.from, saved.to, saved.created_at, saved.training_secs, saved.auto), (id, Some(60), Some(180), 180, 90, true));
+        assert!(store.unfiled_sessions().unwrap().is_empty());
+
+        let mine = store.create_snapshot("Mine", 0, None, None, &[]).unwrap();
+        assert_eq!(store.delete_expired_snapshots(10_000).unwrap(), 1);
+        assert_eq!(store.snapshots().unwrap().iter().map(|s| s.id).collect::<Vec<_>>(), [mine]);
     }
 }

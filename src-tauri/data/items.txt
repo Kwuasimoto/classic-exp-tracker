@@ -1,0 +1,686 @@
+# MapleStory Classic World Etc and Use items: kind, name and price, tab-separated.
+# etc: the NPC sell price. use: the lowest NPC shop price in mesos (0 when no NPC sells it).
+# From the MapleStory Classic Wiki's item and shop tables (https://mapleclassic.wiki), fetched
+# 2026-10-23. Licensed CC BY-NC-SA 4.0 (https://creativecommons.org/licenses/by-nc-sa/4.0/) by the
+# wiki's contributors; see LICENSE.md here.
+etc	Adamantium Ingot	300
+etc	Adamantium Ore	60
+etc	Alligator Skin Pouch	1
+etc	Amethyst	1000
+etc	Amethyst Ore	200
+etc	Ancient Scroll	1
+etc	Animal Fossil	1
+etc	Animal Fur Bundle	10
+etc	Aquamarine	200
+etc	Aquamarine Ore	40
+etc	Arcon's Blood	0
+etc	Armor Crafting Catalyst	1000
+etc	Arwen's Glass Shoe	250
+etc	Athena Pierce's Letter	0
+etc	Ayan's Letter	1
+etc	Ayan's Toy Sword	1
+etc	Bain's Spiky Collar	90
+etc	Bartos's Letter	1
+etc	Betty's report	1
+etc	Binding Bridle	89
+etc	Black Crystal	2500
+etc	Black Crystal Ore	500
+etc	Black Dye	250
+etc	Black Feather	1000
+etc	Blackbull's Deed to the Land	1
+etc	Bloctopus Key Chain	35
+etc	Blue Dye	250
+etc	Blue Mushroom Cap	19
+etc	Blue Snail Shell	2
+etc	Blue Toy Block	45
+etc	Blue Viola	1000
+etc	Broken Mirror Glass	0
+etc	Bronze Ingot	100
+etc	Bronze Ore	20
+etc	Bruce's Special Cake	1
+etc	Bubbling's Huge Bubble	15
+etc	Buffoon's Grandpa Clock	74
+etc	Buffy Hat	62
+etc	Cellion Tail	53
+etc	Cerebes Tooth	72
+etc	Charm of the Undead	24
+etc	Cheap Battery	41
+etc	Chief Gray's Sign	490
+etc	Chief Stan's Letter	0
+etc	Clang Claw	49
+etc	Clock Spring	34
+etc	Coconut	10
+etc	Cog	37
+etc	Cold Eye Tail	41
+etc	Coupon	0
+etc	Cracked Black Crystal	1
+etc	Croco Skin	52
+etc	Curse Eye Tail	33
+etc	Cursed Doll	40
+etc	Dances with Balrog's Letter	0
+etc	Dark Crystal	8000
+etc	Dark Crystal Ore	3500
+etc	Dark Jr. Yeti Skin	56
+etc	Dark Leatty Furball	33
+etc	Dark Marble (Bowman)	0
+etc	Dark Marble (Magician)	0
+etc	Dark Marble (Thief)	0
+etc	Dark Marble (Warrior)	0
+etc	Dark Nependeath Seed	47
+etc	Dark Pepe Beak	64
+etc	Dark Stone Golem Rubble	58
+etc	Dark Yeti Horn	68
+etc	Decayed Charm	52
+etc	Deep Buffoon's Rock Piece	77
+etc	Dexterity Crystal	5000
+etc	Dexterity Crystal Ore	2000
+etc	Diamond	1200
+etc	Diamond Ore	240
+etc	Dirty Bandage	47
+etc	Double-Rooted Red Ginseng	2000
+etc	Dragon Skin	200
+etc	Drake Skull	45
+etc	Dual Pirate's Propeller	87
+etc	Emerald	400
+etc	Emerald Ore	80
+etc	Eos Rock Scroll	1000
+etc	Estelle's Special Sauce	0
+etc	Event Trophy	5000
+etc	Evil Eye Tail	27
+etc	Evil Spirit	76
+etc	Eye of Fire	1
+etc	Fairy Dust	1
+etc	Fairy Wing	5000
+etc	Fairy's Tentacle	29
+etc	Fire Boar's Tooth	32
+etc	Fire Ore	1
+etc	Fire Sentinel Shellpiece	30
+etc	Firebomb Flame	51
+etc	Firewood	17
+etc	Flaming Feather	1
+etc	Fly-Eye Wing	41
+etc	Flying Medicine	1
+etc	Fossil Box	1
+etc	Fossil Report	1
+etc	Fragment of Magic	10
+etc	Free Spirit	67
+etc	Fresh Milk	500
+etc	Garnet	200
+etc	Garnet Ore	40
+etc	Gatekeeper Armband	108
+etc	Ghost Pirate Key	83
+etc	Giant Tree's Bough	51
+etc	Giant Tree's Rotten Bough	54
+etc	Gigantic Viking Hat	98
+etc	Glowing Mushroom	0
+etc	Glowing Mushroom Spore	39
+etc	Gold Ingot	300
+etc	Gold Ore	60
+etc	Green Mushroom Cap	14
+etc	Grendel the Really Old's Letter	0
+etc	Grupin Tail	53
+etc	Hard Walnut	34
+etc	Hector Tail	55
+etc	Hella's Pendant	1
+etc	Hero's Gladius	0
+etc	Horny Mushroom Cap	22
+etc	Horse Skull	73
+etc	Ice Piece	99
+etc	Ice Sentinel Shellpiece	30
+etc	Iron Hog's Metal Hoof	28
+etc	Iron Ingot	100
+etc	Iron Ore	20
+etc	Jr. Boogie Horn	35
+etc	Jr. Cerebes Tooth	43
+etc	Jr. Necki Skin	21
+etc	Jr. Pepe's Fish	35
+etc	Jr. Sentinel Shellpiece	0
+etc	Jr. Yeti Skin	50
+etc	Lazy Buffy Marble	66
+etc	Leaf	11
+etc	Leather	10
+etc	Leatty Furball	32
+etc	Lewis's Letter	0
+etc	Life Scroll	1
+etc	Ligator Skin	31
+etc	Lioner Tail	53
+etc	Lorang Claw	38
+etc	Lucas' Letter	0
+etc	Lucida Tail	73
+etc	Luck Crystal	5000
+etc	Luck Crystal Ore	2000
+etc	Luminous Magical Resonance	0
+etc	Lunar Pixie's Moonpiece	45
+etc	Lupin Doll	100
+etc	Lupin's Banana	37
+etc	Luster Pixie's Sunpiece	52
+etc	Lycanthrope Toenail	80
+etc	Magic Box	1
+etc	Malady's Experimental Frog	55
+etc	Maple Leaf	1
+etc	Maria's Letter	1
+etc	Mateon's Tentacle	41
+etc	Mecateon's Laser Gun	48
+etc	Mechanical Heart	44
+etc	Medicine With Weird Vibes	48
+etc	Memory Powder	1
+etc	Mithril Ingot	200
+etc	Mithril Ore	40
+etc	Monster Card	1
+etc	Moon Rock	2000
+etc	Motor	37
+etc	Mrs. Ming Ming's Cooking Recipe	1
+etc	MT-09's Fuel	540
+etc	Mushmom Spore	400
+etc	Mushroom Spore	3
+etc	Nependeath Seed	42
+etc	Octopus & Mushroom Omok Set	1
+etc	Octopus Leg	12
+etc	Old Chief Stan's Hammer	1
+etc	Old Gold Watch	1
+etc	Old Map Piece (1/4)	1
+etc	Old Map Piece (2/4)	1
+etc	Old Map Piece (3/4)	1
+etc	Old Map Piece (4/4)	1
+etc	Old Ring	1
+etc	Old Wooden Board	0
+etc	Ominous Rotten Branch	0
+etc	Omok Piece: Mushroom	1
+etc	Omok Piece: Octopus	1
+etc	Omok Piece: Pig	1
+etc	Omok Piece: Slime	1
+etc	Omok Table	1
+etc	One-Handed Weapon Crafting Catalyst	1000
+etc	Opal	800
+etc	Opal Ore	160
+etc	Orange Mushroom Cap	8
+etc	Orbis Rock Scroll	1000
+etc	Orihalcon Ingot	500
+etc	Orihalcon Ore	100
+etc	Panda Doll	36
+etc	Paper Document	1
+etc	Pass	0
+etc	Pelvic Bone	63
+etc	Pepe Beak	60
+etc	Pet Ability Transfer Scroll	5000
+etc	Piece of Ice	400
+etc	Pig & Mushroom Omok Set	1
+etc	Pig & Octopus Omok Set	1
+etc	Pig's Head	7
+etc	Pig's Ribbon	10
+etc	Pink Anthurium	1000
+etc	Pink Viola	1000
+etc	Plane Controller	38
+etc	Plant Fossil	1
+etc	Plant Sample	1
+etc	Plastic Crown	38
+etc	Plateon's Helmet	44
+etc	Poisonous Mushroom	500
+etc	Power Crystal	5000
+etc	Power Crystal Ore	2000
+etc	Processed Cloth	10
+etc	Processed Leather	10
+etc	Processed Parchment	10
+etc	Processed Wood	10
+etc	Propeller	36
+etc	Rafflesia Petal	47
+etc	Rat Trap	32
+etc	Receiving Apparatus	46
+etc	Red Cape	1
+etc	Red Dye	250
+etc	Red Snail Shell	4
+etc	Rib	57
+etc	Rina's Unagi Special	550
+etc	Rombot's Memory Card	470
+etc	Rotten Root Fragment	0
+etc	Rusty Screw	0
+etc	Sapphire	600
+etc	Sapphire Ore	120
+etc	Scorched Arcon Scroll	1
+etc	Screw	1
+etc	Scroll Crafting Catalyst	1000
+etc	Scroll of Secrets	1
+etc	Sealed Bottle	95
+etc	Sealed Teddy Bear	85
+etc	Sealed-up Grandpa Clock	71
+etc	Secret Book	150
+etc	Seedling	19
+etc	Sentinel Shellpiece	30
+etc	Sera's Mirror	0
+etc	Set of Match Cards	1
+etc	Shumi's Coin	50
+etc	Shumi's Roll of Cash	100
+etc	Shumi's Sack of Cash	1000
+etc	Silver Ingot	400
+etc	Silver Ore	80
+etc	Skeledog's Bone	44
+etc	Slate	24
+etc	Slime & Mushroom Omok Set	1
+etc	Slime & Octopus Omok Set	1
+etc	Slime & Pig Omok Set	1
+etc	Slime Bubble	50
+etc	Small Egg	39
+etc	Small Spaceship	42
+etc	Snail Shell	1
+etc	Soft Feather	10
+etc	Solid Horn	33
+etc	Space Food	40
+etc	Sparkling Glass Marble	0
+etc	Sparkling Rock	0
+etc	Special Stirge Phobia Cure	1
+etc	Spiderweb	25
+etc	Spool of Thread	1
+etc	Squishy Liquid	6
+etc	Star Pixie's Starpiece	35
+etc	Star Rock	4000
+etc	Sticky Spiderweb	28
+etc	Stiff Feather	10
+etc	Stirge Wing	20
+etc	Stone Golem Rubble	56
+etc	Strange Mushroom Spore	0
+etc	Stuffed Drake Skull	1
+etc	Stump's Teardrop	1
+etc	Table Clock	40
+etc	Tablecloth	34
+etc	Tanathos Strap	108
+etc	Tauromacis Horn	70
+etc	Taurospear Horn	75
+etc	Teddy's Cotton	30
+etc	Teddy's Yellow Ribbon	32
+etc	The Book of Ancient	1
+etc	The Dark Lord's Letter	0
+etc	The First Piece of an Ancient Scroll	1
+etc	The Girl Next Door	150
+etc	The Key	1
+etc	The Magic Rock	1
+etc	The Proof of a Hero (Bowman)	0
+etc	The Proof of a Hero (Magician)	0
+etc	The Proof of a Hero (Thief)	0
+etc	The Proof of a Hero (Warrior)	0
+etc	The Second Piece of an Ancient Scroll	1
+etc	The Snail Legend	1
+etc	The Summoning Rock	1
+etc	The Third Piece of an Ancient Scroll	1
+etc	Ticket to Construction Site B1	1
+etc	Ticket to Construction Site B2	1
+etc	Ticket to Construction Site B3	1
+etc	Ticket to Ellinia (Basic)	1
+etc	Ticket to Ellinia (Regular)	1
+etc	Ticket to Ludibrium (Basic)	1
+etc	Ticket to Ludibrium (Regular)	1
+etc	Ticket to Orbis (Basic)	1
+etc	Ticket to Orbis (Regular)	1
+etc	Topaz	400
+etc	Topaz Ore	80
+etc	Tortie Shell	46
+etc	Toy Drum	31
+etc	Toy Duckling	34
+etc	Toy Trojan Sword	39
+etc	Treasure Scroll	1
+etc	Tree Branch	5
+etc	Two-Handed Weapon Crafting Catalyst	1000
+etc	Very Dry Branch	1
+etc	Viking Sail	93
+etc	VIP Mirror	500
+etc	Vitamin Gummy	1
+etc	Weird Medicine	0
+etc	Werewolf Toenail	75
+etc	White Dye	250
+etc	White Fang Tail	59
+etc	White Viola	1000
+etc	Wild Boar Tooth	25
+etc	Wild Kargo Eye	62
+etc	Winston's Recommendation	1
+etc	Wisdom Crystal	5000
+etc	Wisdom Crystal Ore	2000
+etc	Witchgrass Leaf	1
+etc	Wooden Board	23
+etc	Worn-Out Goggle	31
+etc	Yellow Dye	250
+etc	Yellow Toy Block	42
+etc	Yeti Horn	65
+etc	Zombie Teddy Bear	63
+etc	Zombie's Lost Gold Tooth	58
+etc	Zombie's Lost Tooth	57
+use	10,000 Meso Pouch	0
+use	3x EXP Coupon (15 min)	0
+use	50,000 Meso Pouch	0
+use	Adamantium Arrows for Bows	0
+use	Andre's Seafood Soup	480
+use	Apple	20
+use	Arcforging Kit	0
+use	Arrows for Bows	1
+use	Arrows for Crossbows	1
+use	Atmospheric Effect Box	0
+use	Avatar Gift Box	0
+use	Black Sack	0
+use	Blue Malady's Candy	0
+use	Blue Potion	220
+use	Bottomwear DEF Scroll: Chaos	0
+use	Bottomwear DEF Scroll: Greater	0
+use	Bottomwear DEF Scroll: Intermediate	0
+use	Bottomwear DEF Scroll: Lesser	20000
+use	Bottomwear HP Scroll: Chaos	0
+use	Bottomwear HP Scroll: Greater	0
+use	Bottomwear HP Scroll: Intermediate	0
+use	Bottomwear HP Scroll: Lesser	0
+use	Bottomwear MP Scroll: Chaos	0
+use	Bottomwear MP Scroll: Greater	0
+use	Bottomwear MP Scroll: Intermediate	0
+use	Bottomwear MP Scroll: Lesser	0
+use	Bow Attack Scroll: Chaos	0
+use	Bow Attack Scroll: Greater	0
+use	Bow Attack Scroll: Intermediate	0
+use	Bow Attack Scroll: Lesser	0
+use	Bronze Arrows for Bows	2
+use	Bronze Arrows for Crossbows	2
+use	Cake	150
+use	Cape Accuracy Scroll: Chaos	0
+use	Cape Accuracy Scroll: Greater	0
+use	Cape Accuracy Scroll: Intermediate	0
+use	Cape Accuracy Scroll: Lesser	0
+use	Cape DEX Scroll: Chaos	0
+use	Cape DEX Scroll: Greater	0
+use	Cape DEX Scroll: Intermediate	0
+use	Cape DEX Scroll: Lesser	0
+use	Cape INT Scroll: Chaos	0
+use	Cape INT Scroll: Greater	0
+use	Cape INT Scroll: Intermediate	0
+use	Cape INT Scroll: Lesser	0
+use	Cape LUK Scroll: Chaos	0
+use	Cape LUK Scroll: Greater	0
+use	Cape LUK Scroll: Intermediate	0
+use	Cape LUK Scroll: Lesser	0
+use	Cape Magic Def. Scroll: Chaos	0
+use	Cape Magic Def. Scroll: Greater	0
+use	Cape Magic Def. Scroll: Intermediate	0
+use	Cape Magic Def. Scroll: Lesser	0
+use	Cape STR Scroll: Chaos	0
+use	Cape STR Scroll: Greater	0
+use	Cape STR Scroll: Intermediate	0
+use	Cape STR Scroll: Lesser	0
+use	Cape Weapon Def. Scroll: Chaos	0
+use	Cape Weapon Def. Scroll: Greater	0
+use	Cape Weapon Def. Scroll: Intermediate	0
+use	Cape Weapon Def. Scroll: Lesser	0
+use	Cider	0
+use	Claw Attack Scroll: Chaos	0
+use	Claw Attack Scroll: Greater	0
+use	Claw Attack Scroll: Intermediate	0
+use	Claw Attack Scroll: Lesser	0
+use	Companion's Magic Box	0
+use	Crossbow Attack Scroll: Chaos	0
+use	Crossbow Attack Scroll: Greater	0
+use	Crossbow Attack Scroll: Intermediate	0
+use	Crossbow Attack Scroll: Lesser	0
+use	Dagger Attack Scroll: Chaos	0
+use	Dagger Attack Scroll: Greater	0
+use	Dagger Attack Scroll: Intermediate	0
+use	Dagger Attack Scroll: Lesser	0
+use	Destructive Potion	750
+use	Dexterity Potion	500
+use	Drake's Blood	0
+use	Drake's Meat	0
+use	Dried Squid	180
+use	Earring Crit. Damage Scroll: Chaos	0
+use	Earring Crit. Damage Scroll: Greater	0
+use	Earring Crit. Damage Scroll: Intermediate	0
+use	Earring Crit. Damage Scroll: Lesser	40000
+use	Earring DEX Scroll: Chaos	0
+use	Earring DEX Scroll: Greater	0
+use	Earring DEX Scroll: Intermediate	0
+use	Earring DEX Scroll: Lesser	0
+use	Earring Evasion Scroll: Chaos	0
+use	Earring Evasion Scroll: Greater	0
+use	Earring Evasion Scroll: Intermediate	0
+use	Earring Evasion Scroll: Lesser	40000
+use	Earring INT Scroll: Chaos	0
+use	Earring INT Scroll: Greater	0
+use	Earring INT Scroll: Intermediate	0
+use	Earring INT Scroll: Lesser	0
+use	Earring LUK Scroll: Chaos	0
+use	Earring LUK Scroll: Greater	0
+use	Earring LUK Scroll: Intermediate	0
+use	Earring LUK Scroll: Lesser	0
+use	Earring STR Scroll: Chaos	0
+use	Earring STR Scroll: Greater	0
+use	Earring STR Scroll: Intermediate	0
+use	Earring STR Scroll: Lesser	0
+use	Egg	30
+use	Elixir	3000
+use	Fairy's Honey	0
+use	Fat Sausage	800
+use	Fern Face Coupon	0
+use	Fried Chicken	60
+use	Frieren Face Coupon	0
+use	Gift for the New Journey	0
+use	Gloves Accuracy Scroll: Chaos	0
+use	Gloves Accuracy Scroll: Greater	0
+use	Gloves Accuracy Scroll: Intermediate	0
+use	Gloves Accuracy Scroll: Lesser	0
+use	Gloves Attack Scroll: Chaos	0
+use	Gloves Attack Scroll: Greater	0
+use	Gloves Attack Scroll: Intermediate	0
+use	Gloves Attack Scroll: Lesser	40000
+use	Gloves Crit. Rate Scroll: Chaos	0
+use	Gloves Crit. Rate Scroll: Greater	0
+use	Gloves Crit. Rate Scroll: Intermediate	0
+use	Gloves Crit. Rate Scroll: Lesser	0
+use	Gloves Magic Attack Scroll: Chaos	0
+use	Gloves Magic Attack Scroll: Greater	0
+use	Gloves Magic Attack Scroll: Intermediate	0
+use	Gloves Magic Attack Scroll: Lesser	0
+use	GM Black Sack: Jr. Balrog Level 80	0
+use	GM Black Sack: King Slime Level 32	0
+use	GM Black Sack: Mano Level 20	0
+use	GM Black Sack: Mushmom Level 40	0
+use	GM Black Sack: Rotten Mushmom Level 60	0
+use	GM Black Sack: Zombie Mushmom Level 50	0
+use	GM's Blessing of the Keen Eye	0
+use	GM's Blessing of Wind	0
+use	Grape Juice	1260
+use	Green Apple	0
+use	Green Malady's Candy	0
+use	Hamburger	350
+use	Hat Accuracy Scroll: Chaos	0
+use	Hat Accuracy Scroll: Greater	0
+use	Hat Accuracy Scroll: Intermediate	0
+use	Hat Accuracy Scroll: Lesser	0
+use	Hat HP Scroll: Chaos	0
+use	Hat HP Scroll: Greater	0
+use	Hat HP Scroll: Intermediate	0
+use	Hat HP Scroll: Lesser	0
+use	Hat MP Scroll: Chaos	0
+use	Hat MP Scroll: Greater	0
+use	Hat MP Scroll: Intermediate	0
+use	Hat MP Scroll: Lesser	0
+use	Himmel Face Coupon	0
+use	Hot Dog	180
+use	Hot Dog Supreme	400
+use	Hwabi Throwing Stars	0
+use	Ice Cream Pop	0
+use	Icicle	0
+use	Ilbi Throwing Stars	0
+use	Iron Arrows for Bows	0
+use	Iron Arrows for Crossbows	0
+use	Kumbi Throwing Stars	0
+use	Leaf Points (1,000) Exchange Coupon	0
+use	Leaf Points (10,000) Exchange Coupon	0
+use	Leaf Points (100,000) Exchange Coupon	0
+use	Leaf Points (5,000) Exchange Coupon	0
+use	Leaf Points (50,000) Exchange Coupon	0
+use	Leatherworking Kit	0
+use	Lemon	150
+use	Lie Detector Test	0
+use	Magic Potion	500
+use	Mana Elixir	0
+use	MapleStory Community VIP Chat Ring Exchange Coupon	0
+use	MapleStory Community VIP Exchange Gift Box	0
+use	MapleStory Community VIP Label Ring Exchange Coupon	0
+use	MapleStory Fest 2026 Surprise Gift Box	0
+use	Meat	80
+use	Melting Cheese	0
+use	Mithril Arrows for Crossbows	0
+use	Mokbi Throwing Stars	0
+use	Mrs. Ming Ming's Stew	480
+use	Mysterious Meso Pouch	0
+use	Natalie's Fashion Box (F)	0
+use	Natalie's Fashion Box (M)	0
+use	One-Handed Axe Attack Scroll: Chaos	0
+use	One-Handed Axe Attack Scroll: Greater	0
+use	One-Handed Axe Attack Scroll: Intermediate	0
+use	One-Handed Axe Attack Scroll: Lesser	0
+use	One-Handed Blunt Weapon Attack Scroll: Chaos	0
+use	One-Handed Blunt Weapon Attack Scroll: Greater	0
+use	One-Handed Blunt Weapon Attack Scroll: Intermediate	0
+use	One-Handed Blunt Weapon Attack Scroll: Lesser	0
+use	One-Handed Sword Attack Scroll: Chaos	0
+use	One-Handed Sword Attack Scroll: Greater	0
+use	One-Handed Sword Attack Scroll: Intermediate	0
+use	One-Handed Sword Attack Scroll: Lesser	0
+use	Orange	50
+use	Orange Juice	540
+use	Orange Mushroom Daydream	500
+use	Orange Mushroom Invasion	0
+use	Orange Potion	150
+use	Overall Armor DEF Scroll: Chaos	0
+use	Overall Armor DEF Scroll: Greater	0
+use	Overall Armor DEF Scroll: Intermediate	0
+use	Overall Armor DEF Scroll: Lesser	0
+use	Overall Armor DEX Scroll: Chaos	0
+use	Overall Armor DEX Scroll: Greater	0
+use	Overall Armor DEX Scroll: Intermediate	0
+use	Overall Armor DEX Scroll: Lesser	40000
+use	Overall Armor INT Scroll: Chaos	0
+use	Overall Armor INT Scroll: Greater	0
+use	Overall Armor INT Scroll: Intermediate	0
+use	Overall Armor INT Scroll: Lesser	40000
+use	Overall Armor LUK Scroll: Chaos	0
+use	Overall Armor LUK Scroll: Greater	0
+use	Overall Armor LUK Scroll: Intermediate	0
+use	Overall Armor LUK Scroll: Lesser	40000
+use	Overall Armor STR Scroll: Chaos	0
+use	Overall Armor STR Scroll: Greater	0
+use	Overall Armor STR Scroll: Intermediate	0
+use	Overall Armor STR Scroll: Lesser	40000
+use	Pet Equip Jump Scroll: Chaos	0
+use	Pet Equip Jump Scroll: Greater	0
+use	Pet Equip Jump Scroll: Intermediate	0
+use	Pet Equip Jump Scroll: Lesser	0
+use	Pet Equip Speed Scroll: Chaos	0
+use	Pet Equip Speed Scroll: Greater	0
+use	Pet Equip Speed Scroll: Intermediate	0
+use	Pet Equip Speed Scroll: Lesser	0
+use	Pet Food	30
+use	Pizza	252
+use	Polearm Attack Scroll: Chaos	0
+use	Polearm Attack Scroll: Greater	0
+use	Polearm Attack Scroll: Intermediate	0
+use	Polearm Attack Scroll: Lesser	0
+use	Power Elixir	0
+use	Pure Water	1120
+use	Rainbow-colored Snail Shell	0
+use	Red Bean Porridge	0
+use	Red Bean Sundae	0
+use	Red Malady's Candy	0
+use	Red Potion	50
+use	Red Snail Daydream	0
+use	Red Snail Invasion	0
+use	Reindeer Milk	0
+use	Return Scroll - Nearest Town	400
+use	Return Scroll to El Nath	0
+use	Return Scroll to Ellinia	500
+use	Return Scroll to Forgotten Hollow	0
+use	Return Scroll to Henesys	500
+use	Return Scroll to Kerning City	500
+use	Return Scroll to Lith Harbor	500
+use	Return Scroll to Orbis	0
+use	Return Scroll to Perion	500
+use	Return Scroll to Sleepywood	600
+use	Ribbon Pig Daydream	500
+use	Ribbon Pig Invasion	0
+use	Roger's Apple	0
+use	Salad	220
+use	Sap of Ancient Tree	0
+use	Sharpness Potion	750
+use	Shield Accuracy Scroll: Chaos	0
+use	Shield Accuracy Scroll: Greater	0
+use	Shield Accuracy Scroll: Intermediate	0
+use	Shield Accuracy Scroll: Lesser	0
+use	Shield DEF Scroll: Chaos	0
+use	Shield DEF Scroll: Greater	0
+use	Shield DEF Scroll: Intermediate	0
+use	Shield DEF Scroll: Lesser	0
+use	Shoes Evasion Scroll: Chaos	0
+use	Shoes Evasion Scroll: Greater	0
+use	Shoes Evasion Scroll: Intermediate	0
+use	Shoes Evasion Scroll: Lesser	0
+use	Shoes Jump Scroll: Chaos	0
+use	Shoes Jump Scroll: Greater	0
+use	Shoes Jump Scroll: Intermediate	0
+use	Shoes Jump Scroll: Lesser	0
+use	Shoes Speed Scroll: Chaos	0
+use	Shoes Speed Scroll: Greater	0
+use	Shoes Speed Scroll: Intermediate	0
+use	Shoes Speed Scroll: Lesser	0
+use	Smithing Kit	0
+use	Sniper Potion	0
+use	Snowball	0
+use	Spear Attack Scroll: Chaos	0
+use	Spear Attack Scroll: Greater	0
+use	Spear Attack Scroll: Intermediate	0
+use	Spear Attack Scroll: Lesser	0
+use	Speed Potion	500
+use	Staff Magic Attack Scroll: Chaos	0
+use	Staff Magic Attack Scroll: Greater	0
+use	Staff Magic Attack Scroll: Intermediate	0
+use	Staff Magic Attack Scroll: Lesser	0
+use	Stark Face Coupon	0
+use	Steely Throwing Knives	0
+use	Subi Throwing Stars	500
+use	Summoning New-Type Balrog	0
+use	Sunrise Dew	0
+use	Sunset Dew	0
+use	Supreme Dexterity Potion	600
+use	Supreme Sniper Potion	600
+use	Tailoring Kit	0
+use	The Songs of Solomon	0
+use	Thief's Note	0
+use	Tobi Throwing Stars	0
+use	Topwear DEF Scroll: Chaos	0
+use	Topwear DEF Scroll: Greater	0
+use	Topwear DEF Scroll: Intermediate	0
+use	Topwear DEF Scroll: Lesser	20000
+use	Topwear HP Scroll: Chaos	0
+use	Topwear HP Scroll: Greater	0
+use	Topwear HP Scroll: Intermediate	0
+use	Topwear HP Scroll: Lesser	0
+use	Topwear MP Scroll: Chaos	0
+use	Topwear MP Scroll: Greater	0
+use	Topwear MP Scroll: Intermediate	0
+use	Topwear MP Scroll: Lesser	0
+use	Two-handed Axe Attack Scroll: Chaos	0
+use	Two-handed Axe Attack Scroll: Greater	0
+use	Two-handed Axe Attack Scroll: Intermediate	0
+use	Two-handed Axe Attack Scroll: Lesser	0
+use	Two-handed Blunt Weapon Attack Scroll: Chaos	0
+use	Two-handed Blunt Weapon Attack Scroll: Greater	0
+use	Two-handed Blunt Weapon Attack Scroll: Intermediate	0
+use	Two-handed Blunt Weapon Attack Scroll: Lesser	0
+use	Two-handed Sword Attack Scroll: Chaos	0
+use	Two-handed Sword Attack Scroll: Greater	0
+use	Two-handed Sword Attack Scroll: Intermediate	0
+use	Two-handed Sword Attack Scroll: Lesser	0
+use	Unagi	1000
+use	W Ramen	0
+use	Wand Magic Attack Scroll: Chaos	0
+use	Wand Magic Attack Scroll: Greater	0
+use	Wand Magic Attack Scroll: Intermediate	0
+use	Wand Magic Attack Scroll: Lesser	0
+use	Warrior Potion	500
+use	Watermelon	0
+use	Weaponcrafting Kit	0
+use	White Potion	350
+use	Wolbi Throwing Stars	1000
+use	Woodcrafting Kit	0
+use	Wooden Top	0

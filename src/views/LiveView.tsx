@@ -1,19 +1,23 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { RateChart } from "../components/RateChart";
-import { formatDateTime, formatHours, formatPct } from "../lib/format";
-import { getLiveChart, lockMap, renameMap, resetSession, saveSnapshot, unlockMap, WINDOWS_MINUTES, type AppError, type Bar, type Tick, type WindowMinutes } from "../lib/ipc";
-import { expToLevel, liveRates } from "../lib/live";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { ActivePots } from "../components/ActivePots";
+import { Ledger, type Headline, type LedgerGroup } from "../components/Ledger";
+import { Pickups } from "../components/Pickups";
+import { expSeries, RateChart } from "../components/RateChart";
+import { formatDateTime, formatDay, formatHours, formatPct, formatWhole as whole } from "../lib/format";
+import { getLiveChart, lockMap, renameMap, resetSession, resetTotals, saveSnapshot, unlockMap, WINDOWS_MINUTES, type AppError, type Bar, type Tick, type WindowMinutes } from "../lib/ipc";
+import { expToLevel, liveRates, lockOf, mesoLines, mesoRates, profitOf } from "../lib/live";
 
 const TOAST_MS = 3000;
-const whole = (n: number) => Math.round(n).toLocaleString("en-US");
 
-export function LiveView({ tick }: { tick: Tick | null }) {
+export function LiveView({ tick, status }: { tick: Tick | null; status: ReactNode }) {
   const [bars, setBars] = useState<Bar[]>([]);
   const [windowMinutes, setWindowMinutes] = useState<WindowMinutes>(WINDOWS_MINUTES[0]);
   const [error, setError] = useState<AppError | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   // The map being renamed: only ever opened by the user's click, never by the app.
   const [naming, setNaming] = useState<{ mapId: number; name: string } | null>(null);
+  // Resetting the totals throws away what may be weeks of counting: it asks first.
+  const [confirmingTotals, setConfirmingTotals] = useState(false);
   // Chart requests go out every second and can finish out of order: keep only the newest.
   const latestRequest = useRef(0);
 
@@ -67,6 +71,13 @@ export function LiveView({ tick }: { tick: Tick | null }) {
     void refreshChart();
   };
 
+  const clearTotals = async () => {
+    const res = await resetTotals();
+    setConfirmingTotals(false);
+    if (!res.success) return setError(res.error);
+    setToast("Totals reset");
+  };
+
   // Reload with every tick (once a second): the chart includes the minute in progress.
   useEffect(() => {
     void refreshChart();
@@ -75,16 +86,59 @@ export function LiveView({ tick }: { tick: Tick | null }) {
   const rates = liveRates(bars, tick);
   const toLevel = expToLevel(tick);
   const level = tick?.level ?? null;
-  const locked = tick?.lockedMap != null;
-  const lockedName = tick?.lockedName ?? "the locked map";
-  // Locked, but somewhere else: the EXP here isn't counted.
-  const away = locked && (tick.shopping || tick.mapId !== tick.lockedMap);
+  const lock = lockOf(tick);
+  const locked = lock !== null;
+  const lockedName = lock?.name ?? "the locked map";
+  // With meso tracking on, the ledger and chart show the mesos too.
+  const tracking = tick?.loot.enabled === true;
+  const mesos = mesoRates(bars);
+  const headlines: Headline[] = [
+    { title: "EXP / hr", tone: "exp", value: rates.expPerHour === null ? "—" : whole(rates.expPerHour), caption: locked ? `last 60 min · ${lockedName}` : "last 60 min" },
+  ];
+  if (tracking) headlines.push({ title: "Profit / hr", tone: "meso", value: mesos === null ? "—" : whole(mesos.profit), caption: "after potions" });
+  const groups: LedgerGroup[] = [
+    {
+      title: "EXP",
+      lines: [
+        { label: "% / hr", note: level === null ? undefined : `of level ${level}`, value: rates.pctPerHour === null ? "—" : `${rates.pctPerHour.toFixed(2)}%` },
+        { label: "Time to level", value: rates.hoursToLevel === null ? "—" : formatHours(rates.hoursToLevel) },
+        { label: "EXP to level", value: toLevel === null ? "—" : `${toLevel.exact ? "" : "≈ "}${whole(toLevel.exp)}` },
+        {
+          label: "EXP now",
+          note: tick?.pctBp == null ? undefined : formatPct(tick.pctBp),
+          value: tick?.exp == null ? "—" : `${tick.expExact ? "" : "≈ "}${whole(tick.exp)}`,
+        },
+      ],
+    },
+  ];
+  if (tracking) groups.push({ title: "Mesos per hour", lines: mesoLines(mesos, tick?.loot ?? null) });
+  const totals = tick?.totals ?? null;
+  groups.push({
+    title: "Totals",
+    note: totals?.since == null ? undefined : `since ${formatDay(totals.since)}`,
+    action: confirmingTotals ? (
+      <>
+        <button className="btn small danger" onClick={() => void clearTotals()}>Reset totals</button>
+        <button className="btn small" onClick={() => setConfirmingTotals(false)}>Keep</button>
+      </>
+    ) : (
+      <button className="icon-btn" aria-label="Reset totals" title="Start the totals again from 0 (the session reset leaves them alone)" disabled={totals === null} onClick={() => setConfirmingTotals(true)}>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M3 12a9 9 0 1 0 3-6.7" />
+          <polyline points="3 3 3 9 9 9" />
+        </svg>
+      </button>
+    ),
+    lines: [
+      { label: "EXP gained", value: totals === null ? "—" : whole(totals.exp) },
+      ...(tracking ? [{ label: "Profit", note: "after potions", value: totals === null ? "—" : whole(profitOf(totals.loot)) }] : []),
+    ],
+  });
 
   return (
     <>
-      <section className="panel row" style={{ flexWrap: "nowrap", gap: 16 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="label">Current map</div>
+      <section className="panel page-head">
+        <div className="page-head-main">
           {naming ? (
             <div className="row" style={{ flexWrap: "nowrap", gap: 8 }}>
               <input
@@ -103,7 +157,7 @@ export function LiveView({ tick }: { tick: Tick | null }) {
             </div>
           ) : (
             <div className="row" style={{ flexWrap: "nowrap", gap: 8 }}>
-              <h1>{tick?.shopping ? "Shopping" : tick?.mapId == null ? "Waiting for map…" : (tick.mapName ?? "Unrecognised map")}</h1>
+              <h1 className="page-title">{tick?.shopping ? "Shopping" : tick?.mapId == null ? "Waiting for map…" : (tick.mapName ?? "Unrecognised map")}</h1>
               {tick?.mapId != null && !tick.shopping && (
                 <button
                   className="icon-btn"
@@ -133,8 +187,8 @@ export function LiveView({ tick }: { tick: Tick | null }) {
               )}
             </div>
           )}
-          {away && <div className="caption">Locked to {lockedName}: EXP here isn't counted</div>}
         </div>
+        {status}
         <div className={level === null ? "badge pending" : "badge"} title={level === null ? "Narrowing down your level from the EXP readings" : undefined}>
           LV. {level ?? "Determining…"}
         </div>
@@ -142,23 +196,18 @@ export function LiveView({ tick }: { tick: Tick | null }) {
       {error && <p className="panel error">{error.message}</p>}
       {toast && <div className="toast" role="status">{toast}</div>}
 
-      <div className="stats">
-        <Stat label="EXP / hr" accent value={rates.expPerHour === null ? "—" : whole(rates.expPerHour)} caption={locked ? `last 60 min on ${lockedName}` : "last 60 min of training"} />
-        <Stat label="% / hr" value={rates.pctPerHour === null ? "—" : `${rates.pctPerHour.toFixed(2)}%`} caption={level === null ? "of this level" : `of level ${level}`} />
-        <Stat label="Time to level" value={rates.hoursToLevel === null ? "—" : formatHours(rates.hoursToLevel)} caption="at the current rate" />
-        <Stat
-          label="EXP to level"
-          value={toLevel === null ? "—" : `${toLevel.exact ? "" : "≈ "}${whole(toLevel.exp)}`}
-          caption={
-            tick?.exp == null || tick.pctBp == null
-              ? "waiting for EXP"
-              : `${whole(tick.exp)}${tick.totalEst == null ? "" : ` / ${whole(tick.totalEst)}`} (${formatPct(tick.pctBp)})`
-          }
-        />
-      </div>
-
+      <div className="page-body chart-only">
+        <Ledger headlines={headlines} warning={lock?.away ? `Locked to ${lockedName}: nothing here is counted` : null} groups={groups}>
+          {tracking && tick && (
+            <>
+              <ActivePots loot={tick.loot} onError={setError} onDone={setToast} />
+              <Pickups pickedUp={tick.loot.pickedUp} />
+            </>
+          )}
+        </Ledger>
+        <div className="page-main">
       <RateChart
-        bars={bars}
+        series={expSeries(bars, tracking)}
         fill
         actions={
           <div className="row" style={{ gap: 8, flexWrap: "nowrap" }}>
@@ -185,16 +234,8 @@ export function LiveView({ tick }: { tick: Tick | null }) {
           </div>
         }
       />
+        </div>
+      </div>
     </>
-  );
-}
-
-function Stat({ label, value, caption, accent = false }: { label: string; value: string; caption: string; accent?: boolean }) {
-  return (
-    <section className="panel">
-      <div className={accent ? "label accent" : "label"}>{label}</div>
-      <div className="value">{value}</div>
-      <div className="caption">{caption}</div>
-    </section>
   );
 }

@@ -1,7 +1,9 @@
 //! Pure screen readers: in-memory crop in, parsed value out.
 
+pub mod count;
 pub mod exp;
 pub mod font;
+pub mod inventory;
 pub mod level;
 pub mod map_names;
 pub mod map_strip;

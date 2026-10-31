@@ -13,6 +13,8 @@ pub enum AppError {
     Invalid(String),
     #[error("not found: {0}")]
     NotFound(String),
+    #[error("window: {0}")]
+    Window(String),
 }
 
 impl From<StoreError> for AppError {

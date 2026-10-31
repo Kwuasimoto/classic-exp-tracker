@@ -1,0 +1,68 @@
+/* The popout: the "stopwatch" level ring and the rates, pinned above the game. Colours are
+   App.css's tokens; the window is transparent, so only the panel shows. It's read at a glance
+   over a busy game: the panel is opaque, and nothing is smaller than 11 px or dimmer than
+   --label (#d4d4d8, about 13:1 on the panel). */
+:root {
+  --panel: #141416;
+  --label: #d4d4d8;
+  --rule: #34343b;
+  --text: #ffffff;
+  --accent: #f68d13;
+  --meso: #f5c542;
+  --ok: #51bb86;
+  --warn: #f0a04b;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: transparent; overflow: hidden; }
+body { font-family: "Titillium Web", system-ui, sans-serif; color: var(--text); user-select: none; cursor: default; }
+
+.popout {
+  position: relative; display: inline-flex; align-items: stretch; height: 96px;
+  padding: 8px 18px 8px 8px; border-radius: 10px; background: var(--panel); font-variant-numeric: tabular-nums;
+}
+.dot { position: absolute; top: 7px; left: 7px; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+.stale .dot { background: var(--warn); }
+
+/* Two sections split by a hairline: the ring (level and session), then the rates over a
+   footer row (time to level, or what's wrong). Labels left, numbers right, so every value
+   sits in a column instead of floating. */
+.ring { flex-shrink: 0; display: block; align-self: center; margin-right: 10px; }
+.ring circle { fill: none; }
+.ring .track { stroke: #34343a; }
+.ring .done { stroke: #d9d9de; }
+.ring .hour { stroke: var(--accent); }
+.ring .lap-track { stroke: #26262a; }
+.ring .lap { stroke: #b5b5bb; stroke-linecap: round; }
+.ring text { text-anchor: middle; font-family: "Titillium Web", sans-serif; }
+.ring .clock { fill: var(--text); font-size: 13px; font-weight: 900; }
+/* From 10 hours the clock has a digit more: smaller so it stays inside the lap ring. */
+.ring .clock.long { font-size: 11.5px; }
+.ring .clock-label { fill: var(--label); font-size: 11px; font-weight: 700; }
+
+.side { display: flex; flex-direction: column; justify-content: center; padding-left: 12px; border-left: 1px solid var(--rule); white-space: nowrap; }
+.rates { display: grid; grid-template-columns: auto auto; column-gap: 12px; margin: 0; }
+.rates div { display: contents; }
+.rates dt { align-self: center; font-size: 12px; font-weight: 700; color: var(--label); }
+.rates dd { margin: 0; text-align: right; font-weight: 900; line-height: 1.15; }
+.rates .exp { font-size: 22px; color: var(--accent); }
+.rates .meso { font-size: 17px; color: var(--meso); }
+.foot { margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--rule); font-size: 13px; font-weight: 700; color: var(--label); }
+.foot b { color: var(--text); }
+/* Hovering it shows the totals (EXP and profit since the last reset) as a tooltip. */
+.totals {
+  display: inline-grid; place-items: center; width: 16px; height: 16px; margin-left: 8px; vertical-align: 1px;
+  border: 1.5px solid var(--label); border-radius: 50%; font-size: 10px; font-weight: 700; line-height: 1; color: var(--label); cursor: help;
+}
+.totals:hover { border-color: var(--text); color: var(--text); }
+.foot.warning { color: var(--warn); }
+.stale .rates dd, .stale .foot b, .stale .ring .clock { fill: #9a9aa0; color: #9a9aa0; }
+.stale .ring .hour { stroke: #6a5030; }
+
+.close {
+  position: absolute; top: 4px; right: 4px; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08); color: #b5b5b9; font-size: 10px; line-height: 18px; cursor: pointer; opacity: 0;
+}
+.popout:hover .close, .close:focus-visible { opacity: 1; }
+.close:hover { background: #c42b1c; color: #ffffff; }
+.close:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

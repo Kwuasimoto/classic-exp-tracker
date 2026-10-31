@@ -15,8 +15,9 @@ src-tauri/gen/schemas/
 classic-exp-tracker-config*.json
 glyphs-*.json
 
-# glyph-collect recordings (dev tool, see src-tauri/src/bin/glyph_collect.rs)
+# glyph-collect recordings and meso-watch snapshots (dev tool, see src-tauri/src/bin/glyph_collect.rs)
 frames*.txt
+debug/
 
 # Local environment and editor files
 *.local

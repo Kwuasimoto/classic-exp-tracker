@@ -3,6 +3,7 @@
 
 mod confirm;
 mod level;
+pub mod loot;
 
 pub use confirm::{ConfirmOutcome, MapConfirmer};
 use level::{exp_to_next, TotalBounds};
@@ -11,7 +12,7 @@ use std::collections::BTreeMap;
 
 use log::{info, warn};
 
-use crate::rates::MinuteRow;
+use crate::rates::{Loot, MinuteRow};
 use crate::read::exp::ExpReading;
 
 pub type MapId = i64;
@@ -27,6 +28,9 @@ pub struct Sample {
     /// The currently confirmed map: `None` until one is confirmed. EXP counts either
     /// way, in a session without a map until then.
     pub map: Option<MapId>,
+    /// Mesos made since the last sample (loot::LootTracker); counted in the session on
+    /// `map`, like EXP.
+    pub loot: Loot,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -35,7 +39,7 @@ pub struct Sample {
 pub enum Effect {
     SessionStarted { key: SessionKey, map: Option<MapId>, t: i64 },
     SessionEnded { key: SessionKey, t: i64 },
-    Minute { minute_start: i64, key: SessionKey, exp_gained: u64, training_secs: u32 },
+    Minute { minute_start: i64, key: SessionKey, exp_gained: u64, training_secs: u32, loot: Loot },
 }
 
 const TRAINING_GRACE_SECS: i64 = 120;
@@ -61,14 +65,16 @@ pub struct Tracker {
     level: Option<u32>,
     /// Last screen level that did not fit the readings, so it is logged once.
     unfit_screen_level: Option<u32>,
+    /// A percent-only reading seen once, waiting to be read again (see `accept`).
+    pending_percent: Option<ExpReading>,
     rejections: u32,
     last_gain_t: Option<i64>,
     last_t: Option<i64>,
     session: Option<ActiveSession>,
     next_key: u64,
     minute: Option<i64>,
-    /// Per-session (exp_gained, training_secs) for the current minute.
-    acc: BTreeMap<SessionKey, (u64, u32)>,
+    /// Per-session (exp_gained, training_secs, loot) for the current minute.
+    acc: BTreeMap<SessionKey, (u64, u32, Loot)>,
 }
 
 impl Tracker {
@@ -109,6 +115,10 @@ impl Tracker {
             let key = self.session_for(s.map, s.t, &mut fx);
             self.acc.entry(key).or_default().0 += gain;
         }
+        if !s.loot.is_zero() {
+            let key = self.session_for(s.map, s.t, &mut fx);
+            self.acc.entry(key).or_default().2 += s.loot;
+        }
 
         let dt = self.last_t.map_or(0, |prev| (s.t - prev).clamp(0, MAX_SAMPLE_GAP_SECS));
         self.last_t = Some(s.t);
@@ -145,10 +155,10 @@ impl Tracker {
 
     /// End `sess`: its part of the minute in progress first, then `SessionEnded`.
     fn end(&mut self, sess: ActiveSession, fx: &mut Vec<Effect>) {
-        if let (Some(minute_start), Some((exp_gained, training_secs))) = (self.minute, self.acc.remove(&sess.key))
-            && (exp_gained > 0 || training_secs > 0)
+        if let (Some(minute_start), Some((exp_gained, training_secs, loot))) = (self.minute, self.acc.remove(&sess.key))
+            && (exp_gained > 0 || training_secs > 0 || !loot.is_zero())
         {
-            fx.push(Effect::Minute { minute_start, key: sess.key, exp_gained, training_secs });
+            fx.push(Effect::Minute { minute_start, key: sess.key, exp_gained, training_secs, loot });
         }
         fx.push(Effect::SessionEnded { key: sess.key, t: sess.last_on_map });
         self.session = None;
@@ -169,19 +179,33 @@ impl Tracker {
     }
 
     /// Returns the EXP gained since the baseline; 0 for first, rejected, or death readings.
+    /// Gains are the change in EXP into the level (ExpReading::exp_in_level), so a readout
+    /// that shows only the percent counts 0.01% steps of the level's total.
     fn accept(&mut self, r: ExpReading) -> u64 {
         let Some(base) = self.baseline else {
             self.reset_to(r);
             self.check_level();
             return 0;
         };
-        if r.exp < base.exp && (base.pct_bp >= LEVEL_UP_FROM_BP && r.pct_bp < LEVEL_UP_TO_BP || self.fits_next_level_only(r)) {
-            let total = self.total_estimate().unwrap_or(base.exp);
-            info!("level-up: {base:?} -> {r:?}, old level total {total} (level {:?})", self.level);
+        // A percent alone has no counter to check it against: a new one counts only once it
+        // has been read twice in a row, so a single misread can't add a slice of the level.
+        if let ExpReading::Percent { .. } = r
+            && r != base
+            && self.pending_percent.replace(r) != Some(r)
+        {
+            return 0;
+        }
+        self.pending_percent = None;
+        if r.pct_bp() < base.pct_bp() && (base.pct_bp() >= LEVEL_UP_FROM_BP && r.pct_bp() < LEVEL_UP_TO_BP || self.fits_next_level_only(r)) {
+            let total = self.total_estimate();
+            let was = base.exp_in_level(total);
+            info!("level-up: {base:?} -> {r:?}, old level total {total:?} (level {:?})", self.level);
             self.level = self.level.map(|l| l + 1);
             self.reset_to(r);
             self.check_level();
-            return total.saturating_sub(base.exp) + r.exp;
+            // Unknown, the old level's total is taken as where the last reading left it.
+            let finished = was.map_or(0, |was| total.unwrap_or(was).saturating_sub(was));
+            return finished + r.exp_in_level(self.total_estimate()).unwrap_or(0);
         }
         match (self.bounds, TotalBounds::from_reading(r)) {
             (Some(known), Some(implied)) => match known.intersect(implied) {
@@ -202,12 +226,24 @@ impl Tracker {
             (Some(_), None) => {}
         }
         self.check_level();
-        if r.exp < base.exp {
+        match (base, r) {
+            (ExpReading::Counter { .. }, ExpReading::Percent { .. }) => {
+                info!("the readout shows only the percent ({r:?}): counting 0.01% steps of the level total {:?}", self.total_estimate());
+            }
+            (ExpReading::Percent { .. }, ExpReading::Counter { .. }) => info!("the readout shows the EXP counter again ({r:?})"),
+            _ => {}
+        }
+        let total = self.total_estimate();
+        let (was, now) = (base.exp_in_level(total), r.exp_in_level(total));
+        if matches!((was, now), (Some(was), Some(now)) if now < was) {
             info!("EXP dropped {base:?} -> {r:?}: counted as a death, no gain");
         }
         self.rejections = 0;
         self.baseline = Some(r);
-        r.exp.saturating_sub(base.exp)
+        match (was, now) {
+            (Some(was), Some(now)) => now.saturating_sub(was),
+            _ => 0,
+        }
     }
 
     /// With the level known, a reading that fits the next level's table total but
@@ -227,8 +263,19 @@ impl Tracker {
             return;
         }
         let total = exp_to_next(level);
-        // No EXP readings yet: checked again on the next frame.
-        let Some(bounds) = self.bounds else { return };
+        let Some(bounds) = self.bounds else {
+            // The readout shows only the percent and no counter was read this level: nothing
+            // to check the screen's level against, and it's the only way to the level's total.
+            if let Some(ExpReading::Percent { .. }) = self.baseline
+                && total.is_some()
+            {
+                info!("screen shows level {level}; the readout shows only the percent, so it's used unchecked (table total {total:?})");
+                self.level = Some(level);
+                self.unfit_screen_level = None;
+            }
+            // Otherwise no EXP readings yet: checked again on the next frame.
+            return;
+        };
         if total.is_some_and(|t| bounds.contains(t)) {
             info!("screen shows level {level}; its table total {total:?} fits readings {bounds:?}");
             self.level = Some(level);
@@ -287,14 +334,19 @@ impl Tracker {
         if map.is_some() && self.session.map(|s| s.map) != Some(map) {
             return None;
         }
-        let (exp_gained, training_secs) = self.acc.values().fold((0, 0), |(e, s), &(de, ds)| (e + de, s + ds));
-        (exp_gained > 0 || training_secs > 0).then_some(MinuteRow { minute_start, exp_gained, training_secs })
+        let mut row = MinuteRow { minute_start, ..Default::default() };
+        for &(exp_gained, training_secs, loot) in self.acc.values() {
+            row.exp_gained += exp_gained;
+            row.training_secs += training_secs;
+            row.loot += loot;
+        }
+        (row.exp_gained > 0 || row.training_secs > 0 || !row.loot.is_zero()).then_some(row)
     }
 
     fn flush(&mut self, minute_start: i64, fx: &mut Vec<Effect>) {
-        for (key, (exp_gained, training_secs)) in std::mem::take(&mut self.acc) {
-            if exp_gained > 0 || training_secs > 0 {
-                fx.push(Effect::Minute { minute_start, key, exp_gained, training_secs });
+        for (key, (exp_gained, training_secs, loot)) in std::mem::take(&mut self.acc) {
+            if exp_gained > 0 || training_secs > 0 || !loot.is_zero() {
+                fx.push(Effect::Minute { minute_start, key, exp_gained, training_secs, loot });
             }
         }
     }
@@ -308,7 +360,7 @@ mod tests {
     const TOWN: Option<MapId> = Some(2);
 
     fn reading(exp: u64, pct_bp: u32) -> Option<ExpReading> {
-        Some(ExpReading { exp, pct_bp })
+        Some(ExpReading::Counter { exp, pct_bp })
     }
 
     fn total_exp(fx: &[Effect]) -> u64 {
@@ -318,8 +370,8 @@ mod tests {
     #[test]
     fn level_up_counts_the_rest_of_the_old_level() {
         let mut tr = Tracker::new();
-        tr.on_sample(Sample { t: 0, exp: reading(990_000, 9_900), map: MAP });
-        tr.on_sample(Sample { t: 1, exp: reading(5_000, 50), map: MAP });
+        tr.on_sample(Sample { t: 0, exp: reading(990_000, 9_900), map: MAP, loot: Loot::default() });
+        tr.on_sample(Sample { t: 1, exp: reading(5_000, 50), map: MAP, loot: Loot::default() });
         assert_eq!(total_exp(&tr.finish()), 15_000);
     }
 
@@ -327,10 +379,10 @@ mod tests {
     fn level_up_uses_the_table_total_once_the_level_is_known() {
         let mut tr = Tracker::new();
         // 291,000 EXP at 89.75% only fits level 41's table total, 324,240.
-        tr.on_sample(Sample { t: 0, exp: reading(291_000, 8_975), map: MAP });
+        tr.on_sample(Sample { t: 0, exp: reading(291_000, 8_975), map: MAP, loot: Loot::default() });
         assert_eq!((tr.level(), tr.total_estimate()), (Some(41), Some(324_240)));
         // 1,000 EXP is 0.28% of level 42's 356,916.
-        tr.on_sample(Sample { t: 1, exp: reading(1_000, 28), map: MAP });
+        tr.on_sample(Sample { t: 1, exp: reading(1_000, 28), map: MAP, loot: Loot::default() });
         assert_eq!(tr.level(), Some(42));
         assert_eq!(total_exp(&tr.finish()), 324_240 - 291_000 + 1_000);
     }
@@ -339,10 +391,10 @@ mod tests {
     fn level_up_below_80_percent_is_caught_by_the_table() {
         let mut tr = Tracker::new();
         // 200,000 EXP at 61.68% fits only level 41 (324,240).
-        tr.on_sample(Sample { t: 0, exp: reading(200_000, 6_168), map: MAP });
+        tr.on_sample(Sample { t: 0, exp: reading(200_000, 6_168), map: MAP, loot: Loot::default() });
         assert_eq!(tr.level(), Some(41));
         // 1,000 EXP at 0.28% fits level 42 (356,916), not 41: a level-up, not a death.
-        tr.on_sample(Sample { t: 1, exp: reading(1_000, 28), map: MAP });
+        tr.on_sample(Sample { t: 1, exp: reading(1_000, 28), map: MAP, loot: Loot::default() });
         assert_eq!(tr.level(), Some(42));
         assert_eq!(total_exp(&tr.finish()), 324_240 - 200_000 + 1_000);
     }
@@ -350,10 +402,10 @@ mod tests {
     #[test]
     fn current_minute_counts_gains_before_the_minute_ends() {
         let mut tr = Tracker::new();
-        tr.on_sample(Sample { t: 60, exp: reading(10_000, 1_000), map: MAP });
-        tr.on_sample(Sample { t: 61, exp: reading(10_050, 1_005), map: MAP });
-        assert_eq!(tr.current_minute(None), Some(MinuteRow { minute_start: 60, exp_gained: 50, training_secs: 1 }));
-        let fx = tr.on_sample(Sample { t: 120, exp: None, map: TOWN });
+        tr.on_sample(Sample { t: 60, exp: reading(10_000, 1_000), map: MAP, loot: Loot::default() });
+        tr.on_sample(Sample { t: 61, exp: reading(10_050, 1_005), map: MAP, loot: Loot::default() });
+        assert_eq!(tr.current_minute(None), Some(MinuteRow { minute_start: 60, exp_gained: 50, training_secs: 1, ..Default::default() }));
+        let fx = tr.on_sample(Sample { t: 120, exp: None, map: TOWN, loot: Loot::default() });
         assert_eq!(total_exp(&fx), 50);
         assert_eq!(tr.current_minute(None), None);
     }
@@ -361,11 +413,11 @@ mod tests {
     #[test]
     fn a_locked_map_counts_only_its_own_gains_in_the_minute() {
         let mut tr = Tracker::new();
-        tr.on_sample(Sample { t: 60, exp: reading(10_000, 1_000), map: MAP });
-        tr.on_sample(Sample { t: 61, exp: reading(10_050, 1_005), map: MAP });
+        tr.on_sample(Sample { t: 60, exp: reading(10_000, 1_000), map: MAP, loot: Loot::default() });
+        tr.on_sample(Sample { t: 61, exp: reading(10_050, 1_005), map: MAP, loot: Loot::default() });
         assert_eq!(tr.current_minute(MAP).map(|m| m.exp_gained), Some(50));
         // A quest turned in on another map: that session's EXP isn't counted while locked.
-        tr.on_sample(Sample { t: 62, exp: reading(10_950, 1_095), map: TOWN });
+        tr.on_sample(Sample { t: 62, exp: reading(10_950, 1_095), map: TOWN, loot: Loot::default() });
         assert_eq!(tr.current_minute(None).map(|m| m.exp_gained), Some(900));
         assert_eq!(tr.current_minute(MAP), None);
     }
@@ -375,10 +427,10 @@ mod tests {
         let mut tr = Tracker::new();
         let mut fx = Vec::new();
         for t in 0..=2 {
-            fx.extend(tr.on_sample(Sample { t, exp: reading(10_000 + 10 * t as u64, 1_000 + t as u32), map: None }));
+            fx.extend(tr.on_sample(Sample { t, exp: reading(10_000 + 10 * t as u64, 1_000 + t as u32), map: None, loot: Loot::default() }));
         }
         // Once the map is confirmed, its gains go to a session on that map.
-        fx.extend(tr.on_sample(Sample { t: 3, exp: reading(10_030, 1_003), map: MAP }));
+        fx.extend(tr.on_sample(Sample { t: 3, exp: reading(10_030, 1_003), map: MAP, loot: Loot::default() }));
         fx.extend(tr.finish());
         let maps: Vec<_> = fx.iter().filter_map(|f| if let Effect::SessionStarted { map, .. } = f { Some(*map) } else { None }).collect();
         assert_eq!((maps, total_exp(&fx)), (vec![None, MAP], 30));
@@ -390,17 +442,51 @@ mod tests {
         tr.use_screen_level(41);
         assert_eq!(tr.level(), None, "no EXP readings to confirm it yet");
         // 291,000 EXP at 89.75% fits only level 41's table total.
-        tr.on_sample(Sample { t: 0, exp: reading(291_000, 8_975), map: MAP });
+        tr.on_sample(Sample { t: 0, exp: reading(291_000, 8_975), map: MAP, loot: Loot::default() });
         tr.use_screen_level(40);
         assert_eq!(tr.level(), Some(41), "a misread level box doesn't override the readings");
     }
 
     #[test]
+    fn past_a_million_exp_the_percent_alone_counts_steps_of_the_level_total() {
+        let total = exp_to_next(60).unwrap();
+        let at = |bp: u64| total * bp / 10_000;
+        let percent = |pct_bp| Some(ExpReading::Percent { pct_bp });
+        let mut tr = Tracker::new();
+        let start = at(7_990);
+        tr.on_sample(Sample { t: 0, exp: reading(start, 7_990), map: MAP, loot: Loot::default() });
+        assert_eq!(tr.level(), Some(60));
+        // The counter is gone; each new percent counts once read twice in a row, so the
+        // one-frame misread (90.00%) adds nothing.
+        for (t, bp) in [(1, 8_000), (2, 8_000), (3, 9_000), (4, 8_010), (5, 8_010)] {
+            tr.on_sample(Sample { t, exp: percent(bp), map: MAP, loot: Loot::default() });
+        }
+        assert_eq!(tr.current_minute(None).map(|m| m.exp_gained), Some(at(8_010) - start));
+        // The next level starts with the counter again.
+        tr.on_sample(Sample { t: 6, exp: reading(1_000, 1), map: MAP, loot: Loot::default() });
+        assert_eq!(tr.level(), Some(61));
+        assert_eq!(total_exp(&tr.finish()), total - start + 1_000);
+    }
+
+    #[test]
+    fn with_only_the_percent_on_screen_the_screen_level_is_used_unchecked() {
+        let total = exp_to_next(60).unwrap();
+        let percent = |pct_bp| Some(ExpReading::Percent { pct_bp });
+        let mut tr = Tracker::new();
+        tr.on_sample(Sample { t: 0, exp: percent(8_436), map: MAP, loot: Loot::default() });
+        tr.use_screen_level(60);
+        assert_eq!(tr.level(), Some(60));
+        tr.on_sample(Sample { t: 1, exp: percent(8_437), map: MAP, loot: Loot::default() });
+        tr.on_sample(Sample { t: 2, exp: percent(8_437), map: MAP, loot: Loot::default() });
+        assert_eq!(total_exp(&tr.finish()), total * 8_437 / 10_000 - total * 8_436 / 10_000);
+    }
+
+    #[test]
     fn death_is_not_negative_gain() {
         let mut tr = Tracker::new();
-        tr.on_sample(Sample { t: 0, exp: reading(500_000, 5_000), map: MAP });
-        tr.on_sample(Sample { t: 1, exp: reading(450_000, 4_500), map: MAP });
-        tr.on_sample(Sample { t: 2, exp: reading(460_000, 4_600), map: MAP });
+        tr.on_sample(Sample { t: 0, exp: reading(500_000, 5_000), map: MAP, loot: Loot::default() });
+        tr.on_sample(Sample { t: 1, exp: reading(450_000, 4_500), map: MAP, loot: Loot::default() });
+        tr.on_sample(Sample { t: 2, exp: reading(460_000, 4_600), map: MAP, loot: Loot::default() });
         assert_eq!(total_exp(&tr.finish()), 10_000);
     }
 
@@ -411,12 +497,12 @@ mod tests {
         // 10_000 + 10t EXP at (1000 + t) bp: consistent with a 100_000 total.
         let steady = |t: i64| reading(10_000 + 10 * t as u64, 1_000 + t as u32);
         for t in 0..=10 {
-            fx.extend(tr.on_sample(Sample { t, exp: steady(t), map: MAP }));
+            fx.extend(tr.on_sample(Sample { t, exp: steady(t), map: MAP, loot: Loot::default() }));
         }
         for t in 11..=200 {
-            fx.extend(tr.on_sample(Sample { t, exp: None, map: TOWN }));
+            fx.extend(tr.on_sample(Sample { t, exp: None, map: TOWN, loot: Loot::default() }));
         }
-        fx.extend(tr.on_sample(Sample { t: 201, exp: steady(20), map: MAP }));
+        fx.extend(tr.on_sample(Sample { t: 201, exp: steady(20), map: MAP, loot: Loot::default() }));
         fx.extend(tr.finish());
         let started = fx.iter().filter(|f| matches!(f, Effect::SessionStarted { .. })).count();
         let training: u32 = fx.iter().map(|f| if let Effect::Minute { training_secs, .. } = f { *training_secs } else { 0 }).sum();
@@ -429,10 +515,10 @@ mod tests {
         let mut fx = Vec::new();
         // Gain on MAP, then on TOWN within the same minute: MAP's session ends mid-minute.
         for t in 0..=5 {
-            fx.extend(tr.on_sample(Sample { t, exp: reading(10_000 + 10 * t as u64, 1_000 + t as u32), map: MAP }));
+            fx.extend(tr.on_sample(Sample { t, exp: reading(10_000 + 10 * t as u64, 1_000 + t as u32), map: MAP, loot: Loot::default() }));
         }
         for t in 6..=8 {
-            fx.extend(tr.on_sample(Sample { t, exp: reading(10_000 + 10 * t as u64, 1_000 + t as u32), map: TOWN }));
+            fx.extend(tr.on_sample(Sample { t, exp: reading(10_000 + 10 * t as u64, 1_000 + t as u32), map: TOWN, loot: Loot::default() }));
         }
         fx.extend(tr.end_session());
         let mut ended = Vec::new();
