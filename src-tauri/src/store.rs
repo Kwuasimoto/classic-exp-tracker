@@ -224,7 +224,7 @@ PRAGMA user_version = 11;
 COMMIT;
 ";
 
-/// Version 12 (0.8.1): whether the inventory was seen in a minute with everything made counted
+/// Version 12 (0.8.0): whether the inventory was seen in a minute with everything made counted
 /// (rates::MinuteRow::loot_seen). Minutes from before count as seen, so their rates stay as they were.
 const MIGRATION_12: &str = "
 BEGIN;

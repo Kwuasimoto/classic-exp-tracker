@@ -264,6 +264,8 @@ tr.selected td { background: rgba(255, 255, 255, 0.1); }
 .patch { image-rendering: pixelated; flex-shrink: 0; display: block; }
 .btn.small { padding: 4px 14px; font-size: 13px; }
 
+/* A notice about the whole page (the chat translator isn't finished): amber edge, plain text. */
+.panel.notice { margin: 0; border-left: 2px solid var(--warn); background: rgba(240, 160, 75, 0.08); }
 /* Chat translator, Translations view: a chat without bubbles. The log fills the page above a
    reply box; until chat lines come, the log holds one note. */
 .chat { flex: 1; min-height: 360px; display: flex; flex-direction: column; padding: 0; }

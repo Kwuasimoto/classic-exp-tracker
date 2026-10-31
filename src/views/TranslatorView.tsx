@@ -68,6 +68,9 @@ export function TranslatorView({ status: readerStatus }: { status: ReactNode }) 
           {readerStatus}
         </div>
       </section>
+      <p className="panel notice" role="note">
+        <b>Not finished yet.</b> Reading and translating the chat are expected in the next release. You can already install languages here, so they're ready when it arrives.
+      </p>
       {error && <p className="panel error">{error.message}</p>}
       {view === "translations" ? (
         <LiveTranslations status={status} onSetUp={() => setChosen("setup")} onTurnOn={() => void toggle()} />
