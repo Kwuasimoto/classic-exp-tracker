@@ -13,14 +13,16 @@ import { useTick } from "./lib/useTick";
 import { HistoryView } from "./views/HistoryView";
 import { LiveView } from "./views/LiveView";
 import { MesoView } from "./views/MesoView";
+import { TranslatorView } from "./views/TranslatorView";
 
-type Tab = "live" | "mesos" | "history";
+type Tab = "live" | "mesos" | "history" | "translator";
 
 const ICON = { fill: "none", stroke: "currentColor", strokeWidth: 2.2, strokeLinecap: "round", strokeLinejoin: "round" } as const;
 const TABS: ReadonlyArray<{ id: Tab; label: string; icon: ReactNode }> = [
   { id: "live", label: "Live", icon: <><polyline points="3 17 9 11 13 15 21 7" /><polyline points="15 7 21 7 21 13" /></> },
   { id: "mesos", label: "Mesos", icon: <><circle cx="12" cy="12" r="9" /><path d="M15 9.5a3 3 0 0 0-3-1.5c-1.7 0-3 .9-3 2s1.3 1.7 3 2 3 .9 3 2-1.3 2-3 2a3 3 0 0 1-3-1.5" /><line x1="12" y1="6" x2="12" y2="18" /></> },
   { id: "history", label: "History", icon: <><circle cx="12" cy="12" r="9" /><polyline points="12 7 12 12 15 14" /></> },
+  { id: "translator", label: "Chat translator", icon: <><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /><path d="M8 8h6M11 7v1M9.5 8c0 2 1.5 3.5 3.5 4M12.5 8c-.5 2-2 3.5-4 4" /></> },
 ];
 // Arrows pointing in (compress) and out (expand).
 const COMPRESS = <><polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" /><line x1="14" y1="10" x2="21" y2="3" /><line x1="3" y1="21" x2="10" y2="14" /></>;
@@ -124,6 +126,7 @@ export default function App() {
           {tab === "live" && <LiveView tick={tick} status={status} />}
           {tab === "mesos" && <MesoView tick={tick} status={status} />}
           {tab === "history" && <HistoryView status={status} />}
+          {tab === "translator" && <TranslatorView status={status} />}
         </main>
       </div>
     </div>

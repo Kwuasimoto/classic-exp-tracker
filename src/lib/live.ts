@@ -1,5 +1,5 @@
 import type { LedgerLine } from "../components/Ledger";
-import { formatWhole } from "./format";
+import { formatClock, formatWhole } from "./format";
 import type { Bar, Loot, LootStatus, Tick } from "./ipc";
 
 export interface LiveRates {
@@ -41,6 +41,23 @@ export function mesoRates(bars: Bar[]): MesoRates | null {
   if (r === null) return null;
   return { profit: r.meso + r.etcValue - r.potionCost, meso: r.meso, etc: r.etcValue, potions: r.potionCost };
 }
+
+/** The inventory unseen this long (s) and the loot rates count as held: a frame or two
+ *  without it (the cursor over it) isn't worth mentioning. */
+const HELD_AFTER_SECS = 90;
+
+/** While the inventory is closed the loot rates hold at the last time it was seen
+ *  (rates::bars_range): that time, or null when they're current. */
+export function lootHeldSince(loot: LootStatus | null): number | null {
+  if (!loot?.enabled || loot.seenAt === null) return null;
+  return Date.now() / 1000 - loot.seenAt > HELD_AFTER_SECS ? loot.seenAt : null;
+}
+
+/** The Profit/hr headline's caption: "after potions", or since when it's held. */
+export const profitCaption = (held: number | null): string => (held === null ? "after potions" : `held since ${formatClock(held)}`);
+
+/** The ledger's line while the loot rates are held. */
+export const HELD_WARNING = "Inventory closed: Profit/hr holds until you open it on the Etc tab";
 
 /** Which potions count as used: the main HP and MP items, named. */
 export function potionsCounted(loot: LootStatus | null): string {

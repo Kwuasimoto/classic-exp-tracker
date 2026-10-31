@@ -18,7 +18,7 @@ use crate::tracker::MapId;
 
 /// The `calibration` table (boxes drawn per resolution) is unread since 0.4.0, when the
 /// app started placing its boxes itself (geom::boxes_for); its rows are left as they are.
-const SCHEMA_VERSION: i64 = 11;
+const SCHEMA_VERSION: i64 = 12;
 const SCHEMA: &str = "
 BEGIN;
 CREATE TABLE maps (
@@ -224,6 +224,16 @@ PRAGMA user_version = 11;
 COMMIT;
 ";
 
+/// Version 12 (0.8.1): whether the inventory was seen in a minute with everything made counted
+/// (rates::MinuteRow::loot_seen). Minutes from before count as seen, so their rates stay as they were.
+const MIGRATION_12: &str = "
+BEGIN;
+ALTER TABLE minutes ADD COLUMN loot_seen INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE snapshot_minutes ADD COLUMN loot_seen INTEGER NOT NULL DEFAULT 1;
+PRAGMA user_version = 12;
+COMMIT;
+";
+
 /// Learned shapes kept per character and resolution: enough for the sub-pixel
 /// positions a character lands at, without growing forever.
 const MAX_GLYPHS_PER_CHAR: i64 = 8;
@@ -317,8 +327,9 @@ fn loot_at(row: &Row, idx: usize) -> rusqlite::Result<Loot> {
     Ok(Loot { meso: col_u64(row, idx)?, etc_value: col_u64(row, idx + 1)?, potion_cost: col_u64(row, idx + 2)? })
 }
 
+/// Columns: minute_start, exp_gained, training_secs, meso, etc_value, potion_cost, loot_seen.
 fn minute_row(row: &Row) -> rusqlite::Result<MinuteRow> {
-    Ok(MinuteRow { minute_start: row.get(0)?, exp_gained: col_u64(row, 1)?, training_secs: col_u32(row, 2)?, loot: loot_at(row, 3)? })
+    Ok(MinuteRow { minute_start: row.get(0)?, exp_gained: col_u64(row, 1)?, training_secs: col_u32(row, 2)?, loot: loot_at(row, 3)?, loot_seen: row.get(6)? })
 }
 
 fn kind_at(row: &Row, idx: usize) -> rusqlite::Result<ItemKind> {
@@ -392,6 +403,9 @@ impl Store {
         }
         if version < 11 {
             conn.execute_batch(MIGRATION_11)?;
+        }
+        if version < 12 {
+            conn.execute_batch(MIGRATION_12)?;
         }
         Ok(Self { conn })
     }
@@ -475,17 +489,18 @@ impl Store {
 
     /// Add to a minute, its training to the grinding time and its EXP and mesos to the
     /// totals, in one transaction.
-    pub fn add_minute(&self, minute_start: i64, session_id: i64, exp_gained: u64, training_secs: u32, loot: Loot) -> Result<(), StoreError> {
+    pub fn add_minute(&self, minute_start: i64, session_id: i64, exp_gained: u64, training_secs: u32, loot: Loot, loot_seen: bool) -> Result<(), StoreError> {
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
-            "INSERT INTO minutes (minute_start, session_id, exp_gained, training_secs, meso, etc_value, potion_cost)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            "INSERT INTO minutes (minute_start, session_id, exp_gained, training_secs, meso, etc_value, potion_cost, loot_seen)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT (minute_start, session_id) DO UPDATE SET
                exp_gained = exp_gained + excluded.exp_gained,
                training_secs = training_secs + excluded.training_secs,
                meso = meso + excluded.meso,
                etc_value = etc_value + excluded.etc_value,
-               potion_cost = potion_cost + excluded.potion_cost",
+               potion_cost = potion_cost + excluded.potion_cost,
+               loot_seen = MAX(loot_seen, excluded.loot_seen)",
             params![
                 minute_start,
                 session_id,
@@ -494,6 +509,7 @@ impl Store {
                 to_i64(loot.meso, "meso")?,
                 to_i64(loot.etc_value, "etc_value")?,
                 to_i64(loot.potion_cost, "potion_cost")?,
+                loot_seen,
             ],
         )?;
         tx.execute(
@@ -543,7 +559,7 @@ impl Store {
     /// sessions on `map` (the map the live view is locked to).
     pub fn minutes_between(&self, from: i64, to: i64, map: Option<MapId>) -> Result<Vec<MinuteRow>, StoreError> {
         let mut stmt = self.conn.prepare(
-            "SELECT m.minute_start, SUM(m.exp_gained), SUM(m.training_secs), SUM(m.meso), SUM(m.etc_value), SUM(m.potion_cost)
+            "SELECT m.minute_start, SUM(m.exp_gained), SUM(m.training_secs), SUM(m.meso), SUM(m.etc_value), SUM(m.potion_cost), MAX(m.loot_seen)
              FROM minutes m JOIN sessions s ON s.id = m.session_id
              WHERE m.minute_start >= ?1 AND m.minute_start < ?2 AND (?3 IS NULL OR s.map_id = ?3)
              GROUP BY m.minute_start ORDER BY m.minute_start",
@@ -672,6 +688,20 @@ impl Store {
         Ok(())
     }
 
+    /// Whether the chat translator is on (off until the user turns it on).
+    pub fn translator_enabled(&self) -> Result<bool, StoreError> {
+        let v: Option<i64> = self.conn.query_row("SELECT value FROM settings WHERE key = 'translator_enabled'", [], |r| r.get(0)).optional()?;
+        Ok(v == Some(1))
+    }
+
+    pub fn set_translator_enabled(&self, on: bool) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('translator_enabled', ?1) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            [i64::from(on)],
+        )?;
+        Ok(())
+    }
+
     /// Where the live view starts (unix seconds); 0 until the first reset.
     pub fn live_since(&self) -> Result<i64, StoreError> {
         Ok(self.conn.query_row("SELECT value FROM settings WHERE key = 'live_since'", [], |r| r.get(0)).optional()?.unwrap_or(0))
@@ -767,7 +797,7 @@ impl Store {
         if let Some((name, map_name)) = name {
             let mut rows: BTreeMap<i64, MinuteRow> = BTreeMap::new();
             let mut stmt = tx.prepare(
-                "SELECT minute_start, exp_gained, training_secs, meso, etc_value, potion_cost FROM minutes WHERE session_id = ?1",
+                "SELECT minute_start, exp_gained, training_secs, meso, etc_value, potion_cost, loot_seen FROM minutes WHERE session_id = ?1",
             )?;
             for session in sessions {
                 for r in stmt.query_map([session], minute_row)? {
@@ -776,6 +806,7 @@ impl Store {
                     row.exp_gained += r.exp_gained;
                     row.training_secs += r.training_secs;
                     row.loot += r.loot;
+                    row.loot_seen |= r.loot_seen;
                 }
             }
             drop(stmt);
@@ -834,7 +865,7 @@ impl Store {
 
     pub fn snapshot_minutes(&self, id: i64) -> Result<Vec<MinuteRow>, StoreError> {
         let mut stmt = self.conn.prepare(
-            "SELECT minute_start, exp_gained, training_secs, meso, etc_value, potion_cost
+            "SELECT minute_start, exp_gained, training_secs, meso, etc_value, potion_cost, loot_seen
              FROM snapshot_minutes WHERE snapshot_id = ?1 ORDER BY minute_start",
         )?;
         let rows = stmt.query_map([id], minute_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
@@ -861,14 +892,15 @@ fn insert_snapshot(tx: &Connection, name: &str, created_at: i64, map_name: Optio
     let id = tx.last_insert_rowid();
     for r in rows {
         tx.execute(
-            "INSERT INTO snapshot_minutes (snapshot_id, minute_start, exp_gained, training_secs, meso, etc_value, potion_cost)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            "INSERT INTO snapshot_minutes (snapshot_id, minute_start, exp_gained, training_secs, meso, etc_value, potion_cost, loot_seen)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT (snapshot_id, minute_start) DO UPDATE SET
                exp_gained = exp_gained + excluded.exp_gained,
                training_secs = training_secs + excluded.training_secs,
                meso = meso + excluded.meso,
                etc_value = etc_value + excluded.etc_value,
-               potion_cost = potion_cost + excluded.potion_cost",
+               potion_cost = potion_cost + excluded.potion_cost,
+               loot_seen = MAX(loot_seen, excluded.loot_seen)",
             params![
                 id,
                 r.minute_start,
@@ -877,6 +909,7 @@ fn insert_snapshot(tx: &Connection, name: &str, created_at: i64, map_name: Optio
                 to_i64(r.loot.meso, "meso")?,
                 to_i64(r.loot.etc_value, "etc_value")?,
                 to_i64(r.loot.potion_cost, "potion_cost")?,
+                r.loot_seen,
             ],
         )?;
     }
@@ -903,7 +936,7 @@ mod tests {
         let store = Store::init(conn).unwrap();
         let map_id: Option<i64> = store.conn.query_row("SELECT map_id FROM sessions", [], |r| r.get(0)).unwrap();
         assert_eq!(map_id, None);
-        assert_eq!(store.minutes_between(0, 60, None).unwrap(), [MinuteRow { minute_start: 0, exp_gained: 100, training_secs: 60, ..Default::default() }]);
+        assert_eq!(store.minutes_between(0, 60, None).unwrap(), [MinuteRow { minute_start: 0, exp_gained: 100, training_secs: 60, loot_seen: true, ..Default::default() }]);
         assert!(store.maps().unwrap().is_empty());
 
         // A second look of a named map belongs to the same map.
@@ -920,7 +953,7 @@ mod tests {
         let (field, town) = (store.insert_map(Some(("Field", NamedBy::List)), &look, 0).unwrap(), store.insert_map(None, &look, 0).unwrap());
         for (map, exp) in [(field, 100), (town, 900)] {
             let session = store.start_session(Some(map), 0).unwrap();
-            store.add_minute(0, session, exp, 60, Loot::default()).unwrap();
+            store.add_minute(0, session, exp, 60, Loot::default(), true).unwrap();
         }
         assert_eq!(store.minutes_between(0, 60, None).unwrap()[0].exp_gained, 1_000);
         assert_eq!(store.minutes_between(0, 60, Some(field)).unwrap()[0].exp_gained, 100);
@@ -931,12 +964,12 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         let map = store.insert_map(Some(("Map", NamedBy::List)), &Signature { counts: vec![1], cut: false }, 0).unwrap();
         let old = store.start_session(Some(map), 0).unwrap();
-        store.add_minute(0, old, 100, 60, Loot::default()).unwrap();
+        store.add_minute(0, old, 100, 60, Loot::default(), true).unwrap();
         store.end_session(old, 60).unwrap();
         let open = store.start_session(None, 6_000).unwrap();
-        store.add_minute(6_000, open, 50, 60, Loot::default()).unwrap();
+        store.add_minute(6_000, open, 50, 60, Loot::default(), true).unwrap();
         let loot = Loot { meso: 1, etc_value: 2, potion_cost: 3 };
-        let row = MinuteRow { minute_start: 0, exp_gained: 100, training_secs: 60, loot };
+        let row = MinuteRow { minute_start: 0, exp_gained: 100, training_secs: 60, loot, loot_seen: true };
         let snapshot = store.create_snapshot("Saved", 60, None, None, &[row, row]).unwrap();
 
         // Its grind not yet filed, the old session keeps its minute.
@@ -945,10 +978,10 @@ mod tests {
         store.file_grind(&[old], None, None).unwrap();
         store.prune(3_000).unwrap();
 
-        assert_eq!(store.minutes_between(0, 10_000, None).unwrap(), [MinuteRow { minute_start: 6_000, exp_gained: 50, training_secs: 60, ..Default::default() }]);
+        assert_eq!(store.minutes_between(0, 10_000, None).unwrap(), [MinuteRow { minute_start: 6_000, exp_gained: 50, training_secs: 60, loot_seen: true, ..Default::default() }]);
         let sessions: i64 = store.conn.query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0)).unwrap();
         assert_eq!(sessions, 1);
-        assert_eq!(store.snapshot_minutes(snapshot).unwrap(), [MinuteRow { minute_start: 0, exp_gained: 200, training_secs: 120, loot: Loot { meso: 2, etc_value: 4, potion_cost: 6 } }]);
+        assert_eq!(store.snapshot_minutes(snapshot).unwrap(), [MinuteRow { minute_start: 0, exp_gained: 200, training_secs: 120, loot: Loot { meso: 2, etc_value: 4, potion_cost: 6 }, loot_seen: true }]);
         // The grinding time keeps the pruned minute's training, until a reset.
         assert_eq!(store.grind_secs().unwrap(), 120);
         store.set_live_since(6_000).unwrap();
@@ -965,7 +998,7 @@ mod tests {
         let session = store.start_session(None, 0).unwrap();
         // Loot before the first kill, two minutes of training, two idle minutes after.
         for (minute, training) in [(0, 0), (60, 60), (120, 30), (180, 0), (240, 0)] {
-            store.add_minute(minute, session, 10, training, Loot { meso: 5, ..Loot::default() }).unwrap();
+            store.add_minute(minute, session, 10, training, Loot { meso: 5, ..Loot::default() }, true).unwrap();
         }
         store.end_session(session, 300).unwrap();
         let id = store.file_grind(&[session], Some(("Field", Some("Field"))), Some(30)).unwrap();

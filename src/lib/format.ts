@@ -36,6 +36,13 @@ export function formatPeriod(from: number, to: number): string {
   return `${days} · ${startTime}–${time(end)}`;
 }
 
+/** A file size: `16.7 MB`, `1.12 GB`. */
+export function formatBytes(n: number): string {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(2)} GB`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(n / 1e3))} KB`;
+}
+
 /** A day: `Oct 26`. */
 export const formatDay = (unix: number): string => new Date(unix * 1000).toLocaleDateString([], { month: "short", day: "numeric" });
 

@@ -5,7 +5,7 @@ import { Pickups } from "../components/Pickups";
 import { expSeries, RateChart } from "../components/RateChart";
 import { formatDateTime, formatDay, formatHours, formatPct, formatWhole as whole } from "../lib/format";
 import { getLiveChart, lockMap, renameMap, resetSession, resetTotals, saveSnapshot, unlockMap, WINDOWS_MINUTES, type AppError, type Bar, type Tick, type WindowMinutes } from "../lib/ipc";
-import { expToLevel, liveRates, lockOf, mesoLines, mesoRates, profitOf } from "../lib/live";
+import { expToLevel, HELD_WARNING, liveRates, lockOf, lootHeldSince, mesoLines, mesoRates, profitCaption, profitOf } from "../lib/live";
 
 const TOAST_MS = 3000;
 
@@ -95,7 +95,8 @@ export function LiveView({ tick, status }: { tick: Tick | null; status: ReactNod
   const headlines: Headline[] = [
     { title: "EXP / hr", tone: "exp", value: rates.expPerHour === null ? "—" : whole(rates.expPerHour), caption: locked ? `last 60 min · ${lockedName}` : "last 60 min" },
   ];
-  if (tracking) headlines.push({ title: "Profit / hr", tone: "meso", value: mesos === null ? "—" : whole(mesos.profit), caption: "after potions" });
+  const held = lootHeldSince(tick?.loot ?? null);
+  if (tracking) headlines.push({ title: "Profit / hr", tone: "meso", value: mesos === null ? "—" : whole(mesos.profit), caption: profitCaption(held) });
   const groups: LedgerGroup[] = [
     {
       title: "EXP",
@@ -197,7 +198,7 @@ export function LiveView({ tick, status }: { tick: Tick | null; status: ReactNod
       {toast && <div className="toast" role="status">{toast}</div>}
 
       <div className="page-body chart-only">
-        <Ledger headlines={headlines} warning={lock?.away ? `Locked to ${lockedName}: nothing here is counted` : null} groups={groups}>
+        <Ledger headlines={headlines} warning={lock?.away ? `Locked to ${lockedName}: nothing here is counted` : held !== null ? HELD_WARNING : null} groups={groups}>
           {tracking && tick && (
             <>
               <ActivePots loot={tick.loot} onError={setError} onDone={setToast} />

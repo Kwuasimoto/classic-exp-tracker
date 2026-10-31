@@ -103,6 +103,9 @@ pub struct LootStatus {
     /// The Use items on the quickslot when it last read, in slot order: the potions the user
     /// can choose as main HP or MP.
     pub quickslot_pots: Vec<QuickslotPot>,
+    /// When the inventory was last seen with everything made counted (unix seconds): the
+    /// loot rates are held at that moment while it's closed (rates::bars_range).
+    pub seen_at: Option<i64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -453,17 +456,17 @@ impl Pipeline {
         // before is kept, so coming back out to it carries on.
         let map = if shopping { None } else { self.current_map };
         let read = self.loot.on_frame(&self.state.store.lock().expect("store lock poisoned"), t, loot, shopping);
-        let loot = match read {
-            Ok((loot, status)) => {
+        let (loot, loot_seen) = match read {
+            Ok((loot, seen, status)) => {
                 self.loot_status = status;
-                loot
+                (loot, seen)
             }
             Err(e) => {
                 self.storage_failed("saving a new item", e);
-                Loot::default()
+                (Loot::default(), false)
             }
         };
-        let fx = self.tracker.on_sample(Sample { t, exp, map, loot });
+        let fx = self.tracker.on_sample(Sample { t, exp, map, loot, loot_seen });
         let learned = self.screen.sync_level(&mut self.tracker, exp);
         self.save_glyphs(&learned);
         // Also publishes the minute in progress, before the tick: the UI reloads the chart on each tick.
@@ -658,10 +661,10 @@ impl Pipeline {
                         info!("session #{id} ended");
                     })
                 }
-                Effect::Minute { minute_start, key, exp_gained, training_secs, loot } => {
+                Effect::Minute { minute_start, key, exp_gained, training_secs, loot, loot_seen } => {
                     let id = *self.keys.get(&key).expect("SessionStarted is applied before its minutes");
                     store
-                        .add_minute(minute_start, id, exp_gained, training_secs, loot)
+                        .add_minute(minute_start, id, exp_gained, training_secs, loot, loot_seen)
                         .map(|()| {
                             self.state.grind_secs.fetch_add(u64::from(training_secs), Ordering::AcqRel);
                             self.state.totals.write().expect("totals lock poisoned").add(minute_start, exp_gained, loot);

@@ -84,6 +84,18 @@ Titillium Web (bundled from `@fontsource/titillium-web`, open licence), tabular 
   (an unnamed one in `--warn`), how many are on the quickslot, and a chevron. Clicking a line
   opens the pots on the quickslot under it as 36 px squares with their counts (the current one
   outlined white), and a None button.
+- **Chat translator** (`TranslatorView.tsx`): two views, switched by a segmented toggle in the page
+  header: **Translations** (`LiveTranslations.tsx`) and **Setup**. Translations is laid out like a
+  chat, never with bubbles: a log filling the panel (flat, left-aligned lines) above a reply box (an
+  English input, the language to translate into, Translate), the translation to copy into the game.
+  Until reading is built, the log holds one note: nothing installed (a "Set up a language" button),
+  off (what it costs to run, and Turn on), or on. The header shows On/Off and Turn on/off, which is
+  disabled until a language is installed. It opens on
+  Translations when a language is installed, on Setup when none is.
+  Setup (`TranslatorSetup.tsx`): a row per language (name, state, buttons): a progress
+  bar while downloading, `--ok` "Installed", `--warn` when a download stopped (Retry, Dismiss);
+  Remove asks first. With nothing installed, an amber-edged note says so. Below, every file it can
+  download: part, source and name, SHA-256, size and license. Compressed, rows stack.
 - **Scroller** (`Scroller.tsx`): a list that can grow (pickups, item grid) scrolls with no
   scrollbar and never sideways; while more is below, its last line fades out.
 - **Item grid** (Mesos page): items as squares on the game's inventory grey, under tabs that

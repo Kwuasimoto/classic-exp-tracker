@@ -5,7 +5,7 @@ import { Pickups } from "../components/Pickups";
 import { mesoSeries, RateChart } from "../components/RateChart";
 import { formatWhole } from "../lib/format";
 import { getLiveChart, setInventoryCorner, setLootEnabled, WINDOWS_MINUTES, type AppError, type Bar, type Corner, type LootStatus, type Tick, type WindowMinutes } from "../lib/ipc";
-import { lockOf, mesoLines, mesoRates } from "../lib/live";
+import { HELD_WARNING, lockOf, lootHeldSince, mesoLines, mesoRates, profitCaption } from "../lib/live";
 
 const TOAST_MS = 3000;
 
@@ -19,7 +19,7 @@ const cornerName = (c: Corner) => (CORNERS.find((k) => k.id === c)?.label ?? c).
 /** Why meso tracking can't count right now, if it can't. */
 function problem(loot: LootStatus, shopping: boolean): string | null {
   if (shopping) return "Paused while shopping";
-  if (!loot.found) return `Inventory out of place: move it into the ${cornerName(loot.corner)} corner`;
+  if (!loot.found) return `Inventory closed or out of place: open it in the ${cornerName(loot.corner)} corner`;
   if (!loot.inventory) return "The inventory's meso total doesn't read";
   if (!loot.etcTab) return "Etc drops count while the Etc tab is open";
   if (!loot.quickslot) return "No potions found on the quickslot";
@@ -70,6 +70,7 @@ export function MesoView({ tick, status }: { tick: Tick | null; status: ReactNod
   const why = loot && on ? problem(loot, tick?.shopping === true) : null;
   const lock = lockOf(tick);
   const rates = mesoRates(bars);
+  const held = lootHeldSince(loot);
 
   return (
     <>
@@ -101,10 +102,10 @@ export function MesoView({ tick, status }: { tick: Tick | null; status: ReactNod
         <div className="page-body">
           <Ledger
             headlines={[
-              { title: "Profit / hr", tone: "meso", value: rates === null ? "—" : formatWhole(rates.profit), caption: `after potions${lock ? ` · ${lock.name}` : ""}` },
+              { title: "Profit / hr", tone: "meso", value: rates === null ? "—" : formatWhole(rates.profit), caption: `${profitCaption(held)}${lock ? ` · ${lock.name}` : ""}` },
               { title: "Meso total", tone: "plain", value: loot?.mesoTotal == null ? "—" : formatWhole(loot.mesoTotal), caption: "in the inventory" },
             ]}
-            warning={lock?.away ? `Locked to ${lock.name} on the Live page: mesos here aren't counted` : null}
+            warning={lock?.away ? `Locked to ${lock.name} on the Live page: mesos here aren't counted` : held !== null ? HELD_WARNING : null}
             groups={[{ title: "Mesos per hour", lines: mesoLines(rates, loot) }]}
           >
             <Pickups pickedUp={loot?.pickedUp ?? []} />

@@ -96,15 +96,22 @@ pub struct Change {
 pub struct Counted {
     pub loot: Loot,
     pub pickups: Vec<Change>,
+    /// The meso total and the Etc tab read, both at their confirmed values: everything
+    /// made up to now is counted. False while the inventory is closed (or on another tab),
+    /// and on a first read that differs, until it's confirmed and its catch-up is counted.
+    pub seen: bool,
 }
 
 impl LootTracker {
     pub fn on_frame(&mut self, frame: LootFrame) -> Counted {
+        let read = frame.meso.is_some() && frame.etc.is_some();
         let meso = self.meso.observe(frame.meso);
         let etc = self.etc.observe(frame.etc);
         let potions = self.potions.observe(frame.potions);
+        // Read, and nothing waiting for a second read: both are at their confirmed values.
+        let seen = read && self.meso.pending.is_none() && self.etc.pending.is_none();
         if frame.shopping {
-            return Counted::default();
+            return Counted { seen, ..Counted::default() };
         }
         let pickups = match etc {
             // Scrolled: other slots are showing; this view is the new baseline.
@@ -120,6 +127,7 @@ impl LootTracker {
                 potion_cost: total(&used),
             },
             pickups,
+            seen,
         }
     }
 }
@@ -195,6 +203,19 @@ mod tests {
         assert!(twice(&mut tr, frame(5_000, &[], &[(9, 300, 50)], true)).is_zero());
         // Back out: the shop's values are the new baseline.
         assert!(twice(&mut tr, frame(5_000, &[], &[(9, 300, 50)], false)).is_zero());
+    }
+
+    #[test]
+    fn the_inventory_is_seen_once_its_reading_is_confirmed() {
+        let mut tr = LootTracker::default();
+        let open = |meso| LootFrame { meso: Some(meso), etc: view(0, &[(1, 5, 10)]), ..Default::default() };
+        assert!(!tr.on_frame(open(1_000)).seen, "a first read isn't confirmed yet");
+        assert!(tr.on_frame(open(1_000)).seen);
+        assert!(!tr.on_frame(LootFrame::default()).seen, "closed");
+        // Reopened with more mesos: seen only once the catch-up is counted.
+        assert!(!tr.on_frame(open(1_500)).seen);
+        let caught_up = tr.on_frame(open(1_500));
+        assert_eq!((caught_up.seen, caught_up.loot.meso), (true, 500));
     }
 
     #[test]

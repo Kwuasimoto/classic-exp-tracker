@@ -6,7 +6,7 @@ import { err, ok, type Result } from "./result";
 const count = z.number().int().nonnegative();
 
 export const AppErrorSchema = z.object({
-  kind: z.enum(["storage", "invalid", "notFound", "window"]),
+  kind: z.enum(["storage", "invalid", "notFound", "window", "translator"]),
   message: z.string(),
 });
 export type AppError = z.infer<typeof AppErrorSchema> | { kind: "ipc"; message: string };
@@ -67,6 +67,9 @@ export const LootStatusSchema = z.object({
   quickslotLayout: z.enum(["controller", "keyboard"]).nullable(),
   /** The Use items on the quickslot when it last read, in slot order. */
   quickslotPots: z.array(QuickslotPotSchema),
+  /** When the inventory was last seen with everything made counted (unix seconds): the loot
+   *  rates are held at that moment while it's closed. */
+  seenAt: z.number().int().nullable(),
 });
 export type LootStatus = z.infer<typeof LootStatusSchema>;
 
@@ -202,6 +205,40 @@ export const onTick = (cb: (tick: Result<Tick, AppError>) => void) =>
     cb(parsed.success ? ok(parsed.data) : err({ kind: "ipc", message: `unexpected tick: ${parsed.error.message}` }));
   });
 
+
+/** The chat translator's setup (translator.rs): its languages, the download running (or the
+ *  last one, failed, with why), where its files go and every file it can download. */
+export const TranslatorStatusSchema = z.object({
+  /** On (the user turned it on, and a language is installed); off, nothing of it runs. */
+  enabled: z.boolean(),
+  languages: z.array(
+    z.object({
+      id: z.string(),
+      label: z.string(),
+      installed: z.boolean(),
+      /** What installing it would download now. */
+      downloadBytes: count,
+      /** Languages made of the same files: installed and removed with it. */
+      sharesWith: z.array(z.string()),
+    }),
+  ),
+  job: z
+    .object({ language: z.string(), doneBytes: count, totalBytes: count, error: z.string().nullable() })
+    .nullable(),
+  dir: z.string(),
+  files: z.array(
+    z.object({ part: z.string(), name: z.string(), url: z.string(), size: count, sha256: z.string(), source: z.string(), license: z.string() }),
+  ),
+});
+export type TranslatorStatus = z.infer<typeof TranslatorStatusSchema>;
+
+export const translatorStatus = () => call("translator_status", TranslatorStatusSchema);
+export const installLanguage = (language: string) => call("install_language", z.null(), { language });
+export const cancelInstall = () => call("cancel_install", z.null());
+export const dismissInstallError = () => call("dismiss_install_error", z.null());
+export const removeLanguage = (language: string) => call("remove_language", z.null(), { language });
+/** On needs an installed language; removing the last one turns it off. */
+export const setTranslatorEnabled = (on: boolean) => call("set_translator_enabled", z.null(), { on });
 
 /** The popout closed (its own ✕, or the app closing it). */
 export const onPopoutClosed = (cb: () => void) => subscribe("popout-closed", () => cb());

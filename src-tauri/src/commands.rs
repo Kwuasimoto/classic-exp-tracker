@@ -15,6 +15,7 @@ use crate::rates::{self, Bar, MinuteRow, Totals};
 use crate::geom::{boxes_for, Corner};
 use crate::items::{self, ItemKind, PotionSlot};
 use crate::store::{NamedBy, SnapshotRecord};
+use crate::translator::{Translator, TranslatorError, TranslatorStatus};
 
 type AppStateRef<'a> = State<'a, Arc<AppState>>;
 
@@ -305,6 +306,55 @@ pub fn rename_snapshot(state: AppStateRef<'_>, snapshot_id: i64, name: String) -
     } else {
         Err(AppError::NotFound(format!("snapshot {snapshot_id}")))
     }
+}
+
+type TranslatorRef<'a> = State<'a, Arc<Translator>>;
+
+/// The chat translator's languages, its download in progress and every file it can download.
+#[tauri::command(async)]
+pub fn translator_status(translator: TranslatorRef<'_>) -> TranslatorStatus {
+    translator.status()
+}
+
+/// Start downloading what `language` needs (the user asked to install it).
+#[tauri::command(async)]
+pub fn install_language(translator: TranslatorRef<'_>, language: String) -> Result<(), AppError> {
+    Ok(translator.install(&language)?)
+}
+
+#[tauri::command(async)]
+pub fn cancel_install(translator: TranslatorRef<'_>) {
+    translator.cancel();
+}
+
+#[tauri::command(async)]
+pub fn dismiss_install_error(translator: TranslatorRef<'_>) {
+    translator.dismiss();
+}
+
+/// Remove a language's files. With none left, the translator turns off.
+#[tauri::command(async)]
+pub fn remove_language(state: AppStateRef<'_>, translator: TranslatorRef<'_>, language: String) -> Result<(), AppError> {
+    translator.remove(&language)?;
+    if translator.enabled() && !translator.any_installed() {
+        state.store.lock().expect("store lock poisoned").set_translator_enabled(false)?;
+        translator.set_enabled(false)?;
+        log::info!("chat translator off: no language left");
+    }
+    Ok(())
+}
+
+/// Turn the chat translator on or off (off until the user turns it on; on needs an installed
+/// language). Saved first, so a failed save changes nothing.
+#[tauri::command(async)]
+pub fn set_translator_enabled(state: AppStateRef<'_>, translator: TranslatorRef<'_>, on: bool) -> Result<(), AppError> {
+    if on && !translator.any_installed() {
+        return Err(TranslatorError::NothingInstalled.into());
+    }
+    state.store.lock().expect("store lock poisoned").set_translator_enabled(on)?;
+    translator.set_enabled(on)?;
+    log::info!("chat translator {}", if on { "on" } else { "off" });
+    Ok(())
 }
 
 /// Keep an automatic snapshot for good (grinds::KEEP_AUTO_SECS no longer applies).

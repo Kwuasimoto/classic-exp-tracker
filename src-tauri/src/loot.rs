@@ -34,6 +34,8 @@ pub struct LootReader {
     picked_up: BTreeMap<ItemId, (u32, u64)>,
     /// The Use items on the quickslot when it last read (LootStatus::quickslot_pots).
     quickslot_pots: Vec<QuickslotPot>,
+    /// When the inventory was last seen with everything counted (LootStatus::seen_at).
+    seen_at: Option<i64>,
 }
 
 impl LootReader {
@@ -47,9 +49,11 @@ impl LootReader {
         self.tracker = LootTracker::default();
         self.unseen.clear();
         self.quickslot_pots.clear();
+        self.seen_at = None;
     }
 
-    /// One frame: what it made, and what the UI shows about it. `None` crops when
+    /// One frame: what it made, whether the inventory was seen with everything counted
+    /// (tracker::loot::Counted::seen), and what the UI shows about it. `None` crops when
     /// tracking is off.
     pub fn on_frame(
         &mut self,
@@ -57,10 +61,10 @@ impl LootReader {
         t: i64,
         crops: Option<&LootCrops>,
         shopping: bool,
-    ) -> Result<(Loot, LootStatus), StoreError> {
+    ) -> Result<(Loot, bool, LootStatus), StoreError> {
         let Some(crops) = crops else {
             self.restart();
-            return Ok((Loot::default(), LootStatus::default()));
+            return Ok((Loot::default(), false, LootStatus::default()));
         };
         let mut status = LootStatus { enabled: true, ..LootStatus::default() };
         if !self.loaded {
@@ -109,7 +113,11 @@ impl LootReader {
             total.1 += value;
         }
         status.picked_up = self.picked_up();
-        Ok((counted.loot, status))
+        if counted.seen {
+            self.seen_at = Some(t);
+        }
+        status.seen_at = self.seen_at;
+        Ok((counted.loot, counted.seen, status))
     }
 
     /// The quickslot's Use items in slot order, each once with its stacks added up. Items not

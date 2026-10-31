@@ -3,6 +3,7 @@
 use serde::Serialize;
 
 use crate::store::StoreError;
+use crate::translator::TranslatorError;
 
 #[derive(Debug, thiserror::Error, Serialize)]
 #[serde(tag = "kind", content = "message", rename_all = "camelCase")]
@@ -15,10 +16,21 @@ pub enum AppError {
     NotFound(String),
     #[error("window: {0}")]
     Window(String),
+    #[error("translator: {0}")]
+    Translator(String),
 }
 
 impl From<StoreError> for AppError {
     fn from(e: StoreError) -> Self {
         AppError::Storage(e.to_string())
+    }
+}
+
+impl From<TranslatorError> for AppError {
+    fn from(e: TranslatorError) -> Self {
+        match e {
+            TranslatorError::UnknownLanguage(_) => AppError::NotFound(e.to_string()),
+            _ => AppError::Translator(e.to_string()),
+        }
     }
 }
