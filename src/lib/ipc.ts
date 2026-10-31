@@ -206,39 +206,39 @@ export const onTick = (cb: (tick: Result<Tick, AppError>) => void) =>
   });
 
 
-/** The chat translator's setup (translator.rs): its languages, the download running (or the
- *  last one, failed, with why), where its files go and every file it can download. */
+/** The chat translator (translator.rs): on or off, and its chat reader's download (the
+ *  one running, or the last one if it failed, with why). */
 export const TranslatorStatusSchema = z.object({
-  /** On (the user turned it on, and a language is installed); off, nothing of it runs. */
+  /** On (the user turned it on, and the chat reader is downloaded); off, nothing of it runs. */
   enabled: z.boolean(),
-  languages: z.array(
-    z.object({
-      id: z.string(),
-      label: z.string(),
-      installed: z.boolean(),
-      /** What installing it would download now. */
-      downloadBytes: count,
-      /** Languages made of the same files: installed and removed with it. */
-      sharesWith: z.array(z.string()),
-    }),
-  ),
-  job: z
-    .object({ language: z.string(), doneBytes: count, totalBytes: count, error: z.string().nullable() })
-    .nullable(),
+  downloaded: z.boolean(),
+  /** What downloading would fetch now. */
+  downloadBytes: count,
+  job: z.object({ doneBytes: count, totalBytes: count, error: z.string().nullable() }).nullable(),
   dir: z.string(),
-  files: z.array(
-    z.object({ partId: z.string(), part: z.string(), name: z.string(), url: z.string(), size: count, sha256: z.string(), source: z.string(), license: z.string() }),
-  ),
 });
 export type TranslatorStatus = z.infer<typeof TranslatorStatusSchema>;
 
 export const translatorStatus = () => call("translator_status", TranslatorStatusSchema);
-export const installLanguage = (language: string) => call("install_language", z.null(), { language });
+/** Starts the chat reader's download; only ever from its Download button. */
+export const downloadReader = () => call("download_reader", z.null());
 export const cancelInstall = () => call("cancel_install", z.null());
 export const dismissInstallError = () => call("dismiss_install_error", z.null());
-export const removeLanguage = (language: string) => call("remove_language", z.null(), { language });
-/** On needs an installed language; removing the last one turns it off. */
+/** Deletes the chat reader's files; the translator turns off. */
+export const removeReader = () => call("remove_reader", z.null());
+/** On needs the chat reader downloaded. */
 export const setTranslatorEnabled = (on: boolean) => call("set_translator_enabled", z.null(), { on });
+/** What replies can be translated into (gemini.rs LANGUAGES). */
+export const REPLY_LANGUAGES = ["zh-hans", "ko", "ja", "es", "pt-br", "th"] as const;
+
+/** Whether a Gemini API key is saved (the key stays in Windows Credential Manager). */
+export const translatorKeySaved = () => call("translator_key_saved", z.boolean());
+/** Saves the key once Google answered a request made with it; resolves to the model that answered. */
+export const saveTranslatorKey = (key: string) => call("save_translator_key", z.string(), { key });
+export const removeTranslatorKey = () => call("remove_translator_key", z.null());
+/** The user's reply, translated by Gemini into `language` (one of REPLY_LANGUAGES). */
+export const translateReply = (text: string, language: string) =>
+  call("translate_reply", z.object({ text: z.string(), model: z.string() }), { text, language });
 
 /** The popout closed (its own ✕, or the app closing it). */
 export const onPopoutClosed = (cb: () => void) => subscribe("popout-closed", () => cb());

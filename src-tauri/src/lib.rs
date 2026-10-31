@@ -1,6 +1,8 @@
 pub mod capture;
 mod commands;
+mod credential;
 mod error;
+mod gemini;
 pub mod geom;
 mod grinds;
 pub mod items;
@@ -94,12 +96,13 @@ pub fn run() {
             // The chat translator's files are large and per-machine: local app data, not roaming.
             let translator = translator::Translator::new(app.path().app_local_data_dir()?.join("translator"), translator_on);
             if translator_on && !translator.enabled() {
-                // Saved on, but its files are gone (deleted by hand): off, so installing a
-                // language later doesn't switch it on unasked.
+                // Saved on, but its files are gone (deleted by hand): off, so downloading them
+                // later doesn't switch it on unasked.
                 state.store.lock().expect("store lock poisoned").set_translator_enabled(false)?;
-                log::info!("chat translator off: no language installed");
+                log::info!("chat translator off: chat reader not downloaded");
             }
             app.manage(Arc::new(translator));
+            app.manage(gemini::Gemini::new()?);
             pipeline::spawn(app.handle().clone(), state)?;
             // The window starts hidden (tauri.conf.json) so it doesn't flash on the game's monitor.
             let window = app.get_webview_window("main").ok_or("window \"main\" missing from tauri.conf.json")?;
@@ -155,11 +158,15 @@ pub fn run() {
             commands::delete_snapshot,
             commands::keep_snapshot,
             commands::translator_status,
-            commands::install_language,
+            commands::download_reader,
             commands::cancel_install,
             commands::dismiss_install_error,
-            commands::remove_language,
+            commands::remove_reader,
             commands::set_translator_enabled,
+            commands::translator_key_saved,
+            commands::save_translator_key,
+            commands::remove_translator_key,
+            commands::translate_reply,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

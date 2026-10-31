@@ -55,7 +55,7 @@ That's it: nothing to calibrate.
 - **History**: every grind is saved by itself once you've been off its map for 30 minutes (or press reset), if it had 10+ minutes of training. Automatic ones are deleted after 30 days unless you keep them (bookmark); ones you save yourself stay.
 - **Map names** come from the game's map list. A map not on it shows as **Unrecognised map**; the pencil renames it.
 - **Shopping**: in shops the time doesn't count.
-- **Chat translator**: installs what's needed to translate Chinese, Korean, Japanese, Spanish, Portuguese and Thai chat into English on your PC (about 1.1 GB, downloaded only when you click Install). Reading the chat isn't switched on yet. Vietnamese chat isn't offered yet: the text reader it would use doesn't have Vietnamese's letters.
+- **Chat translator**: translates with Google's Gemini and **your own API key** (free from [Google AI Studio](https://aistudio.google.com/apikey)); the app has no key or server of its own. Replies you write can already be translated into Chinese, Korean, Japanese, Spanish, Portuguese or Thai, to copy into the game. A translation is only shown if it keeps every amount (50k, 1.2m) as you wrote it. Reading the chat isn't switched on yet; it will need the chat reader (PaddleOCR text readers for Chinese and Japanese, Korean, Latin letters and Thai, about 30 MB), downloaded only when you click **Download** in Setup. **Turn on** stays disabled until then. Vietnamese chat isn't offered yet: the text reader it would use doesn't have Vietnamese's letters.
 - **Languages**: the app follows Windows' display language if it has it, and the globe button at the bottom of the side nav picks another. The installer follows Windows' language too. Map and item names stay as the game shows them.
 
 </details>
@@ -79,11 +79,17 @@ Only the main monitor is read. With a second monitor the app opens there; with o
 
 It never opens, reads, injects into or hooks the MapleStory process, reads game files, targets the game window, sends keys or clicks, draws into the game, or saves screenshots.
 
-Everything stays on your PC. The only network use is the Chat translator's **Install** button, which downloads that language's files from Hugging Face (addresses and SHA-256s pinned in `src-tauri/src/translator.rs`). Nothing about you or your play is sent.
+Everything stays on your PC, except in the Chat translator:
+
+- **Download** (in Setup) fetches the chat reader's files from Hugging Face (addresses and SHA-256s pinned in `src-tauri/src/translator.rs`).
+- **Translate** (and saving your key, which is checked with one test translation) sends only the text being translated, from your PC straight to Google's Gemini API with your key (`src-tauri/src/gemini.rs`). Google's [Gemini API terms](https://ai.google.dev/gemini-api/terms) apply: you must be 18 or older, and on the free tier Google may use what you send to improve its products and people may read it (not with a paid key, or in the EEA, Switzerland or the UK). Don't send anything private.
+
+Nothing about you or your play is sent.
 
 - History: `%APPDATA%\com.classicexp.tracker\tracker.db`
 - Logs (text only): `%LOCALAPPDATA%\com.classicexp.tracker\logs\`
 - Chat translator files: `%LOCALAPPDATA%\com.classicexp.tracker\translator\`
+- Your Gemini key: Windows Credential Manager (**Control Panel › Credential Manager › Windows Credentials**, "Classic EXP Tracker/Gemini API key"). Remove it there or with **Remove key** in Setup.
 
 Uninstall from **Settings › Apps › Installed apps**. Your history stays unless you tick **Delete the application data**.
 

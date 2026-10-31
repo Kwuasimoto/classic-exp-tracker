@@ -15,6 +15,8 @@ use crate::rates::{self, Bar, MinuteRow, Totals};
 use crate::geom::{boxes_for, Corner};
 use crate::items::{self, ItemKind, PotionSlot};
 use crate::store::{NamedBy, SnapshotRecord};
+use crate::credential;
+use crate::gemini::{self, Gemini, Translation};
 use crate::translator::{Translator, TranslatorError, TranslatorStatus};
 
 type AppStateRef<'a> = State<'a, Arc<AppState>>;
@@ -310,16 +312,16 @@ pub fn rename_snapshot(state: AppStateRef<'_>, snapshot_id: i64, name: String) -
 
 type TranslatorRef<'a> = State<'a, Arc<Translator>>;
 
-/// The chat translator's languages, its download in progress and every file it can download.
+/// The chat translator's on/off state and its chat reader's download.
 #[tauri::command(async)]
 pub fn translator_status(translator: TranslatorRef<'_>) -> TranslatorStatus {
     translator.status()
 }
 
-/// Start downloading what `language` needs (the user asked to install it).
+/// Start downloading the chat reader (the user clicked Download).
 #[tauri::command(async)]
-pub fn install_language(translator: TranslatorRef<'_>, language: String) -> Result<(), AppError> {
-    Ok(translator.install(&language)?)
+pub fn download_reader(translator: TranslatorRef<'_>) -> Result<(), AppError> {
+    Ok(translator.download()?)
 }
 
 #[tauri::command(async)]
@@ -332,29 +334,73 @@ pub fn dismiss_install_error(translator: TranslatorRef<'_>) {
     translator.dismiss();
 }
 
-/// Remove a language's files. With none left, the translator turns off.
+/// Remove the chat reader's files; the translator turns off.
 #[tauri::command(async)]
-pub fn remove_language(state: AppStateRef<'_>, translator: TranslatorRef<'_>, language: String) -> Result<(), AppError> {
-    translator.remove(&language)?;
-    if translator.enabled() && !translator.any_installed() {
+pub fn remove_reader(state: AppStateRef<'_>, translator: TranslatorRef<'_>) -> Result<(), AppError> {
+    translator.remove()?;
+    if translator.enabled() {
         state.store.lock().expect("store lock poisoned").set_translator_enabled(false)?;
         translator.set_enabled(false)?;
-        log::info!("chat translator off: no language left");
+        log::info!("chat translator off: chat reader removed");
     }
     Ok(())
 }
 
-/// Turn the chat translator on or off (off until the user turns it on; on needs an installed
-/// language). Saved first, so a failed save changes nothing.
+/// Turn the chat translator on or off (off until the user turns it on; on needs the chat
+/// reader downloaded). Saved first, so a failed save changes nothing.
 #[tauri::command(async)]
 pub fn set_translator_enabled(state: AppStateRef<'_>, translator: TranslatorRef<'_>, on: bool) -> Result<(), AppError> {
-    if on && !translator.any_installed() {
-        return Err(TranslatorError::NothingInstalled.into());
+    if on && !translator.downloaded() {
+        return Err(TranslatorError::NotDownloaded.into());
     }
     state.store.lock().expect("store lock poisoned").set_translator_enabled(on)?;
     translator.set_enabled(on)?;
     log::info!("chat translator {}", if on { "on" } else { "off" });
     Ok(())
+}
+
+/// Whether a Gemini API key is saved (the key itself never leaves the backend).
+#[tauri::command(async)]
+pub fn translator_key_saved() -> Result<bool, AppError> {
+    Ok(credential::load()?.is_some())
+}
+
+/// The longest key accepted; Gemini's are 39 characters.
+const MAX_KEY_LEN: usize = 200;
+/// MapleStory's chat takes far less; this only bounds what's sent.
+const MAX_REPLY_LEN: usize = 500;
+
+/// Save the user's Gemini API key once Google has answered a request made with it: a key that
+/// doesn't work isn't saved. Returns the model that answered.
+#[tauri::command]
+pub async fn save_translator_key(gemini: State<'_, Gemini>, key: String) -> Result<&'static str, AppError> {
+    let key = key.trim();
+    if key.is_empty() || key.len() > MAX_KEY_LEN || !key.chars().all(|c| c.is_ascii_graphic()) {
+        return Err(AppError::Invalid("that doesn't look like an API key".into()));
+    }
+    let answer = gemini.reply(key, "GG, thanks!", "Korean").await?;
+    credential::save(key)?;
+    log::info!("translator: Gemini key saved ({} answered)", answer.model);
+    Ok(answer.model)
+}
+
+#[tauri::command(async)]
+pub fn remove_translator_key() -> Result<(), AppError> {
+    credential::delete()?;
+    log::info!("translator: Gemini key removed");
+    Ok(())
+}
+
+/// Translate the user's chat reply into `language` (an id in `gemini::LANGUAGES`) with the saved key.
+#[tauri::command]
+pub async fn translate_reply(gemini: State<'_, Gemini>, text: String, language: String) -> Result<Translation, AppError> {
+    let language = gemini::language(&language).ok_or_else(|| AppError::NotFound(format!("language {language:?}")))?;
+    let text = text.trim();
+    if text.is_empty() || text.chars().count() > MAX_REPLY_LEN {
+        return Err(AppError::Invalid(format!("a reply is 1 to {MAX_REPLY_LEN} characters")));
+    }
+    let key = credential::load()?.ok_or_else(|| AppError::Translator("no Gemini key saved: add yours in Setup".into()))?;
+    Ok(gemini.reply(&key, text, language).await?)
 }
 
 /// Keep an automatic snapshot for good (grinds::KEEP_AUTO_SECS no longer applies).

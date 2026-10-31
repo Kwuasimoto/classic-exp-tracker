@@ -2,6 +2,8 @@
 
 use serde::Serialize;
 
+use crate::credential::CredentialError;
+use crate::gemini::GeminiError;
 use crate::store::StoreError;
 use crate::translator::TranslatorError;
 
@@ -28,9 +30,18 @@ impl From<StoreError> for AppError {
 
 impl From<TranslatorError> for AppError {
     fn from(e: TranslatorError) -> Self {
-        match e {
-            TranslatorError::UnknownLanguage(_) => AppError::NotFound(e.to_string()),
-            _ => AppError::Translator(e.to_string()),
-        }
+        AppError::Translator(e.to_string())
+    }
+}
+
+impl From<GeminiError> for AppError {
+    fn from(e: GeminiError) -> Self {
+        AppError::Translator(e.to_string())
+    }
+}
+
+impl From<CredentialError> for AppError {
+    fn from(e: CredentialError) -> Self {
+        AppError::Translator(e.to_string())
     }
 }

@@ -113,15 +113,21 @@ Titillium Web (bundled from `@fontsource/titillium-web`, open licence), tabular 
 - **Chat translator** (`TranslatorView.tsx`): two views, switched by a segmented toggle in the page
   header: **Translations** (`LiveTranslations.tsx`) and **Setup**. Translations is laid out like a
   chat, never with bubbles: a log filling the panel (flat, left-aligned lines) above a reply box (an
-  English input, the language to translate into, Translate), the translation to copy into the game.
-  Until reading is built, the log holds one note: nothing installed (a "Set up a language" button),
-  off (what it costs to run, and Turn on), or on. The header shows On/Off and Turn on/off, which is
-  disabled until a language is installed. It opens on
-  Translations when a language is installed, on Setup when none is.
-  Setup (`TranslatorSetup.tsx`): a row per language (name, state, buttons): a progress
-  bar while downloading, `--ok` "Installed", `--warn` when a download stopped (Retry, Dismiss);
-  Remove asks first. With nothing installed, an amber-edged note says so. Below, every file it can
-  download: part, source and name, SHA-256, size and license. Compressed, rows stack.
+  input, the language to translate into, Translate). The translation shows in a bordered row above
+  the box (the language, the text in its `lang`, Copy); an error shows under it in `--warn`. The
+  box works once a Gemini key is saved, whatever is installed; without one, the note under it has
+  an "Add a key" button.
+  Until reading is built, the log holds one note: chat reader not downloaded (an "Open Setup"
+  button), off (what it costs to run, and Turn on), or on. The header shows On/Off and Turn on/off;
+  Turn on is disabled until the chat reader is downloaded, and its tooltip says so. Nothing is ever
+  downloaded except from Setup's Download button. It opens on Translations once a key is saved or
+  the reader is downloaded, on Setup before.
+  Setup (`TranslatorSetup.tsx`): first the Gemini API key (`TranslatorKey.tsx`): where to get one,
+  a password input and Save key (checked with Google before it's saved), then "Key saved" in
+  `--ok` with Remove key (asks first), and what Google's terms say about privacy. Then the chat
+  reader: what it is and where its pinned list lives, one line with its state (size to download,
+  a progress bar with Cancel, `--warn` with Retry and Dismiss when a download stopped, `--ok`
+  "Downloaded" with Remove, which asks first) and where its files go.
 - **Scroller** (`Scroller.tsx`): a list that can grow (pickups, item grid) scrolls with no
   scrollbar and never sideways; while more is below, its last line fades out.
 - **Item grid** (Mesos page): items as squares on the game's inventory grey, under tabs that

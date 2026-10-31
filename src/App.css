@@ -310,19 +310,23 @@ tr.selected td { background: rgba(255, 255, 255, 0.1); }
 .chat-target option { background: #141416; }
 .chat-input:disabled, .chat-target:disabled { opacity: 0.5; }
 .chat-compose-note { margin: 0; padding: 0 14px 10px; }
+.chat-compose-note .btn.small { margin-left: 6px; padding: 1px 10px; font-size: 12px; }
+.reply-out { display: flex; align-items: center; gap: 10px; margin: 0 14px 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 4px; background: #161618; }
+.reply-out-label { flex-shrink: 0; }
+.reply-out-text { flex: 1; min-width: 0; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; user-select: text; }
+.key-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 10px; }
+.key-input { flex: 0 1 360px; min-width: 0; height: 32px; padding: 0 10px; border-radius: 4px; }
+.key-state { margin-right: 6px; }
+.reader-row { display: flex; align-items: center; gap: 12px; margin: 0 0 10px; }
+.reader-state { flex: 1; min-width: 0; }
 .compressed .chat-compose { flex-wrap: wrap; }
 .compressed .chat-input { flex-basis: 100%; }
 /* Compressed: too narrow for a language name beside Translate; each gets its own row. */
 .compressed .chat-target { flex-basis: 100%; }
 .compressed .chat-compose .btn { margin-left: auto; }
 .translator-state { font-size: 13px; font-weight: 700; }
-/* Chat translator, Setup view: a row per language, then every file it can download. */
-.translator-empty { margin: 0 0 10px; padding: 8px 12px; border-left: 2px solid var(--warn); background: rgba(240, 160, 75, 0.08); }
+/* Chat translator, Setup view: the Gemini key, then the chat reader's download. */
 .translator-note { margin: 10px 0 0; max-width: 760px; }
-table.languages td { padding: 10px 8px; vertical-align: middle; }
-table.downloads { table-layout: fixed; margin-top: 8px; }
-table.downloads td { vertical-align: top; }
-.hash { font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
 code { font-family: inherit; color: var(--text); }
 code.path { word-break: break-all; }
 .ok-text { color: var(--ok); }
@@ -330,17 +334,6 @@ code.path { word-break: break-all; }
 .install-progress { display: flex; flex-direction: column; gap: 4px; max-width: 320px; }
 .progress { height: 6px; border-radius: 3px; background: var(--inset); overflow: hidden; }
 .progress > span { display: block; height: 100%; background: var(--text); }
-/* Compressed: each language is its name and buttons on one line, its state under them. */
-.compressed table.languages, .compressed table.languages tbody { display: block; }
-.compressed table.languages tr { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 4px 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
-.compressed table.languages td { padding: 0; border: 0; }
-.compressed table.languages td:nth-child(2) { grid-column: 1 / -1; grid-row: 2; }
-/* Compressed: each file is its part, then its name, hash and size; the license is in the README. */
-.compressed table.downloads, .compressed table.downloads tbody { display: block; }
-.compressed table.downloads thead, .compressed table.downloads td:nth-child(4) { display: none; }
-.compressed table.downloads tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
-.compressed table.downloads td { padding: 0; border: 0; min-width: 0; }
-.compressed table.downloads td:first-child { grid-column: 1 / -1; color: var(--muted); font-size: 12px; }
 
 /* Windows high contrast (forced colors): the system draws text and plain backgrounds itself, so
    what a background alone showed gets a border: controls are outlined and the selected one is
@@ -352,5 +345,5 @@ code.path { word-break: break-all; }
   }
   .progress { border: 1px solid CanvasText; }
   .progress > span { forced-color-adjust: none; background: Highlight; }
-  .panel.notice, .translator-empty { border: 1px solid CanvasText; }
+  .panel.notice { border: 1px solid CanvasText; }
 }

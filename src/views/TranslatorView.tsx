@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { LiveTranslations } from "../components/LiveTranslations";
 import { TranslatorSetup } from "../components/TranslatorSetup";
 import { useMessages } from "../lib/i18n";
-import { setTranslatorEnabled, translatorStatus, type AppError, type TranslatorStatus } from "../lib/ipc";
+import { setTranslatorEnabled, translatorKeySaved, translatorStatus, type AppError, type TranslatorStatus } from "../lib/ipc";
 
 /** How often the page asks for the status (a few file sizes) while it's open. */
 const POLL_MS = 1000;
@@ -11,7 +11,7 @@ type View = "translations" | "setup";
 const VIEWS: readonly View[] = ["translations", "setup"];
 
 /** The chat translator: its live translations and its setup, as two views. It opens on
- *  Translations when a language is installed, on Setup when none is. */
+ *  Translations once a key is saved or the chat reader is downloaded, on Setup before. */
 export function TranslatorView({ status: readerStatus }: { status: ReactNode }) {
   const m = useMessages();
   const t = m.translator;
@@ -19,6 +19,8 @@ export function TranslatorView({ status: readerStatus }: { status: ReactNode }) 
   const [error, setError] = useState<AppError | null>(null);
   // Chosen by the user; until then it follows what's installed.
   const [chosen, setChosen] = useState<View | null>(null);
+  // Whether a Gemini key is saved: read on open and after Setup changes it, not polled.
+  const [keySaved, setKeySaved] = useState<boolean | null>(null);
 
   const load = useCallback(async () => {
     const res = await translatorStatus();
@@ -26,13 +28,23 @@ export function TranslatorView({ status: readerStatus }: { status: ReactNode }) 
     else setError(res.error);
   }, []);
 
+  const loadKey = useCallback(async () => {
+    const res = await translatorKeySaved();
+    if (res.success) setKeySaved(res.data);
+    else setError(res.error);
+  }, []);
+
+  useEffect(() => {
+    void loadKey();
+  }, [loadKey]);
+
   useEffect(() => {
     void load();
     const timer = setInterval(() => void load(), POLL_MS);
     return () => clearInterval(timer);
   }, [load]);
 
-  const anyInstalled = status?.languages.some((l) => l.installed) ?? false;
+  const downloaded = status?.downloaded === true;
   const enabled = status?.enabled === true;
 
   const toggle = async () => {
@@ -40,7 +52,7 @@ export function TranslatorView({ status: readerStatus }: { status: ReactNode }) 
     setError(res.success ? null : res.error);
     await load();
   };
-  const view: View = chosen ?? (status === null || anyInstalled ? "translations" : "setup");
+  const view: View = chosen ?? (status === null || keySaved === null || downloaded || keySaved ? "translations" : "setup");
 
   return (
     <>
@@ -59,8 +71,8 @@ export function TranslatorView({ status: readerStatus }: { status: ReactNode }) 
           </div>
           <button
             className={enabled ? "btn" : "btn primary"}
-            disabled={status === null || (!enabled && !anyInstalled)}
-            title={!enabled && !anyInstalled ? t.installFirst : enabled ? t.stopTitle : t.startTitle}
+            disabled={status === null || (!enabled && !downloaded)}
+            title={!enabled && !downloaded ? t.downloadFirst : enabled ? t.stopTitle : t.startTitle}
             onClick={() => void toggle()}
           >
             {enabled ? m.common.turnOff : m.common.turnOn}
@@ -73,9 +85,9 @@ export function TranslatorView({ status: readerStatus }: { status: ReactNode }) 
       </p>
       {error && <p className="panel error">{error.message}</p>}
       {view === "translations" ? (
-        <LiveTranslations status={status} onSetUp={() => setChosen("setup")} onTurnOn={() => void toggle()} />
+        <LiveTranslations status={status} keySaved={keySaved} onSetUp={() => setChosen("setup")} onTurnOn={() => void toggle()} />
       ) : (
-        <TranslatorSetup status={status} onError={setError} reload={load} />
+        <TranslatorSetup status={status} keySaved={keySaved} onError={setError} reload={load} reloadKey={loadKey} />
       )}
     </>
   );

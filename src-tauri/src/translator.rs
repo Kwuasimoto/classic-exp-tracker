@@ -1,9 +1,9 @@
-//! The chat translator's setup. None of it comes with the installer: each language needs a
-//! text finder and a reader for its script (PaddleOCR PP-OCRv5, ONNX) and the translator (the
-//! Qwen2.5 1.5B Instruct language model, GGUF). They're downloaded only when the user installs a
-//! language, from Hugging Face, each file pinned to a repository revision and kept only once
-//! its SHA-256 matches the one here. Parts shared by languages are downloaded once. This module
-//! installs and removes them; reading and translating the chat come later.
+//! The chat reader's files. Reading the chat needs a text finder and a reader for each script
+//! players use (PaddleOCR PP-OCRv5, ONNX), which don't come with the installer: they're
+//! downloaded together, only when the user clicks Download in Setup, from Hugging Face, each
+//! file pinned to a repository revision and kept only once its SHA-256 matches the one here.
+//! This module downloads and removes them; reading the chat comes later. Translating is done
+//! by Gemini with the user's own key (gemini.rs).
 
 use std::fs::{self, File};
 use std::io::{Read, Write};
@@ -23,7 +23,7 @@ pub struct Download {
     pub url: &'static str,
     pub size: u64,
     pub sha256: &'static str,
-    /// Where it comes from, for the page: the repository and its license.
+    /// Where it comes from, for the log: the repository and its license.
     pub source: &'static str,
     pub license: &'static str,
 }
@@ -33,13 +33,6 @@ pub struct Part {
     pub id: &'static str,
     pub label: &'static str,
     pub files: &'static [Download],
-}
-
-pub struct Language {
-    pub id: &'static str,
-    pub label: &'static str,
-    /// The ids of the parts it needs.
-    pub parts: &'static [&'static str],
 }
 
 const DETECTOR: Part = Part {
@@ -160,29 +153,10 @@ const READER_TH: Part = Part {
     ],
 };
 
-const TRANSLATOR: Part = Part {
-    id: "translator",
-    label: "Translator (all languages)",
-    files: &[Download {
-        name: "qwen2.5-1.5b-instruct-q4_k_m.gguf",
-        url: "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/91cad51170dc346986eccefdc2dd33a9da36ead9/qwen2.5-1.5b-instruct-q4_k_m.gguf",
-        size: 1_117_320_736,
-        sha256: "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e",
-        source: "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
-        license: "Apache-2.0",
-    }],
-};
+pub const PARTS: [Part; 5] = [DETECTOR, READER_CJ, READER_KO, READER_LATIN, READER_TH];
 
-pub const PARTS: [Part; 6] = [DETECTOR, READER_CJ, READER_KO, READER_LATIN, READER_TH, TRANSLATOR];
-
-pub const LANGUAGES: [Language; 6] = [
-    Language { id: "zh-hans", label: "Chinese (Simplified)", parts: &[DETECTOR.id, READER_CJ.id, TRANSLATOR.id] },
-    Language { id: "ko", label: "Korean", parts: &[DETECTOR.id, READER_KO.id, TRANSLATOR.id] },
-    Language { id: "ja", label: "Japanese", parts: &[DETECTOR.id, READER_CJ.id, TRANSLATOR.id] },
-    Language { id: "es", label: "Spanish", parts: &[DETECTOR.id, READER_LATIN.id, TRANSLATOR.id] },
-    Language { id: "pt-br", label: "Portuguese (Brazil)", parts: &[DETECTOR.id, READER_LATIN.id, TRANSLATOR.id] },
-    Language { id: "th", label: "Thai", parts: &[DETECTOR.id, READER_TH.id, TRANSLATOR.id] },
-];
+/// The folder of v0.9.0's translator part (the Qwen2.5 1.5B model), deleted at start.
+const OBSOLETE_TRANSLATOR: &str = "translator";
 
 /// A stalled download fails after this long without data (reqwest's blocking timeout applies
 /// to each read, not the whole download).
@@ -190,8 +164,6 @@ const READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, thiserror::Error)]
 pub enum TranslatorError {
-    #[error("no language {0:?}")]
-    UnknownLanguage(String),
     #[error("a download is already running")]
     Busy,
     #[error("download failed: {0}")]
@@ -204,28 +176,14 @@ pub enum TranslatorError {
     Checksum { name: String, got: String },
     #[error("cancelled")]
     Cancelled,
-    #[error("install a language first")]
-    NothingInstalled,
-}
-
-fn part(id: &str) -> &'static Part {
-    PARTS.iter().find(|p| p.id == id).expect("languages name only parts in PARTS")
-}
-
-/// Every part `a` needs, `b` needs too.
-fn within(a: &Language, b: &Language) -> bool {
-    a.parts.iter().all(|p| b.parts.contains(p))
-}
-
-fn language(id: &str) -> Result<&'static Language, TranslatorError> {
-    LANGUAGES.iter().find(|l| l.id == id).ok_or_else(|| TranslatorError::UnknownLanguage(id.to_string()))
+    #[error("download the chat reader in Setup first")]
+    NotDownloaded,
 }
 
 /// A download in progress (or the last one, failed).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Job {
-    pub language: String,
     pub done_bytes: u64,
     pub total_bytes: u64,
     /// Why the last download stopped, once it has; `None` while it runs.
@@ -234,59 +192,42 @@ pub struct Job {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LanguageStatus {
-    pub id: &'static str,
-    pub label: &'static str,
-    pub installed: bool,
-    /// What installing it would download now (parts another language installed are counted once).
-    pub download_bytes: u64,
-    /// The ids of other languages made of the same files: installed and removed with it.
-    pub shares_with: Vec<&'static str>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FileInfo {
-    /// The part's id (the UI names it in its language) and English label.
-    pub part_id: &'static str,
-    pub part: &'static str,
-    pub name: &'static str,
-    pub url: &'static str,
-    pub size: u64,
-    pub sha256: &'static str,
-    pub source: &'static str,
-    pub license: &'static str,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct TranslatorStatus {
-    /// The user turned it on (and a language is installed). Off, nothing of it runs.
+    /// The user turned it on (and the chat reader is downloaded). Off, nothing of it runs.
     pub enabled: bool,
-    pub languages: Vec<LanguageStatus>,
+    /// Every part is in place.
+    pub downloaded: bool,
+    /// What downloading would fetch now.
+    pub download_bytes: u64,
     /// The download running, or the last one if it failed.
     pub job: Option<Job>,
     /// Where the files go.
     pub dir: String,
-    /// Every file a language can need, as pinned here.
-    pub files: Vec<FileInfo>,
 }
 
-/// The translator's folder, its on/off switch and its one download at a time.
+/// The chat reader's folder, the translator's on/off switch and its one download at a time.
 pub struct Translator {
     dir: PathBuf,
-    /// Reading and translating the chat take real processing power and memory, so the
-    /// translator runs only while the user has it on. Also in the database.
+    /// Reading the chat takes real processing power, so the translator runs only while the
+    /// user has it on. Also in the database.
     enabled: AtomicBool,
     job: Mutex<Option<Job>>,
     cancel: AtomicBool,
 }
 
 impl Translator {
-    /// `enabled` as saved; it stays off while no language is installed.
+    /// `enabled` as saved; it stays off while the chat reader isn't downloaded.
     pub fn new(dir: PathBuf, enabled: bool) -> Self {
+        // v0.9.0 could download a local translator model (1.1 GB); Gemini replaced it.
+        let obsolete = dir.join(OBSOLETE_TRANSLATOR);
+        if obsolete.exists() {
+            match fs::remove_dir_all(&obsolete) {
+                Ok(()) => info!("translator: deleted the old local translator model"),
+                Err(e) => warn!("translator: couldn't delete the old local translator model at {}: {e}", obsolete.display()),
+            }
+        }
         let tr = Self { dir, enabled: AtomicBool::new(false), job: Mutex::new(None), cancel: AtomicBool::new(false) };
-        tr.enabled.store(enabled && tr.any_installed(), Ordering::Release);
+        tr.enabled.store(enabled && tr.downloaded(), Ordering::Release);
         tr
     }
 
@@ -294,86 +235,68 @@ impl Translator {
         self.enabled.load(Ordering::Acquire)
     }
 
-    /// Turn it on (a language must be installed) or off.
+    /// Turn it on (the chat reader must be downloaded) or off.
     pub fn set_enabled(&self, on: bool) -> Result<(), TranslatorError> {
-        if on && !self.any_installed() {
-            return Err(TranslatorError::NothingInstalled);
+        if on && !self.downloaded() {
+            return Err(TranslatorError::NotDownloaded);
         }
         self.enabled.store(on, Ordering::Release);
         Ok(())
     }
 
-    pub fn any_installed(&self) -> bool {
-        LANGUAGES.iter().any(|l| self.missing(l).is_empty())
+    pub fn downloaded(&self) -> bool {
+        self.missing().is_empty()
     }
 
     fn file_path(&self, part: &Part, file: &Download) -> PathBuf {
         self.dir.join(part.id).join(file.name)
     }
 
-    /// A part is installed when each of its files is there at its size. A file is put in place
+    /// A part is in place when each of its files is there at its size. A file is put in place
     /// only once its SHA-256 matched (`fetch`), so the size check catches one changed since.
     fn installed(&self, part: &Part) -> bool {
         part.files.iter().all(|f| fs::metadata(self.file_path(part, f)).is_ok_and(|m| m.is_file() && m.len() == f.size))
     }
 
-    fn missing(&self, language: &Language) -> Vec<&'static Part> {
-        language.parts.iter().map(|id| part(id)).filter(|p| !self.installed(p)).collect()
+    fn missing(&self) -> Vec<&'static Part> {
+        PARTS.iter().filter(|p| !self.installed(p)).collect()
     }
 
     pub fn status(&self) -> TranslatorStatus {
-        let languages = LANGUAGES
-            .iter()
-            .map(|l| {
-                let missing = self.missing(l);
-                LanguageStatus {
-                    id: l.id,
-                    label: l.label,
-                    installed: missing.is_empty(),
-                    download_bytes: missing.iter().flat_map(|p| p.files).map(|f| f.size).sum(),
-                    shares_with: LANGUAGES.iter().filter(|o| o.id != l.id && within(o, l)).map(|o| o.id).collect(),
-                }
-            })
-            .collect();
-        let files = PARTS
-            .iter()
-            .flat_map(|p| {
-                p.files.iter().map(|f| FileInfo { part_id: p.id, part: p.label, name: f.name, url: f.url, size: f.size, sha256: f.sha256, source: f.source, license: f.license })
-            })
-            .collect();
+        let missing = self.missing();
         TranslatorStatus {
             enabled: self.enabled(),
-            languages,
+            downloaded: missing.is_empty(),
+            download_bytes: missing.iter().flat_map(|p| p.files).map(|f| f.size).sum(),
             job: self.job.lock().expect("translator job lock poisoned").clone(),
             dir: self.dir.display().to_string(),
-            files,
         }
     }
 
-    /// Start installing `language` on its own thread; `status` reports its progress.
-    pub fn install(self: &Arc<Self>, language_id: &str) -> Result<(), TranslatorError> {
-        let language = language(language_id)?;
-        let missing = self.missing(language);
+    /// Start downloading the parts that are missing (the user clicked Download), on their own
+    /// thread; `status` reports the progress.
+    pub fn download(self: &Arc<Self>) -> Result<(), TranslatorError> {
+        let missing = self.missing();
         {
             let mut job = self.job.lock().expect("translator job lock poisoned");
             if job.as_ref().is_some_and(|j| j.error.is_none()) {
                 return Err(TranslatorError::Busy);
             }
             let total_bytes = missing.iter().flat_map(|p| p.files).map(|f| f.size).sum();
-            *job = Some(Job { language: language.id.to_string(), done_bytes: 0, total_bytes, error: None });
+            *job = Some(Job { done_bytes: 0, total_bytes, error: None });
         }
         self.cancel.store(false, Ordering::Release);
         let this = Arc::clone(self);
         std::thread::Builder::new().name("translator-download".into()).spawn(move || {
-            let result = this.download(&missing);
+            let result = this.fetch_parts(&missing);
             let mut job = this.job.lock().expect("translator job lock poisoned");
             match result {
                 Ok(()) => {
-                    info!("translator: {} installed", language.label);
+                    info!("translator: chat reader downloaded");
                     *job = None;
                 }
                 Err(e) => {
-                    warn!("translator: installing {} stopped: {e}", language.label);
+                    warn!("translator: downloading the chat reader stopped: {e}");
                     if let Some(job) = job.as_mut() {
                         job.error = Some(e.to_string());
                     }
@@ -396,29 +319,22 @@ impl Translator {
         }
     }
 
-    /// Delete `language`'s parts that another installed language still needs, other than one
-    /// made of no more than its files (Chinese and Japanese share theirs): that one goes too.
-    pub fn remove(&self, language_id: &str) -> Result<(), TranslatorError> {
-        let language = language(language_id)?;
+    /// Delete the chat reader's files.
+    pub fn remove(&self) -> Result<(), TranslatorError> {
         if self.job.lock().expect("translator job lock poisoned").as_ref().is_some_and(|j| j.error.is_none()) {
             return Err(TranslatorError::Busy);
         }
-        let kept: Vec<&str> = LANGUAGES
-            .iter()
-            .filter(|l| !within(l, language) && self.missing(l).is_empty())
-            .flat_map(|l| l.parts.iter().copied())
-            .collect();
-        for id in language.parts.iter().filter(|id| !kept.contains(id)) {
-            let dir = self.dir.join(id);
+        for part in &PARTS {
+            let dir = self.dir.join(part.id);
             if dir.exists() {
                 fs::remove_dir_all(&dir)?;
             }
         }
-        info!("translator: {} removed", language.label);
+        info!("translator: chat reader removed");
         Ok(())
     }
 
-    fn download(&self, parts: &[&'static Part]) -> Result<(), TranslatorError> {
+    fn fetch_parts(&self, parts: &[&'static Part]) -> Result<(), TranslatorError> {
         let client = reqwest::blocking::Client::builder()
             .user_agent(concat!("ClassicEXPTracker/", env!("CARGO_PKG_VERSION"), " (+https://github.com/Kwuasimoto/classic-exp-tracker)"))
             .timeout(READ_TIMEOUT)
@@ -441,7 +357,7 @@ impl Translator {
     fn fetch(&self, client: &reqwest::blocking::Client, part: &Part, file: &Download) -> Result<(), TranslatorError> {
         let target = self.file_path(part, file);
         let partial = target.with_extension(format!("{}.part", target.extension().and_then(|e| e.to_str()).unwrap_or("")));
-        info!("translator: downloading {} ({} bytes) from {}", file.name, file.size, file.url);
+        info!("translator: downloading {} for the {} ({} bytes, {}, {}) from {}", file.name, part.label, file.size, file.source, file.license, file.url);
         let result = self.fetch_to(client, file, &partial);
         match result {
             Ok(()) => Ok(fs::rename(&partial, &target)?),
@@ -517,7 +433,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_file_is_kept_only_at_its_size_and_sha256_and_shared_parts_outlive_a_removal() {
+    fn a_file_is_kept_only_at_its_size_and_sha256_and_every_part_is_needed() {
         // SHA-256 of "abc" (FIPS 180-2 example).
         let file = Download { name: "x", url: "", size: 3, sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", source: "", license: "" };
         let check = |bytes: &[u8]| {
@@ -529,28 +445,28 @@ mod tests {
         assert!(matches!(check(b"abd"), Err(TranslatorError::Checksum { .. })));
         assert!(matches!(check(b"abcd"), Err(TranslatorError::Size { .. })));
 
-        // Every part in place at its size: all three languages installed.
+        // One part missing: not downloaded, and only that part is left to fetch.
         let dir = std::env::temp_dir().join(format!("classic-exp-translator-test-{}", std::process::id()));
-        let tr = Translator::new(dir.clone(), false);
-        for p in &PARTS {
+        let tr = Translator::new(dir.clone(), true);
+        assert!(!tr.enabled(), "saved on, but nothing downloaded");
+        for p in PARTS.iter().filter(|p| p.id != READER_TH.id) {
             fs::create_dir_all(dir.join(p.id)).unwrap();
             for f in p.files {
                 File::create(tr.file_path(p, f)).unwrap().set_len(f.size).unwrap();
             }
         }
-        let installed = |tr: &Translator| tr.status().languages.iter().map(|l| (l.id, l.installed)).collect::<Vec<_>>();
-        assert_eq!(installed(&tr), [("zh-hans", true), ("ko", true), ("ja", true), ("es", true), ("pt-br", true), ("th", true)]);
-        assert_eq!(tr.status().languages[2].shares_with, ["zh-hans"]);
-        assert_eq!(tr.status().languages[3].shares_with, ["pt-br"]);
-        // Japanese and Chinese share their files, so they go together; Korean keeps the shared
-        // text finder and translator.
-        tr.remove("ja").unwrap();
-        assert_eq!(installed(&tr), [("zh-hans", false), ("ko", true), ("ja", false), ("es", true), ("pt-br", true), ("th", true)]);
-        assert_eq!(tr.status().languages[0].download_bytes, READER_CJ.files.iter().map(|f| f.size).sum::<u64>(), "only the reader is missing");
-        for id in ["ko", "es", "th"] {
-            tr.remove(id).unwrap();
+        assert!(!tr.status().downloaded);
+        assert_eq!(tr.status().download_bytes, READER_TH.files.iter().map(|f| f.size).sum::<u64>());
+        assert!(matches!(tr.set_enabled(true), Err(TranslatorError::NotDownloaded)));
+        fs::create_dir_all(dir.join(READER_TH.id)).unwrap();
+        for f in READER_TH.files {
+            File::create(tr.file_path(&READER_TH, f)).unwrap().set_len(f.size).unwrap();
         }
-        assert!(installed(&tr).iter().all(|(_, on)| !on), "{:?}", installed(&tr));
+        assert!(tr.status().downloaded);
+        assert!(tr.set_enabled(true).is_ok());
+        tr.remove().unwrap();
+        assert!(!tr.status().downloaded);
+        assert_eq!(tr.status().download_bytes, PARTS.iter().flat_map(|p| p.files).map(|f| f.size).sum::<u64>());
         fs::remove_dir_all(&dir).unwrap();
     }
 }
