@@ -27,6 +27,19 @@ body {
   font-variant-numeric: tabular-nums;
 }
 button, input, select { font: inherit; color: inherit; }
+/* Chinese, Korean and Japanese text in Windows' own fonts (nothing to bundle); Titillium Web still
+   draws the Latin letters and digits. The page's lang picks the font (lib/i18n.ts). */
+:lang(zh-Hans) body { font-family: "Titillium Web", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; }
+:lang(ja) body { font-family: "Titillium Web", "Yu Gothic UI", "Meiryo UI", sans-serif; }
+:lang(ko) body { font-family: "Titillium Web", "Malgun Gothic", sans-serif; }
+:lang(th) body { font-family: "Titillium Web", "Leelawadee UI", "Tahoma", sans-serif; }
+/* Titillium Web lacks most of Vietnamese's letters (U+1EA0-1EF1): one font for every letter, so a
+   word never mixes two. */
+:lang(vi) body { font-family: "Segoe UI", sans-serif; }
+/* Korean wraps between words, never inside one. */
+:lang(ko) body { word-break: keep-all; }
+/* Wide tracking suits Latin capitals, not these scripts. */
+:lang(zh-Hans) .label, :lang(ja) .label, :lang(ko) .label, :lang(th) .label, :lang(zh-Hans) h2, :lang(ja) h2, :lang(ko) h2, :lang(th) h2 { letter-spacing: 0.04em; }
 :focus { outline: none; }
 /* Keyboard focus: a white ring inside the control (orange is reserved for EXP/hr); outside it on
    light controls, where a ring inside would vanish. */
@@ -48,6 +61,12 @@ button, input, select { font: inherit; color: inherit; }
 .rail-btn:hover { color: var(--text); background: rgba(255, 255, 255, 0.08); }
 .rail-btn.current { background: var(--inset); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
 .rail-btn.open { background: var(--inset); color: var(--text); }
+/* The language menu, beside the rail's language button. */
+.language { position: relative; }
+.flyout { position: absolute; left: calc(100% + 8px); bottom: 0; z-index: 20; min-width: 200px; display: flex; flex-direction: column; padding: 4px; border: 1px solid var(--line); border-radius: 4px; background: var(--chrome); }
+.flyout-option { padding: 7px 10px; border: 0; border-radius: 3px; background: none; color: #c8c8cc; text-align: left; white-space: nowrap; cursor: pointer; }
+.flyout-option:hover { background: rgba(255, 255, 255, 0.06); color: var(--text); }
+.flyout-option.current { background: var(--inset); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
 
 /* Title bar: the window has no native frame (tauri.conf.json). */
 .titlebar { height: 36px; flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding-left: 20px; background: var(--chrome); border-bottom: 1px solid var(--line); user-select: none; }
@@ -258,6 +277,8 @@ tr.selected td { background: rgba(255, 255, 255, 0.1); }
 .compressed .ledger-heading { margin-top: 12px; padding-top: 10px; }
 .compressed .pickups td { padding-top: 4px; padding-bottom: 4px; }
 .compressed .item-tab { padding: 5px 10px; }
+/* Vietnamese is set in Segoe UI, wider than Titillium: a little less padding so all three tabs fit. */
+.compressed .item-tab:lang(vi) { padding: 5px 7px; }
 .pickups th:first-child, .pickups td:first-child { padding-left: 0; }
 .pickups th:last-child, .pickups td:last-child { padding-right: 0; }
 .pickups .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

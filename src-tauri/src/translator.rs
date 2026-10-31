@@ -112,6 +112,54 @@ const READER_KO: Part = Part {
     ],
 };
 
+/// PP-OCRv5's Latin reader: Spanish and Portuguese (with ñ, ç, ã and the accents), among others.
+/// It lacks most of Vietnamese's letters (ạ, ả, ấ...), so Vietnamese isn't offered with it.
+const READER_LATIN: Part = Part {
+    id: "ocr-reader-latin",
+    label: "Reader for Spanish and Portuguese",
+    files: &[
+        Download {
+            name: "inference.onnx",
+            url: "https://huggingface.co/PaddlePaddle/latin_PP-OCRv5_mobile_rec_onnx/resolve/89d3a50e2c27e2e7cceeab0e944c25c807d5db4f/inference.onnx",
+            size: 8_042_023,
+            sha256: "7888113072263cb471b93f66dd5e2ad70548dc526fa1ace760d0d973dd121498",
+            source: "PaddlePaddle/latin_PP-OCRv5_mobile_rec_onnx",
+            license: "Apache-2.0",
+        },
+        Download {
+            name: "inference.yml",
+            url: "https://huggingface.co/PaddlePaddle/latin_PP-OCRv5_mobile_rec_onnx/resolve/89d3a50e2c27e2e7cceeab0e944c25c807d5db4f/inference.yml",
+            size: 6_817,
+            sha256: "0bbe984570f597af3638e50bdf2e8276f3ab26a61966096538b3b0d1849f5c84",
+            source: "PaddlePaddle/latin_PP-OCRv5_mobile_rec_onnx",
+            license: "Apache-2.0",
+        },
+    ],
+};
+
+const READER_TH: Part = Part {
+    id: "ocr-reader-th",
+    label: "Reader for Thai",
+    files: &[
+        Download {
+            name: "inference.onnx",
+            url: "https://huggingface.co/PaddlePaddle/th_PP-OCRv5_mobile_rec_onnx/resolve/1d4adbbafb1034a2fd6618498575b81ea7b69f69/inference.onnx",
+            size: 7_891_015,
+            sha256: "27618be66018f8598ac0a526a593f9f1cebf794e7eded93428e8fb016e537f5f",
+            source: "PaddlePaddle/th_PP-OCRv5_mobile_rec_onnx",
+            license: "Apache-2.0",
+        },
+        Download {
+            name: "inference.yml",
+            url: "https://huggingface.co/PaddlePaddle/th_PP-OCRv5_mobile_rec_onnx/resolve/1d4adbbafb1034a2fd6618498575b81ea7b69f69/inference.yml",
+            size: 4_667,
+            sha256: "f6ba7fefc38ca1ff398ddafa75d67d16e0b3757c4e6c833adffee98a981766c9",
+            source: "PaddlePaddle/th_PP-OCRv5_mobile_rec_onnx",
+            license: "Apache-2.0",
+        },
+    ],
+};
+
 const TRANSLATOR: Part = Part {
     id: "translator",
     label: "Translator (all languages)",
@@ -125,12 +173,15 @@ const TRANSLATOR: Part = Part {
     }],
 };
 
-pub const PARTS: [Part; 4] = [DETECTOR, READER_CJ, READER_KO, TRANSLATOR];
+pub const PARTS: [Part; 6] = [DETECTOR, READER_CJ, READER_KO, READER_LATIN, READER_TH, TRANSLATOR];
 
-pub const LANGUAGES: [Language; 3] = [
+pub const LANGUAGES: [Language; 6] = [
     Language { id: "zh-hans", label: "Chinese (Simplified)", parts: &[DETECTOR.id, READER_CJ.id, TRANSLATOR.id] },
     Language { id: "ko", label: "Korean", parts: &[DETECTOR.id, READER_KO.id, TRANSLATOR.id] },
     Language { id: "ja", label: "Japanese", parts: &[DETECTOR.id, READER_CJ.id, TRANSLATOR.id] },
+    Language { id: "es", label: "Spanish", parts: &[DETECTOR.id, READER_LATIN.id, TRANSLATOR.id] },
+    Language { id: "pt-br", label: "Portuguese (Brazil)", parts: &[DETECTOR.id, READER_LATIN.id, TRANSLATOR.id] },
+    Language { id: "th", label: "Thai", parts: &[DETECTOR.id, READER_TH.id, TRANSLATOR.id] },
 ];
 
 /// A stalled download fails after this long without data (reqwest's blocking timeout applies
@@ -189,13 +240,15 @@ pub struct LanguageStatus {
     pub installed: bool,
     /// What installing it would download now (parts another language installed are counted once).
     pub download_bytes: u64,
-    /// Other languages made of the same files: installed with it and removed with it.
+    /// The ids of other languages made of the same files: installed and removed with it.
     pub shares_with: Vec<&'static str>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileInfo {
+    /// The part's id (the UI names it in its language) and English label.
+    pub part_id: &'static str,
     pub part: &'static str,
     pub name: &'static str,
     pub url: &'static str,
@@ -278,14 +331,14 @@ impl Translator {
                     label: l.label,
                     installed: missing.is_empty(),
                     download_bytes: missing.iter().flat_map(|p| p.files).map(|f| f.size).sum(),
-                    shares_with: LANGUAGES.iter().filter(|o| o.id != l.id && within(o, l)).map(|o| o.label).collect(),
+                    shares_with: LANGUAGES.iter().filter(|o| o.id != l.id && within(o, l)).map(|o| o.id).collect(),
                 }
             })
             .collect();
         let files = PARTS
             .iter()
             .flat_map(|p| {
-                p.files.iter().map(|f| FileInfo { part: p.label, name: f.name, url: f.url, size: f.size, sha256: f.sha256, source: f.source, license: f.license })
+                p.files.iter().map(|f| FileInfo { part_id: p.id, part: p.label, name: f.name, url: f.url, size: f.size, sha256: f.sha256, source: f.source, license: f.license })
             })
             .collect();
         TranslatorStatus {
@@ -486,15 +539,18 @@ mod tests {
             }
         }
         let installed = |tr: &Translator| tr.status().languages.iter().map(|l| (l.id, l.installed)).collect::<Vec<_>>();
-        assert_eq!(installed(&tr), [("zh-hans", true), ("ko", true), ("ja", true)]);
-        assert_eq!(tr.status().languages[2].shares_with, ["Chinese (Simplified)"]);
+        assert_eq!(installed(&tr), [("zh-hans", true), ("ko", true), ("ja", true), ("es", true), ("pt-br", true), ("th", true)]);
+        assert_eq!(tr.status().languages[2].shares_with, ["zh-hans"]);
+        assert_eq!(tr.status().languages[3].shares_with, ["pt-br"]);
         // Japanese and Chinese share their files, so they go together; Korean keeps the shared
         // text finder and translator.
         tr.remove("ja").unwrap();
-        assert_eq!(installed(&tr), [("zh-hans", false), ("ko", true), ("ja", false)]);
+        assert_eq!(installed(&tr), [("zh-hans", false), ("ko", true), ("ja", false), ("es", true), ("pt-br", true), ("th", true)]);
         assert_eq!(tr.status().languages[0].download_bytes, READER_CJ.files.iter().map(|f| f.size).sum::<u64>(), "only the reader is missing");
-        tr.remove("ko").unwrap();
-        assert_eq!(installed(&tr), [("zh-hans", false), ("ko", false), ("ja", false)]);
+        for id in ["ko", "es", "th"] {
+            tr.remove(id).unwrap();
+        }
+        assert!(installed(&tr).iter().all(|(_, on)| !on), "{:?}", installed(&tr));
         fs::remove_dir_all(&dir).unwrap();
     }
 }

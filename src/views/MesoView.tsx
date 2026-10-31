@@ -4,30 +4,28 @@ import { Ledger } from "../components/Ledger";
 import { Pickups } from "../components/Pickups";
 import { mesoSeries, RateChart } from "../components/RateChart";
 import { formatWhole } from "../lib/format";
+import { useMessages } from "../lib/i18n";
 import { getLiveChart, setInventoryCorner, setLootEnabled, WINDOWS_MINUTES, type AppError, type Bar, type Corner, type LootStatus, type Tick, type WindowMinutes } from "../lib/ipc";
-import { HELD_WARNING, lockOf, lootHeldSince, mesoLines, mesoRates, profitCaption } from "../lib/live";
+import { lockOf, lootHeldSince, mesoLines, mesoRates, profitCaption } from "../lib/live";
+import type { Messages } from "../locales/en";
 
 const TOAST_MS = 3000;
 
-const CORNERS: ReadonlyArray<{ id: Corner; label: string }> = [
-  { id: "topRight", label: "Top right" },
-  { id: "bottomRight", label: "Bottom right" },
-  { id: "bottomLeft", label: "Bottom left" },
-];
-const cornerName = (c: Corner) => (CORNERS.find((k) => k.id === c)?.label ?? c).toLowerCase();
+const CORNERS: readonly Corner[] = ["topRight", "bottomRight", "bottomLeft"];
 
 /** Why meso tracking can't count right now, if it can't. */
-function problem(loot: LootStatus, shopping: boolean): string | null {
-  if (shopping) return "Paused while shopping";
-  if (!loot.found) return `Inventory closed or out of place: open it in the ${cornerName(loot.corner)} corner`;
-  if (!loot.inventory) return "The inventory's meso total doesn't read";
-  if (!loot.etcTab) return "Etc drops count while the Etc tab is open";
-  if (!loot.quickslot) return "No potions found on the quickslot";
+function problem(loot: LootStatus, shopping: boolean, m: Messages): string | null {
+  if (shopping) return m.mesos.paused;
+  if (!loot.found) return m.mesos.notFound(m.mesos.corners[loot.corner].toLowerCase());
+  if (!loot.inventory) return m.mesos.totalUnreadable;
+  if (!loot.etcTab) return m.mesos.etcTabClosed;
+  if (!loot.quickslot) return m.mesos.noPotions;
   return null;
 }
 
 /** Meso tracking: mesos picked up, Etc drops at NPC prices and potions used, per hour. */
 export function MesoView({ tick, status }: { tick: Tick | null; status: ReactNode }) {
+  const m = useMessages();
   const [bars, setBars] = useState<Bar[]>([]);
   const [windowMinutes, setWindowMinutes] = useState<WindowMinutes>(WINDOWS_MINUTES[0]);
   const [error, setError] = useState<AppError | null>(null);
@@ -67,8 +65,8 @@ export function MesoView({ tick, status }: { tick: Tick | null; status: ReactNod
     setError(null);
   };
 
-  const why = loot && on ? problem(loot, tick?.shopping === true) : null;
-  const lock = lockOf(tick);
+  const why = loot && on ? problem(loot, tick?.shopping === true, m) : null;
+  const lock = lockOf(tick, m);
   const rates = mesoRates(bars);
   const held = lootHeldSince(loot);
 
@@ -76,21 +74,21 @@ export function MesoView({ tick, status }: { tick: Tick | null; status: ReactNod
     <>
       <section className="panel page-head">
         <div className="page-head-main">
-          <h1 className="label">Meso tracking</h1>
-          <span className={why ? "page-title warn" : "page-title"} title={on ? (why ?? undefined) : "Reads the inventory's meso total, Etc stacks and quickslot potions. Uses more processing than EXP tracking."}>
-            {on ? (why ?? "Counting") : "Off"}
+          <h1 className="label">{m.mesos.tracking}</h1>
+          <span className={why ? "page-title warn" : "page-title"} title={on ? (why ?? undefined) : m.mesos.offTitle}>
+            {on ? (why ?? m.mesos.counting) : m.mesos.off}
           </span>
         </div>
         <div className="page-head-actions">
-          <div className="segmented" role="group" aria-label="Inventory corner">
+          <div className="segmented" role="group" aria-label={m.mesos.corner}>
             {CORNERS.map((c) => (
-              <button key={c.id} className={c.id === loot?.corner ? "current" : ""} aria-pressed={c.id === loot?.corner} disabled={tick === null} onClick={() => void chooseCorner(c.id)}>
-                {c.label}
+              <button key={c} className={c === loot?.corner ? "current" : ""} aria-pressed={c === loot?.corner} disabled={tick === null} onClick={() => void chooseCorner(c)}>
+                {m.mesos.corners[c]}
               </button>
             ))}
           </div>
           <button className={on ? "btn" : "btn primary"} disabled={tick === null} onClick={() => void toggle()}>
-            {on ? "Turn off" : "Turn on"}
+            {on ? m.common.turnOff : m.common.turnOn}
           </button>
           {status}
         </div>
@@ -102,23 +100,23 @@ export function MesoView({ tick, status }: { tick: Tick | null; status: ReactNod
         <div className="page-body">
           <Ledger
             headlines={[
-              { title: "Profit / hr", tone: "meso", value: rates === null ? "—" : formatWhole(rates.profit), caption: `${profitCaption(held)}${lock ? ` · ${lock.name}` : ""}` },
-              { title: "Meso total", tone: "plain", value: loot?.mesoTotal == null ? "—" : formatWhole(loot.mesoTotal), caption: "in the inventory" },
+              { title: m.live.profitPerHour, tone: "meso", value: rates === null ? "—" : formatWhole(rates.profit), caption: `${profitCaption(held, m)}${lock ? ` · ${lock.name}` : ""}` },
+              { title: m.mesos.mesoTotal, tone: "plain", value: loot?.mesoTotal == null ? "—" : formatWhole(loot.mesoTotal), caption: m.mesos.inInventory },
             ]}
-            warning={lock?.away ? `Locked to ${lock.name} on the Live page: mesos here aren't counted` : held !== null ? HELD_WARNING : null}
-            groups={[{ title: "Mesos per hour", lines: mesoLines(rates, loot) }]}
+            warning={lock?.away ? m.mesos.lockedAway(lock.name) : held !== null ? m.mesos.heldWarning : null}
+            groups={[{ title: m.mesos.perHour, lines: mesoLines(rates, loot, m) }]}
           >
             <Pickups pickedUp={loot?.pickedUp ?? []} />
           </Ledger>
           <div className="page-main">
             <RateChart
-              series={mesoSeries(bars)}
+              series={mesoSeries(bars, m)}
               fill
               actions={
-                <div className="segmented" role="group" aria-label="Chart window">
-                  {WINDOWS_MINUTES.map((m) => (
-                    <button key={m} className={m === windowMinutes ? "current" : ""} aria-pressed={m === windowMinutes} onClick={() => setWindowMinutes(m)}>
-                      {m / 60}H
+                <div className="segmented" role="group" aria-label={m.common.chartWindow}>
+                  {WINDOWS_MINUTES.map((w) => (
+                    <button key={w} className={w === windowMinutes ? "current" : ""} aria-pressed={w === windowMinutes} onClick={() => setWindowMinutes(w)}>
+                      {m.time.windowHours(w / 60)}
                     </button>
                   ))}
                 </div>

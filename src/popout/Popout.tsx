@@ -1,6 +1,7 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from "react";
 import { formatDay, formatHours, formatWhole, statusShort } from "../lib/format";
+import { useMessages } from "../lib/i18n";
 import { getLiveChart, type Bar } from "../lib/ipc";
 import { liveRates, mesoRates, profitOf } from "../lib/live";
 import { useTick } from "../lib/useTick";
@@ -20,7 +21,7 @@ const clock = (secs: number) => {
 
 /** The outer ring is the level: white up to where the player is, then orange for one hour more
  *  at the current rate. The thin inner ring laps once per hour of grinding time. */
-function Ring({ pct, pctPerHour, grindSecs }: { pct: number | null; pctPerHour: number | null; grindSecs: number }) {
+function Ring({ pct, pctPerHour, grindSecs, label }: { pct: number | null; pctPerHour: number | null; grindSecs: number; label: string }) {
   const mid = RING / 2;
   const r = (RING - STROKE) / 2 - 1;
   const c = 2 * Math.PI * r;
@@ -39,12 +40,14 @@ function Ring({ pct, pctPerHour, grindSecs }: { pct: number | null; pctPerHour: 
       <circle cx={mid} cy={mid} r={ri} className="lap-track" strokeWidth={3} />
       <circle cx={mid} cy={mid} r={ri} className="lap" strokeWidth={3} strokeDasharray={`${lap} ${ci}`} transform={turn} />
       <text x={mid} y={mid + 4} className={grindSecs >= 36_000 ? "clock long" : "clock"}>{clock(grindSecs)}</text>
-      <text x={mid} y={mid + 15} className="clock-label">session</text>
+      <text x={mid} y={mid + 15} className="clock-label">{label}</text>
     </svg>
   );
 }
 
 export function Popout() {
+  const m = useMessages();
+  const p = m.popout;
   const { tick, error } = useTick();
   const [bars, setBars] = useState<Bar[]>([]);
   const [problem, setProblem] = useState<string | null>(null);
@@ -73,18 +76,18 @@ export function Popout() {
   const rates = liveRates(bars, tick);
   const mesos = tick?.loot.enabled ? mesoRates(bars) : null;
   const ok = error === null && problem === null && tick?.status.kind === "ok";
-  const warning = error ? error.message : problem ?? (tick && tick.status.kind !== "ok" ? statusShort(tick.status) : null);
-  const nextLevel = tick?.level != null ? `Lv ${tick.level + 1}` : "Level up";
+  const warning = error ? error.message : problem ?? (tick && tick.status.kind !== "ok" ? statusShort(tick.status, m) : null);
+  const [beforeTime, afterTime] = p.levelIn(tick?.level != null ? p.nextLevel(tick.level + 1) : p.levelUp);
   const toLevel = rates.hoursToLevel === null ? "—" : formatHours(rates.hoursToLevel);
   // The totals stay out of the way: hovering the Σ shows them.
   const totals = tick?.totals ?? null;
   const totalsText =
     totals === null || totals.since === null
-      ? "Totals: nothing counted yet"
+      ? p.totalsNone
       : [
-          `Totals since ${formatDay(totals.since)}`,
-          `EXP gained: ${formatWhole(totals.exp)}`,
-          ...(tick?.loot.enabled ? [`Profit: ${formatWhole(profitOf(totals.loot))}`] : []),
+          p.totalsSince(formatDay(totals.since)),
+          p.expGained(formatWhole(totals.exp)),
+          ...(tick?.loot.enabled ? [p.profit(formatWhole(profitOf(totals.loot)))] : []),
         ].join("\n");
 
   // The rates' width changes with their digits: keep the window as wide as the content.
@@ -105,32 +108,32 @@ export function Popout() {
 
   return (
     <main ref={root} className={ok ? "popout" : "popout stale"} onMouseDown={drag}>
-      <h1 className="sr-only">Classic EXP Tracker rates</h1>
-      <span className="dot" title={ok ? "Reading OK" : (warning ?? "Starting…")} />
-      <Ring pct={tick?.pctBp == null ? null : tick.pctBp / 100} pctPerHour={rates.pctPerHour} grindSecs={tick?.grindSecs ?? 0} />
+      <h1 className="sr-only">{p.heading}</h1>
+      <span className="dot" title={ok ? m.status.ok : (warning ?? m.status.starting)} />
+      <Ring pct={tick?.pctBp == null ? null : tick.pctBp / 100} pctPerHour={rates.pctPerHour} grindSecs={tick?.grindSecs ?? 0} label={p.session} />
       <div className="side">
         <dl className="rates">
           <div>
-            <dt>EXP/h</dt>
+            <dt>{p.expPerHour}</dt>
             <dd className="exp">{rates.expPerHour === null ? "—" : formatWhole(rates.expPerHour)}</dd>
           </div>
           {tick?.loot.enabled && (
             <div>
-              <dt>Meso/h</dt>
+              <dt>{p.mesoPerHour}</dt>
               <dd className="meso">{mesos === null ? "—" : formatWhole(mesos.profit)}</dd>
             </div>
           )}
         </dl>
         {ok || warning === null ? (
           <div className="foot">
-            {nextLevel} in <b>{toLevel}</b>
+            {beforeTime}<b>{toLevel}</b>{afterTime}
             <span className="totals" title={totalsText} aria-label={totalsText}>Σ</span>
           </div>
         ) : (
           <div className="foot warning">{warning}</div>
         )}
       </div>
-      <button className="close" aria-label="Close the popout" title="Close" onClick={() => void getCurrentWindow().close().catch((e: unknown) => setProblem(`window: ${String(e)}`))}>
+      <button className="close" aria-label={p.close} title={p.closeTitle} onClick={() => void getCurrentWindow().close().catch((e: unknown) => setProblem(`window: ${String(e)}`))}>
         ✕
       </button>
     </main>

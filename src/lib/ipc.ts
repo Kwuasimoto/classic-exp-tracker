@@ -227,7 +227,7 @@ export const TranslatorStatusSchema = z.object({
     .nullable(),
   dir: z.string(),
   files: z.array(
-    z.object({ part: z.string(), name: z.string(), url: z.string(), size: count, sha256: z.string(), source: z.string(), license: z.string() }),
+    z.object({ partId: z.string(), part: z.string(), name: z.string(), url: z.string(), size: count, sha256: z.string(), source: z.string(), license: z.string() }),
   ),
 });
 export type TranslatorStatus = z.infer<typeof TranslatorStatusSchema>;

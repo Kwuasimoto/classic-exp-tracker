@@ -20,7 +20,8 @@ flowchart LR
 - **Mesos/hr** (optional): mesos picked up + Etc value − potions used.
 - **Pin it over the game**: a small always-on-top window with your rates.
 - **Every grind saved by itself** in History.
-- **Chat translator** (coming): Chinese, Korean and Japanese chat in English.
+- **Chat translator** (coming): Chinese, Korean, Japanese, Spanish, Portuguese and Thai chat in English.
+- **In your language**: English, 简体中文, 한국어, 日本語, Español, Português (Brasil), ไทย, Tiếng Việt. It follows Windows; the globe button changes it.
 
 ## Install
 
@@ -54,7 +55,8 @@ That's it: nothing to calibrate.
 - **History**: every grind is saved by itself once you've been off its map for 30 minutes (or press reset), if it had 10+ minutes of training. Automatic ones are deleted after 30 days unless you keep them (bookmark); ones you save yourself stay.
 - **Map names** come from the game's map list. A map not on it shows as **Unrecognised map**; the pencil renames it.
 - **Shopping**: in shops the time doesn't count.
-- **Chat translator**: installs what's needed to translate Chinese, Korean and Japanese chat into English on your PC (about 1.1 GB, downloaded only when you click Install). Reading the chat isn't switched on yet.
+- **Chat translator**: installs what's needed to translate Chinese, Korean, Japanese, Spanish, Portuguese and Thai chat into English on your PC (about 1.1 GB, downloaded only when you click Install). Reading the chat isn't switched on yet. Vietnamese chat isn't offered yet: the text reader it would use doesn't have Vietnamese's letters.
+- **Languages**: the app follows Windows' display language if it has it, and the globe button at the bottom of the side nav picks another. The installer follows Windows' language too. Map and item names stay as the game shows them.
 
 </details>
 

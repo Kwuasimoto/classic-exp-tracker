@@ -4,12 +4,15 @@ import { Ledger, type Headline, type LedgerGroup } from "../components/Ledger";
 import { Pickups } from "../components/Pickups";
 import { expSeries, RateChart } from "../components/RateChart";
 import { formatDateTime, formatDay, formatHours, formatPct, formatWhole as whole } from "../lib/format";
+import { useMessages } from "../lib/i18n";
 import { getLiveChart, lockMap, renameMap, resetSession, resetTotals, saveSnapshot, unlockMap, WINDOWS_MINUTES, type AppError, type Bar, type Tick, type WindowMinutes } from "../lib/ipc";
-import { expToLevel, HELD_WARNING, liveRates, lockOf, lootHeldSince, mesoLines, mesoRates, profitCaption, profitOf } from "../lib/live";
+import { expToLevel, liveRates, lockOf, lootHeldSince, mesoLines, mesoRates, profitCaption, profitOf } from "../lib/live";
 
 const TOAST_MS = 3000;
 
 export function LiveView({ tick, status }: { tick: Tick | null; status: ReactNode }) {
+  const m = useMessages();
+  const l = m.live;
   const [bars, setBars] = useState<Bar[]>([]);
   const [windowMinutes, setWindowMinutes] = useState<WindowMinutes>(WINDOWS_MINUTES[0]);
   const [error, setError] = useState<AppError | null>(null);
@@ -41,10 +44,10 @@ export function LiveView({ tick, status }: { tick: Tick | null; status: ReactNod
   }, [toast]);
 
   const save = async () => {
-    const name = `${tick?.mapName ?? "Session"} · ${formatDateTime(Date.now() / 1000)}`;
+    const name = l.snapshotName(tick?.mapName ?? l.session, formatDateTime(Date.now() / 1000));
     const res = await saveSnapshot(name, windowMinutes);
     if (!res.success) return setError(res.error);
-    setToast(res.data === null ? "Nothing to save yet" : "Saved to History");
+    setToast(res.data === null ? l.nothingToSave : l.saved);
   };
 
   const saveMapName = async () => {
@@ -52,7 +55,7 @@ export function LiveView({ tick, status }: { tick: Tick | null; status: ReactNod
     const res = await renameMap(naming.mapId, naming.name);
     if (!res.success) return setError(res.error);
     setNaming(null);
-    setToast("Map renamed");
+    setToast(l.mapRenamed);
   };
 
   const toggleLock = async () => {
@@ -60,14 +63,14 @@ export function LiveView({ tick, status }: { tick: Tick | null; status: ReactNod
     const res = tick.lockedMap !== null ? await unlockMap() : tick.mapId !== null ? await lockMap(tick.mapId) : null;
     if (res === null) return;
     if (!res.success) return setError(res.error);
-    setToast(tick.lockedMap !== null ? "Unlocked: every map counts" : "Locked: only this map counts");
+    setToast(tick.lockedMap !== null ? l.unlocked : l.locked);
     void refreshChart();
   };
 
   const reset = async () => {
     const res = await resetSession();
     if (!res.success) return setError(res.error);
-    setToast("Session reset");
+    setToast(l.sessionReset);
     void refreshChart();
   };
 
@@ -75,7 +78,7 @@ export function LiveView({ tick, status }: { tick: Tick | null; status: ReactNod
     const res = await resetTotals();
     setConfirmingTotals(false);
     if (!res.success) return setError(res.error);
-    setToast("Totals reset");
+    setToast(l.totalsReset);
   };
 
   // Reload with every tick (once a second): the chart includes the minute in progress.
@@ -86,44 +89,44 @@ export function LiveView({ tick, status }: { tick: Tick | null; status: ReactNod
   const rates = liveRates(bars, tick);
   const toLevel = expToLevel(tick);
   const level = tick?.level ?? null;
-  const lock = lockOf(tick);
+  const lock = lockOf(tick, m);
   const locked = lock !== null;
-  const lockedName = lock?.name ?? "the locked map";
+  const lockedName = lock?.name ?? l.theLockedMap;
   // With meso tracking on, the ledger and chart show the mesos too.
   const tracking = tick?.loot.enabled === true;
   const mesos = mesoRates(bars);
   const headlines: Headline[] = [
-    { title: "EXP / hr", tone: "exp", value: rates.expPerHour === null ? "—" : whole(rates.expPerHour), caption: locked ? `last 60 min · ${lockedName}` : "last 60 min" },
+    { title: l.expPerHour, tone: "exp", value: rates.expPerHour === null ? "—" : whole(rates.expPerHour), caption: locked ? l.last60On(lockedName) : l.last60 },
   ];
   const held = lootHeldSince(tick?.loot ?? null);
-  if (tracking) headlines.push({ title: "Profit / hr", tone: "meso", value: mesos === null ? "—" : whole(mesos.profit), caption: profitCaption(held) });
+  if (tracking) headlines.push({ title: l.profitPerHour, tone: "meso", value: mesos === null ? "—" : whole(mesos.profit), caption: profitCaption(held, m) });
   const groups: LedgerGroup[] = [
     {
-      title: "EXP",
+      title: l.exp,
       lines: [
-        { label: "% / hr", note: level === null ? undefined : `of level ${level}`, value: rates.pctPerHour === null ? "—" : `${rates.pctPerHour.toFixed(2)}%` },
-        { label: "Time to level", value: rates.hoursToLevel === null ? "—" : formatHours(rates.hoursToLevel) },
-        { label: "EXP to level", value: toLevel === null ? "—" : `${toLevel.exact ? "" : "≈ "}${whole(toLevel.exp)}` },
+        { label: l.pctPerHour, note: level === null ? undefined : l.ofLevel(level), value: rates.pctPerHour === null ? "—" : `${rates.pctPerHour.toFixed(2)}%` },
+        { label: l.timeToLevel, value: rates.hoursToLevel === null ? "—" : formatHours(rates.hoursToLevel) },
+        { label: l.expToLevel, value: toLevel === null ? "—" : `${toLevel.exact ? "" : "≈ "}${whole(toLevel.exp)}` },
         {
-          label: "EXP now",
+          label: l.expNow,
           note: tick?.pctBp == null ? undefined : formatPct(tick.pctBp),
           value: tick?.exp == null ? "—" : `${tick.expExact ? "" : "≈ "}${whole(tick.exp)}`,
         },
       ],
     },
   ];
-  if (tracking) groups.push({ title: "Mesos per hour", lines: mesoLines(mesos, tick?.loot ?? null) });
+  if (tracking) groups.push({ title: m.mesos.perHour, lines: mesoLines(mesos, tick?.loot ?? null, m) });
   const totals = tick?.totals ?? null;
   groups.push({
-    title: "Totals",
-    note: totals?.since == null ? undefined : `since ${formatDay(totals.since)}`,
+    title: l.totals,
+    note: totals?.since == null ? undefined : l.since(formatDay(totals.since)),
     action: confirmingTotals ? (
       <>
-        <button className="btn small danger" onClick={() => void clearTotals()}>Reset totals</button>
-        <button className="btn small" onClick={() => setConfirmingTotals(false)}>Keep</button>
+        <button className="btn small danger" onClick={() => void clearTotals()}>{l.resetTotals}</button>
+        <button className="btn small" onClick={() => setConfirmingTotals(false)}>{m.common.keep}</button>
       </>
     ) : (
-      <button className="icon-btn" aria-label="Reset totals" title="Start the totals again from 0 (the session reset leaves them alone)" disabled={totals === null} onClick={() => setConfirmingTotals(true)}>
+      <button className="icon-btn" aria-label={l.resetTotals} title={l.resetTotalsTitle} disabled={totals === null} onClick={() => setConfirmingTotals(true)}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="M3 12a9 9 0 1 0 3-6.7" />
           <polyline points="3 3 3 9 9 9" />
@@ -131,8 +134,8 @@ export function LiveView({ tick, status }: { tick: Tick | null; status: ReactNod
       </button>
     ),
     lines: [
-      { label: "EXP gained", value: totals === null ? "—" : whole(totals.exp) },
-      ...(tracking ? [{ label: "Profit", note: "after potions", value: totals === null ? "—" : whole(profitOf(totals.loot)) }] : []),
+      { label: l.expGained, value: totals === null ? "—" : whole(totals.exp) },
+      ...(tracking ? [{ label: l.profit, note: l.afterPotions, value: totals === null ? "—" : whole(profitOf(totals.loot)) }] : []),
     ],
   });
 
@@ -145,7 +148,7 @@ export function LiveView({ tick, status }: { tick: Tick | null; status: ReactNod
               <input
                 value={naming.name}
                 autoFocus
-                aria-label="Map name"
+                aria-label={l.mapName}
                 style={{ flex: 1, minWidth: 0 }}
                 onChange={(e) => setNaming({ mapId: naming.mapId, name: e.target.value })}
                 onKeyDown={(e) => {
@@ -153,17 +156,17 @@ export function LiveView({ tick, status }: { tick: Tick | null; status: ReactNod
                   if (e.key === "Escape") setNaming(null);
                 }}
               />
-              <button className="btn primary" onClick={() => void saveMapName()}>Save</button>
-              <button className="btn" onClick={() => setNaming(null)}>Cancel</button>
+              <button className="btn primary" onClick={() => void saveMapName()}>{m.common.save}</button>
+              <button className="btn" onClick={() => setNaming(null)}>{m.common.cancel}</button>
             </div>
           ) : (
             <div className="row" style={{ flexWrap: "nowrap", gap: 8 }}>
-              <h1 className="page-title">{tick?.shopping ? "Shopping" : tick?.mapId == null ? "Waiting for map…" : (tick.mapName ?? "Unrecognised map")}</h1>
+              <h1 className="page-title">{tick?.shopping ? l.shopping : tick?.mapId == null ? l.waitingForMap : (tick.mapName ?? l.unrecognisedMap)}</h1>
               {tick?.mapId != null && !tick.shopping && (
                 <button
                   className="icon-btn"
-                  aria-label="Rename map"
-                  title={tick.mapName === null ? "This map isn't on the map list: name it" : "Rename this map"}
+                  aria-label={l.renameMap}
+                  title={tick.mapName === null ? l.nameMapTitle : l.renameMapTitle}
                   onClick={() => setNaming({ mapId: tick.mapId as number, name: tick.mapName ?? "" })}
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -175,9 +178,9 @@ export function LiveView({ tick, status }: { tick: Tick | null; status: ReactNod
               {(locked || (tick?.mapId != null && !tick.shopping)) && (
                 <button
                   className={locked ? "icon-btn current" : "icon-btn"}
-                  aria-label={locked ? "Unlock map" : "Lock to this map"}
+                  aria-label={locked ? l.unlock : l.lock}
                   aria-pressed={locked}
-                  title={locked ? `Locked to ${lockedName}: only its EXP counts. Click to count every map.` : "Lock to this map: count only its EXP and time"}
+                  title={locked ? l.unlockTitle(lockedName) : l.lockTitle}
                   onClick={() => void toggleLock()}
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill={locked ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -190,15 +193,15 @@ export function LiveView({ tick, status }: { tick: Tick | null; status: ReactNod
           )}
         </div>
         {status}
-        <div className={level === null ? "badge pending" : "badge"} title={level === null ? "Narrowing down your level from the EXP readings" : undefined}>
-          LV. {level ?? "Determining…"}
+        <div className={level === null ? "badge pending" : "badge"} title={level === null ? l.levelPendingTitle : undefined}>
+          {level === null ? l.levelPending : l.level(level)}
         </div>
       </section>
       {error && <p className="panel error">{error.message}</p>}
       {toast && <div className="toast" role="status">{toast}</div>}
 
       <div className="page-body chart-only">
-        <Ledger headlines={headlines} warning={lock?.away ? `Locked to ${lockedName}: nothing here is counted` : held !== null ? HELD_WARNING : null} groups={groups}>
+        <Ledger headlines={headlines} warning={lock?.away ? l.lockedAway(lockedName) : held !== null ? m.mesos.heldWarning : null} groups={groups}>
           {tracking && tick && (
             <>
               <ActivePots loot={tick.loot} onError={setError} onDone={setToast} />
@@ -208,27 +211,27 @@ export function LiveView({ tick, status }: { tick: Tick | null; status: ReactNod
         </Ledger>
         <div className="page-main">
       <RateChart
-        series={expSeries(bars, tracking)}
+        series={expSeries(bars, m, tracking)}
         fill
         actions={
           <div className="row" style={{ gap: 8, flexWrap: "nowrap" }}>
-            <button className="icon-btn" aria-label="Save to History" title={`Save the last ${windowMinutes / 60} hours to History`} onClick={() => void save()}>
+            <button className="icon-btn" aria-label={l.saveToHistory} title={l.saveTitle(windowMinutes / 60)} onClick={() => void save()}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
                 <polyline points="17 21 17 13 7 13 7 21" />
                 <polyline points="7 3 7 8 15 8" />
               </svg>
             </button>
-            <button className="icon-btn" aria-label="Reset session" title="Start a new session (saves nothing)" onClick={() => void reset()}>
+            <button className="icon-btn" aria-label={l.resetSession} title={l.resetTitle} onClick={() => void reset()}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M3 12a9 9 0 1 0 3-6.7" />
                 <polyline points="3 3 3 9 9 9" />
               </svg>
             </button>
-            <div className="segmented" role="group" aria-label="Chart window">
-              {WINDOWS_MINUTES.map((m) => (
-                <button key={m} className={m === windowMinutes ? "current" : ""} aria-pressed={m === windowMinutes} onClick={() => setWindowMinutes(m)}>
-                  {m / 60}H
+            <div className="segmented" role="group" aria-label={m.common.chartWindow}>
+              {WINDOWS_MINUTES.map((w) => (
+                <button key={w} className={w === windowMinutes ? "current" : ""} aria-pressed={w === windowMinutes} onClick={() => setWindowMinutes(w)}>
+                  {m.time.windowHours(w / 60)}
                 </button>
               ))}
             </div>

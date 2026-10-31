@@ -68,3 +68,12 @@ body { font-family: "Titillium Web", system-ui, sans-serif; color: var(--text); 
 .close:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* Read by screen readers only. */
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* As in App.css: Windows' own Chinese, Korean and Japanese fonts. */
+:lang(zh-Hans) body { font-family: "Titillium Web", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; }
+:lang(ja) body { font-family: "Titillium Web", "Yu Gothic UI", "Meiryo UI", sans-serif; }
+:lang(ko) body { font-family: "Titillium Web", "Malgun Gothic", sans-serif; }
+:lang(th) body { font-family: "Titillium Web", "Leelawadee UI", "Tahoma", sans-serif; }
+/* Titillium Web lacks most of Vietnamese's letters (U+1EA0-1EF1): one font for every letter, so a
+   word never mixes two. */
+:lang(vi) body { font-family: "Segoe UI", sans-serif; }
+:lang(ko) body { word-break: keep-all; }

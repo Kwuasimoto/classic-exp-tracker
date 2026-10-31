@@ -2,7 +2,9 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Bar as BarMark, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { Bar } from "../lib/ipc";
 import { formatClock, formatExp } from "../lib/format";
+import { useMessages } from "../lib/i18n";
 import { profitOf } from "../lib/live";
+import type { Messages } from "../locales/en";
 
 const tick = (v: unknown) => (typeof v === "number" ? formatExp(v) : String(v));
 const axisText = { fill: "var(--muted)", fontSize: 12 };
@@ -31,6 +33,8 @@ function clockTicks(starts: number[], maxTicks: number): number[] {
 
 /** What the chart plots: an amount per 10-minute bar and a 60-minute hourly rate. */
 export interface Series {
+  /** Which chart this is, so the parts hidden on it are remembered in any language. */
+  id: "exp" | "exp-profit" | "meso";
   barLabel: string;
   lineLabel: string;
   /** The rate line's colour: orange for EXP/hr, meso gold for mesos (docs/STYLE.md). */
@@ -44,19 +48,21 @@ export interface Series {
 const profitPerHour = (b: Bar) => b.lootPerHour && b.lootPerHour.meso + b.lootPerHour.etcValue - b.lootPerHour.potionCost;
 
 /** EXP, with Profit/hr as a second line when meso tracking is on. */
-export const expSeries = (bars: Bar[], withProfit = false): Series => ({
+export const expSeries = (bars: Bar[], m: Messages, withProfit = false): Series => ({
+  id: withProfit ? "exp-profit" : "exp",
   // With two rate lines the legend is tight: the keys get shorter (the ledger says "last 60 min").
-  barLabel: withProfit ? "EXP / 10 min" : "EXP per 10 min",
-  lineLabel: withProfit ? "EXP/hr" : "EXP/hr (60-min avg)",
+  barLabel: withProfit ? m.chart.expPer10Short : m.chart.expPer10,
+  lineLabel: withProfit ? m.chart.expPerHour : m.chart.expPerHourAvg,
   colour: "var(--accent)",
   points: bars.map((b) => ({ start: b.start, bar: b.expGained, line: b.ratePerHour })),
-  second: withProfit ? { label: "Profit/hr", colour: "var(--meso)", values: bars.map(profitPerHour) } : undefined,
+  second: withProfit ? { label: m.chart.profitPerHour, colour: "var(--meso)", values: bars.map(profitPerHour) } : undefined,
 });
 
 /** Profit: mesos and Etc value picked up, less potions used. */
-export const mesoSeries = (bars: Bar[]): Series => ({
-  barLabel: "Mesos per 10 min",
-  lineLabel: "Profit/hr (60-min avg)",
+export const mesoSeries = (bars: Bar[], m: Messages): Series => ({
+  id: "meso",
+  barLabel: m.chart.mesosPer10,
+  lineLabel: m.chart.profitPerHourAvg,
   colour: "var(--meso)",
   points: bars.map((b) => ({
     start: b.start,
@@ -66,9 +72,9 @@ export const mesoSeries = (bars: Bar[]): Series => ({
 });
 
 type Part = "bar" | "line" | "second";
-const HIDDEN_KEY = "chart-hidden";
+const HIDDEN_KEY = "chart-hidden-parts";
 
-/** The chart parts the viewer switched off, by their labels (a display preference; it
+/** The chart parts the viewer switched off, as "series:part" (a display preference; it
  *  only lives in this browser's storage, and a failed read shows everything). */
 function savedHidden(): Set<string> {
   try {
@@ -92,17 +98,18 @@ function saveHidden(hidden: Set<string>) {
  *  No animation: the live chart reloads every second.
  *  `fill` makes the panel take the remaining height; `actions` sit at the legend's right. */
 export function RateChart({ series, fill = false, actions }: { series: Series; fill?: boolean; actions?: ReactNode }) {
+  const m = useMessages();
   const data = series.points.map((p, i) => ({ start: p.start, exp: p.bar, rate: p.line, second: series.second?.values[i] ?? null }));
   const empty = series.points.every((p) => p.bar === 0 && p.line === null);
   const bars = series.points;
   // Legend keys switch their part of the chart on and off.
   const [hidden, setHidden] = useState(savedHidden);
-  const labelOf = (part: Part) => (part === "bar" ? series.barLabel : part === "line" ? series.lineLabel : (series.second?.label ?? ""));
-  const shown = (part: Part) => !hidden.has(labelOf(part));
+  const keyOf = (part: Part) => `${series.id}:${part}`;
+  const shown = (part: Part) => !hidden.has(keyOf(part));
   const toggle = (part: Part) => {
     const next = new Set(hidden);
-    if (next.has(labelOf(part))) next.delete(labelOf(part));
-    else next.add(labelOf(part));
+    if (next.has(keyOf(part))) next.delete(keyOf(part));
+    else next.add(keyOf(part));
     setHidden(next);
     saveHidden(next);
   };
@@ -111,7 +118,7 @@ export function RateChart({ series, fill = false, actions }: { series: Series; f
       className={shown(part) ? "legend-key label" : "legend-key label off"}
       style={colour ? { color: colour } : undefined}
       aria-pressed={shown(part)}
-      title={shown(part) ? `Hide ${label}` : `Show ${label}`}
+      title={shown(part) ? m.chart.hide(label) : m.chart.show(label)}
       onClick={() => toggle(part)}
     >
       {swatch}
@@ -144,14 +151,14 @@ export function RateChart({ series, fill = false, actions }: { series: Series; f
         {actions}
       </div>
       <div className="chart-plot" ref={plot}>
-        {empty && <p className="chart-empty caption">Nothing recorded in this window yet</p>}
+        {empty && <p className="chart-empty caption">{m.chart.empty}</p>}
         {hasRoom && (
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart
               data={data}
               margin={{ top: 8, right: 4, bottom: 0, left: 4 }}
-              title={`Chart: ${[series.barLabel, series.lineLabel, series.second?.label].filter(Boolean).join(", ")}`}
-              desc="Each bar is 10 minutes. With the chart focused, the left and right arrow keys read each bar."
+              title={m.chart.title([series.barLabel, series.lineLabel, series.second?.label].filter(Boolean).join(", "))}
+              desc={m.chart.desc}
             >
               <CartesianGrid vertical={false} stroke="var(--line)" />
               <XAxis

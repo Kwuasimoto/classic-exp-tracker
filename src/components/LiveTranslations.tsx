@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useMessages } from "../lib/i18n";
 import type { TranslatorStatus } from "../lib/ipc";
 
 /** The chat translator's Translations view, laid out like a chat: a log that fills the page
@@ -7,33 +8,34 @@ import type { TranslatorStatus } from "../lib/ipc";
  *  Reading the chat and translating aren't built yet, so the log holds what's needed first
  *  and Translate is disabled. */
 export function LiveTranslations({ status, onSetUp, onTurnOn }: { status: TranslatorStatus | null; onSetUp: () => void; onTurnOn: () => void }) {
+  const m = useMessages();
+  const t = m.translator;
   const installed = status?.languages.filter((l) => l.installed) ?? [];
   const [reply, setReply] = useState("");
   const [target, setTarget] = useState<string | null>(null);
   const to = installed.find((l) => l.id === target) ?? installed[0] ?? null;
   const ready = status?.enabled === true && to !== null;
+  const name = (id: string) => t.languages[id] ?? id;
 
   return (
     <section className="panel chat">
-      <div className="chat-log" role="log" aria-label="Chat, translated into English">
+      <div className="chat-log" role="log" aria-label={t.log}>
         {status === null ? (
-          <p className="caption chat-empty">Checking what's installed…</p>
+          <p className="caption chat-empty">{t.checking}</p>
         ) : installed.length === 0 ? (
           <div className="chat-empty">
-            <p><b>No translator installed.</b> Install a language in Setup to translate the chat.</p>
-            <button className="btn primary" onClick={onSetUp}>Set up a language</button>
+            <p><b>{t.noneInstalled}</b> {t.noneInstalledText}</p>
+            <button className="btn primary" onClick={onSetUp}>{t.setUp}</button>
           </div>
         ) : !status.enabled ? (
           <div className="chat-empty">
             <p>
-              <b>The translator is off.</b> While it's on, it reads the chat and runs the translator on this PC, which takes noticeable processing power and over 1 GB of memory: turn it off when you don't need it.
+              <b>{t.isOff}</b> {t.isOffText}
             </p>
-            <button className="btn primary" onClick={onTurnOn}>Turn on</button>
+            <button className="btn primary" onClick={onTurnOn}>{m.common.turnOn}</button>
           </div>
         ) : (
-          <p className="caption chat-empty">
-            On, for {installed.map((l) => l.label).join(", ")}. The chat's lines will show here in English as they're read; reading the chat isn't built yet.
-          </p>
+          <p className="caption chat-empty">{t.onFor(installed.map((l) => name(l.id)).join(", "))}</p>
         )}
       </div>
 
@@ -46,28 +48,22 @@ export function LiveTranslations({ status, onSetUp, onTurnOn }: { status: Transl
         <input
           className="chat-input"
           value={reply}
-          placeholder={ready ? "Write in English" : "Write in English to reply"}
-          aria-label="Reply in English"
+          placeholder={ready ? t.replyPlaceholder : t.replyPlaceholderOff}
+          aria-label={t.reply}
           disabled={!ready}
           onChange={(e) => setReply(e.target.value)}
         />
-        <select className="chat-target" aria-label="Translate into" value={to?.id ?? ""} disabled={!ready} onChange={(e) => setTarget(e.target.value)}>
-          {installed.length === 0 && <option value="">No language</option>}
+        <select className="chat-target" aria-label={t.translateInto} value={to?.id ?? ""} disabled={!ready} onChange={(e) => setTarget(e.target.value)}>
+          {installed.length === 0 && <option value="">{t.noLanguage}</option>}
           {installed.map((l) => (
-            <option key={l.id} value={l.id}>{l.label}</option>
+            <option key={l.id} value={l.id}>{name(l.id)}</option>
           ))}
         </select>
-        <button type="submit" className="btn primary" disabled title="Translating isn't built yet">
-          Translate
+        <button type="submit" className="btn primary" disabled title={t.translateTitle}>
+          {t.translate}
         </button>
       </form>
-      <p className="caption chat-compose-note">
-        {ready
-          ? "Translating replies isn't built yet. Once it is, the translation shows here to copy into the game's chat."
-          : installed.length === 0
-            ? "Install a language in Setup to write replies in it."
-            : "Turn the translator on to write replies in another language."}
-      </p>
+      <p className="caption chat-compose-note">{ready ? t.replyNoteReady : installed.length === 0 ? t.replyNoteNone : t.replyNoteOff}</p>
     </section>
   );
 }

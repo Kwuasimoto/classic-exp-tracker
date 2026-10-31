@@ -60,6 +60,20 @@ Titillium Web (bundled from `@fontsource/titillium-web`, open licence), tabular 
   highlight colours. Reduced motion: the toast doesn't slide. Ctrl +/− zooms (`zoomHotkeysEnabled`).
 - Checked with axe-core (WCAG 2.2 AA) on every page; keep it at zero violations.
 
+## Languages
+
+- Every word the UI shows comes from `src/locales/`: `en.ts` is the source, and each language
+  (`zh-Hans`, `ko`, `ja`, `es`, `pt-BR`, `th`, `vi`) matches it key for key, which TypeScript
+  checks. Text with values in it is a function, so each language orders words its own way.
+- Write each language natively, with its own MapleStory terms (经验/金币, 경험치/메소,
+  経験値/メル, เมโส…), in the same plain, short style as the English. Map and item names, numbers
+  (26,000) and the logs stay as they are.
+- `lib/i18n.ts` follows Windows' language unless the user picked one (the rail's globe button);
+  it sets `lang` on the page, which picks Windows' own font for Chinese, Japanese, Korean and Thai
+  (nothing bundled) and Segoe UI for Vietnamese, whose letters Titillium Web lacks.
+- New text: add it to `en.ts`, then to every other language; check compressed mode (330 px) in the
+  longest languages (Spanish, Portuguese, Vietnamese).
+
 ## Components
 
 - **Title bar** (`TitleBar.tsx`): the window has no native frame. A 36 px `--chrome` strip over a

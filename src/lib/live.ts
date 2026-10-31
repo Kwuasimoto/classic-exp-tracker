@@ -1,6 +1,7 @@
 import type { LedgerLine } from "../components/Ledger";
 import { formatClock, formatWhole } from "./format";
 import type { Bar, Loot, LootStatus, Tick } from "./ipc";
+import type { Messages } from "../locales/en";
 
 export interface LiveRates {
   expPerHour: number | null;
@@ -12,13 +13,14 @@ export interface LiveRates {
 /** The map lock, as the ledgers show it: which map is counted, and whether the player is
  *  somewhere else (another map, or a shop), where nothing counts. */
 export interface Lock {
+  /** The locked map's name, or "the locked map" while it has none. */
   name: string;
   away: boolean;
 }
 
-export function lockOf(tick: Tick | null): Lock | null {
+export function lockOf(tick: Tick | null, m: Messages): Lock | null {
   if (tick?.lockedMap == null) return null;
-  return { name: tick.lockedName ?? "the locked map", away: tick.shopping || tick.mapId !== tick.lockedMap };
+  return { name: tick.lockedName ?? m.live.theLockedMap, away: tick.shopping || tick.mapId !== tick.lockedMap };
 }
 
 /** EXP left in the level; exact once the level is known and the counter is on screen, else
@@ -54,26 +56,23 @@ export function lootHeldSince(loot: LootStatus | null): number | null {
 }
 
 /** The Profit/hr headline's caption: "after potions", or since when it's held. */
-export const profitCaption = (held: number | null): string => (held === null ? "after potions" : `held since ${formatClock(held)}`);
-
-/** The ledger's line while the loot rates are held. */
-export const HELD_WARNING = "Inventory closed: Profit/hr holds until you open it on the Etc tab";
+export const profitCaption = (held: number | null, m: Messages): string => (held === null ? m.live.afterPotions : m.mesos.heldSince(formatClock(held)));
 
 /** Which potions count as used: the main HP and MP items, named. */
-export function potionsCounted(loot: LootStatus | null): string {
+export function potionsCounted(loot: LootStatus | null, m: Messages): string {
   const chosen = [loot?.mainHp, loot?.mainMp].filter((p) => p != null);
-  if (chosen.length === 0) return "choose your pots under Live › Active pots";
-  return chosen.map((p) => p.name ?? "unnamed item").join(" · ");
+  if (chosen.length === 0) return m.mesos.choosePots;
+  return chosen.map((p) => p.name ?? m.mesos.unnamedItem).join(" · ");
 }
 
 /** The ledger lines of mesos per hour of training (Live, Mesos). */
-export function mesoLines(rates: MesoRates | null, loot: LootStatus | null): LedgerLine[] {
+export function mesoLines(rates: MesoRates | null, loot: LootStatus | null, m: Messages): LedgerLine[] {
   // A sign only on something: nothing burned reads "0", not "−0".
   const perHour = (n: number | undefined, sign: "+" | "−") => (n === undefined ? "—" : Math.round(n) === 0 ? "0" : `${sign}${formatWhole(n)}`);
   return [
-    { label: "Picked up", value: perHour(rates?.meso, "+") },
-    { label: "Etc at NPC prices", value: perHour(rates?.etc, "+") },
-    { label: "Potions burned", note: potionsCounted(loot), value: perHour(rates?.potions, "−"), tone: "spent" },
+    { label: m.mesos.pickedUp, value: perHour(rates?.meso, "+") },
+    { label: m.mesos.etcValue, value: perHour(rates?.etc, "+") },
+    { label: m.mesos.potionsBurned, note: potionsCounted(loot, m), value: perHour(rates?.potions, "−"), tone: "spent" },
   ];
 }
 

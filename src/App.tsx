@@ -3,8 +3,10 @@ import "@fontsource/titillium-web/400.css";
 import "@fontsource/titillium-web/700.css";
 import "@fontsource/titillium-web/900.css";
 import "./App.css";
+import { LanguagePicker } from "./components/LanguagePicker";
 import { ReaderStatus } from "./components/ReaderStatus";
 import { TitleBar } from "./components/TitleBar";
+import { useMessages } from "./lib/i18n";
 import { onPopoutClosed, setPopout } from "./lib/ipc";
 import { saveLayout, savedLayout, type Layout } from "./lib/layout";
 import { savePopoutOpen, savedPopoutOpen } from "./lib/popout";
@@ -18,11 +20,11 @@ import { TranslatorView } from "./views/TranslatorView";
 type Tab = "live" | "mesos" | "history" | "translator";
 
 const ICON = { fill: "none", stroke: "currentColor", strokeWidth: 2.2, strokeLinecap: "round", strokeLinejoin: "round" } as const;
-const TABS: ReadonlyArray<{ id: Tab; label: string; icon: ReactNode }> = [
-  { id: "live", label: "Live", icon: <><polyline points="3 17 9 11 13 15 21 7" /><polyline points="15 7 21 7 21 13" /></> },
-  { id: "mesos", label: "Mesos", icon: <><circle cx="12" cy="12" r="9" /><path d="M15 9.5a3 3 0 0 0-3-1.5c-1.7 0-3 .9-3 2s1.3 1.7 3 2 3 .9 3 2-1.3 2-3 2a3 3 0 0 1-3-1.5" /><line x1="12" y1="6" x2="12" y2="18" /></> },
-  { id: "history", label: "History", icon: <><circle cx="12" cy="12" r="9" /><polyline points="12 7 12 12 15 14" /></> },
-  { id: "translator", label: "Chat translator", icon: <><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /><path d="M8 8h6M11 7v1M9.5 8c0 2 1.5 3.5 3.5 4M12.5 8c-.5 2-2 3.5-4 4" /></> },
+const TABS: ReadonlyArray<{ id: Tab; icon: ReactNode }> = [
+  { id: "live", icon: <><polyline points="3 17 9 11 13 15 21 7" /><polyline points="15 7 21 7 21 13" /></> },
+  { id: "mesos", icon: <><circle cx="12" cy="12" r="9" /><path d="M15 9.5a3 3 0 0 0-3-1.5c-1.7 0-3 .9-3 2s1.3 1.7 3 2 3 .9 3 2-1.3 2-3 2a3 3 0 0 1-3-1.5" /><line x1="12" y1="6" x2="12" y2="18" /></> },
+  { id: "history", icon: <><circle cx="12" cy="12" r="9" /><polyline points="12 7 12 12 15 14" /></> },
+  { id: "translator", icon: <><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /><path d="M8 8h6M11 7v1M9.5 8c0 2 1.5 3.5 3.5 4M12.5 8c-.5 2-2 3.5-4 4" /></> },
 ];
 // Arrows pointing in (compress) and out (expand).
 const COMPRESS = <><polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" /><line x1="14" y1="10" x2="21" y2="3" /><line x1="3" y1="21" x2="10" y2="14" /></>;
@@ -31,6 +33,7 @@ const PIN = <><line x1="12" y1="17" x2="12" y2="22" /><path d="M9 3h6l-1 6 3 3v2
 const EXPAND = <><polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" /><line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" /></>;
 
 export default function App() {
+  const m = useMessages();
   const [tab, setTab] = useState<Tab>("live");
   const [layout, setLayout] = useState<Layout>(savedLayout);
   const compressed = layout === "compressed";
@@ -89,13 +92,13 @@ export default function App() {
     <div ref={root} className={compressed ? "window compressed" : "window"}>
       <TitleBar error={windowError} />
       <div className="shell">
-        <nav className="rail" aria-label="Screens">
+        <nav className="rail" aria-label={m.app.screens}>
           {TABS.map((t) => (
             <button
               key={t.id}
               className={t.id === tab ? "rail-btn current" : "rail-btn"}
-              aria-label={t.label}
-              title={t.label}
+              aria-label={m.app.tabs[t.id]}
+              title={m.app.tabs[t.id]}
               aria-current={t.id === tab ? "page" : undefined}
               onClick={() => setTab(t.id)}
             >
@@ -105,22 +108,23 @@ export default function App() {
           <span style={{ flex: 1 }} />
           <button
             className={popoutOpen ? "rail-btn open" : "rail-btn"}
-            aria-label="Pin rates on top"
+            aria-label={m.app.pin}
             aria-pressed={popoutOpen}
-            title={popoutOpen ? "Close the pinned rates" : "Pin rates on top of the game"}
+            title={popoutOpen ? m.app.pinOpenTitle : m.app.pinClosedTitle}
             onClick={() => openPopout(!popoutOpen)}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" {...ICON}>{PIN}</svg>
           </button>
           <button
             className="rail-btn"
-            aria-label="Compressed mode"
+            aria-label={m.app.compressed}
             aria-pressed={compressed}
-            title={compressed ? "Expanded: show the charts" : "Compressed: hide the charts"}
+            title={compressed ? m.app.toExpandedTitle : m.app.toCompressedTitle}
             onClick={toggleLayout}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" {...ICON}>{compressed ? EXPAND : COMPRESS}</svg>
           </button>
+          <LanguagePicker />
         </nav>
         <main className="content">
           {tab === "live" && <LiveView tick={tick} status={status} />}
