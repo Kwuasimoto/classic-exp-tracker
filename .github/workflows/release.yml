@@ -56,7 +56,10 @@ jobs:
         with:
           subject-path: src-tauri/target/release/bundle/nsis/*-setup.exe
 
-      - name: Release notes with the installer's SHA-256
+      # The notes name the file as GitHub stores it (it turns spaces into dots), and the run fails
+      # unless exactly the one installer was uploaded and GitHub's digest of it is the hash of
+      # the file built and attested above.
+      - name: Check the upload; release notes with the installer's SHA-256
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -65,12 +68,16 @@ jobs:
         run: |
           $installers = @(Get-Item src-tauri/target/release/bundle/nsis/*-setup.exe)
           if ($installers.Count -ne 1) { throw "expected one installer, found $($installers.Count)" }
-          $exe = $installers[0]
-          $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash   # uppercase, as Get-FileHash shows it to users
+          $hash = (Get-FileHash $installers[0].FullName -Algorithm SHA256).Hash   # uppercase, as Get-FileHash shows it to users
+          $assets = @(gh api "repos/$env:GITHUB_REPOSITORY/releases/$env:RELEASE_ID" --jq '.assets' | ConvertFrom-Json)
+          if ($assets.Count -ne 1) { throw "expected the installer alone on the release, found: $($assets.name -join ', ')" }
+          $asset = $assets[0]
+          if ($asset.digest -ne "sha256:$($hash.ToLowerInvariant())") { throw "uploaded $($asset.name) has digest $($asset.digest), built file has sha256:$hash" }
+          $name = $asset.name
           $run = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
           $commit = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/commit/$env:GITHUB_SHA"
           $body = @"
-          Windows 10 (2004 or later) or 11, 64-bit. Download ``$($exe.Name)`` below and run it; see the [README](https://github.com/$env:GITHUB_REPOSITORY#install) for setup. The installer isn't code-signed, so SmartScreen may warn: choose **More info**, then **Run anyway**.
+          Windows 10 (2004 or later) or 11, 64-bit. Download ``$name`` below and run it; see the [README](https://github.com/$env:GITHUB_REPOSITORY#install) for setup. The installer isn't code-signed, so SmartScreen may warn: choose **More info**, then **Run anyway**.
 
           ### Built from this source
 
@@ -78,13 +85,13 @@ jobs:
 
           **SHA-256:** ``$hash``
 
-          To check your download, in PowerShell:
+          To check your download, in PowerShell in the folder you saved it to:
 
           ``````powershell
-          (Get-FileHash '.\$($exe.Name)' -Algorithm SHA256).Hash   # matches the SHA-256 above
-          gh attestation verify '.\$($exe.Name)' --repo $env:GITHUB_REPOSITORY   # GitHub's signed record that this workflow built it from this repo
+          (Get-FileHash '.\$name' -Algorithm SHA256).Hash   # matches the SHA-256 above
+          gh attestation verify '.\$name' --repo $env:GITHUB_REPOSITORY   # GitHub's signed record that this workflow built it from this repo
           ``````
           "@
           Set-Content -Path release-notes.md -Value $body -Encoding utf8NoBOM
-          gh api --method PATCH "repos/$env:GITHUB_REPOSITORY/releases/$env:RELEASE_ID" -F "body=@release-notes.md" --silent
-          "Installer: $($exe.Name)  SHA-256: $hash" >> $env:GITHUB_STEP_SUMMARY
+          gh api --method PATCH "repos/$env:GITHUB_REPOSITORY/releases/$env:RELEASE_ID" -F "body=@release-notes.md" -f "tag_name=v$env:VERSION" -f "target_commitish=$env:GITHUB_SHA" --silent
+          "Installer: $name  SHA-256: $hash" >> $env:GITHUB_STEP_SUMMARY

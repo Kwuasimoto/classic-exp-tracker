@@ -20,7 +20,7 @@ flowchart LR
 
 ## Install
 
-1. Download `Classic EXP Tracker_<version>_x64-setup.exe` from the [Releases page](https://github.com/Kwuasimoto/classic-exp-tracker/releases).
+1. Download `Classic.EXP.Tracker_<version>_x64-setup.exe` from the [Releases page](https://github.com/Kwuasimoto/classic-exp-tracker/releases).
 2. Run it. The installer isn't code-signed, so Windows SmartScreen may say "Windows protected your PC": choose **More info**, then **Run anyway**.
 3. It installs for your user account only (no administrator rights) and adds a Start menu entry.
 
@@ -29,8 +29,8 @@ flowchart LR
 Every installer on the Releases page is built by GitHub, not on anyone's PC: the [Release workflow](.github/workflows/release.yml) checks out the release's commit, runs the tests, builds the installer and uploads it, and nothing else is uploaded. The workflow also has GitHub sign a [build-provenance attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations) of the file: a public, tamper-proof record of the installer's SHA-256, the workflow run and the commit it was built from. Each release's notes list the SHA-256 and link the run and the commit. To check a download in PowerShell:
 
 ```powershell
-(Get-FileHash '.\Classic EXP Tracker_<version>_x64-setup.exe' -Algorithm SHA256).Hash   # same as in the release notes
-gh attestation verify '.\Classic EXP Tracker_<version>_x64-setup.exe' --repo Kwuasimoto/classic-exp-tracker
+(Get-FileHash '.\Classic.EXP.Tracker_<version>_x64-setup.exe' -Algorithm SHA256).Hash   # same as in the release notes
+gh attestation verify '.\Classic.EXP.Tracker_<version>_x64-setup.exe' --repo Kwuasimoto/classic-exp-tracker
 ```
 
 `gh attestation verify` (from the [GitHub CLI](https://cli.github.com/)) fails unless the file is byte for byte the one this repository's workflow built, and prints the commit it came from.
