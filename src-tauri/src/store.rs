@@ -18,7 +18,7 @@ use crate::tracker::MapId;
 
 /// The `calibration` table (boxes drawn per resolution) is unread since 0.4.0, when the
 /// app started placing its boxes itself (geom::boxes_for); its rows are left as they are.
-const SCHEMA_VERSION: i64 = 12;
+const SCHEMA_VERSION: i64 = 13;
 const SCHEMA: &str = "
 BEGIN;
 CREATE TABLE maps (
@@ -234,6 +234,19 @@ PRAGMA user_version = 12;
 COMMIT;
 ";
 
+/// Version 13 (0.11.0): items are recognised by one patch, the same in the inventory and on
+/// either quickslot layout (read::inventory::ICON_PATCH). Patches from before were cut
+/// elsewhere in the slot and would never match again, so learned items (and the main HP and
+/// MP items, which name them) are cleared once; the app learns them again from play.
+const MIGRATION_13: &str = "
+BEGIN;
+DELETE FROM item_patches;
+DELETE FROM items;
+DELETE FROM settings WHERE key IN ('main_hp_item', 'main_mp_item');
+PRAGMA user_version = 13;
+COMMIT;
+";
+
 /// Learned shapes kept per character and resolution: enough for the sub-pixel
 /// positions a character lands at, without growing forever.
 const MAX_GLYPHS_PER_CHAR: i64 = 8;
@@ -406,6 +419,9 @@ impl Store {
         }
         if version < 12 {
             conn.execute_batch(MIGRATION_12)?;
+        }
+        if version < 13 {
+            conn.execute_batch(MIGRATION_13)?;
         }
         Ok(Self { conn })
     }
@@ -658,6 +674,17 @@ impl Store {
         Ok(self.conn.execute("UPDATE items SET ignored = ?2 WHERE id = ?1", params![id, ignored])? == 1)
     }
 
+    /// Forget an item: its patches, its name, and the main HP or MP potion if it was one. Seen
+    /// again, it's learned again as a new item. `false` when there's no such item.
+    pub fn delete_item(&self, id: ItemId) -> Result<bool, StoreError> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM item_patches WHERE item_id = ?1", [id])?;
+        tx.execute("DELETE FROM settings WHERE key IN ('main_hp_item', 'main_mp_item') AND value = ?1", [id])?;
+        let deleted = tx.execute("DELETE FROM items WHERE id = ?1", [id])? == 1;
+        tx.commit()?;
+        Ok(deleted)
+    }
+
     /// The item chosen as the main HP or MP potion, if any.
     pub fn main_potion(&self, slot: PotionSlot) -> Result<Option<ItemId>, StoreError> {
         Ok(self.conn.query_row("SELECT value FROM settings WHERE key = ?1", [slot.setting_key()], |r| r.get(0)).optional()?)
@@ -703,6 +730,20 @@ impl Store {
     }
 
     /// Where the live view starts (unix seconds); 0 until the first reset.
+    /// Whether the app checks for updates by itself (on unless the user turned it off).
+    pub fn update_checks(&self) -> Result<bool, StoreError> {
+        let v: Option<i64> = self.conn.query_row("SELECT value FROM settings WHERE key = 'update_checks'", [], |r| r.get(0)).optional()?;
+        Ok(v != Some(0))
+    }
+
+    pub fn set_update_checks(&self, on: bool) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('update_checks', ?1) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            [i64::from(on)],
+        )?;
+        Ok(())
+    }
+
     pub fn live_since(&self) -> Result<i64, StoreError> {
         Ok(self.conn.query_row("SELECT value FROM settings WHERE key = 'live_since'", [], |r| r.get(0)).optional()?.unwrap_or(0))
     }
@@ -944,6 +985,19 @@ mod tests {
         let id = store.insert_map(Some(("Perion", NamedBy::List)), &look(1), 0).unwrap();
         store.add_signature(store.map_by_name("Perion").unwrap().unwrap(), &look(2)).unwrap();
         assert_eq!(store.maps().unwrap().iter().map(|m| m.id).collect::<Vec<_>>(), [id, id]);
+    }
+
+    #[test]
+    fn a_deleted_item_takes_its_patches_and_main_potion_with_it() {
+        let store = Store::open_in_memory().unwrap();
+        let pot = store.insert_item(ItemKind::Use, &[1; 180], 0).unwrap();
+        let other = store.insert_item(ItemKind::Use, &[2; 180], 0).unwrap();
+        store.set_main_potion(PotionSlot::Hp, Some(pot)).unwrap();
+        store.set_main_potion(PotionSlot::Mp, Some(other)).unwrap();
+        assert!(store.delete_item(pot).unwrap());
+        assert!(!store.delete_item(pot).unwrap(), "gone already");
+        assert_eq!(store.item_patches().unwrap().iter().map(|p| p.item_id).collect::<Vec<_>>(), [other]);
+        assert_eq!((store.main_potion(PotionSlot::Hp).unwrap(), store.main_potion(PotionSlot::Mp).unwrap()), (None, Some(other)));
     }
 
     #[test]

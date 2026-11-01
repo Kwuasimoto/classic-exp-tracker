@@ -71,13 +71,12 @@ fn describe(crops: &LootCrops, items: &[ItemPatch]) -> (String, Vec<(String, u32
     let inv = read_inventory(&crops.inventory, &crops.inventory_at);
     let mut out = format!("  meso {:?}, tab {:?}\n", inv.meso, inv.tab);
     let mut counts = Vec::new();
-    let (quick_slots, quick_patch) = quickslot_layout(&crops.quickslot, &crops.quickslot_at);
-    for (label, kind, crop, at, slots, patch) in [
-        ("inventory", ItemKind::Etc, &crops.inventory, &crops.inventory_at, inventory_slots().collect::<Vec<_>>(), ICON_PATCH),
-        ("quickslot", ItemKind::Use, &crops.quickslot, &crops.quickslot_at, quick_slots.to_vec(), quick_patch),
+    for (label, kind, crop, at, slots) in [
+        ("inventory", ItemKind::Etc, &crops.inventory, &crops.inventory_at, inventory_slots().collect::<Vec<_>>()),
+        ("quickslot", ItemKind::Use, &crops.quickslot, &crops.quickslot_at, quickslot_layout(&crops.quickslot, &crops.quickslot_at).to_vec()),
     ] {
         for (i, (x, y)) in slots.into_iter().enumerate() {
-            match read_slot(crop, at, x, y, patch) {
+            match read_slot(crop, at, x, y) {
                 Ok(Some(slot)) => {
                     let name = item_name(items, kind, &slot);
                     out += &format!("  {label} {i:>2}: {:>5} {name}\n", slot.count);
@@ -122,16 +121,15 @@ fn snapshot(crops: &LootCrops, summary: &str, path: &str) -> Result<(), Box<dyn 
             img.put_pixel(x1, y, image::Rgba(c));
         }
     };
-    let (quick_slots, quick_patch) = quickslot_layout(quick, &crops.quickslot_at);
-    for (ox, crop, at, slots, patch) in [(0, inv, &crops.inventory_at, inventory_slots().collect::<Vec<_>>(), ICON_PATCH), (qx, quick, &crops.quickslot_at, quick_slots.to_vec(), quick_patch)] {
+    for (ox, crop, at, slots) in [(0, inv, &crops.inventory_at, inventory_slots().collect::<Vec<_>>()), (qx, quick, &crops.quickslot_at, quickslot_layout(quick, &crops.quickslot_at).to_vec())] {
         for (x, y) in slots {
-            let colour = match read_slot(crop, at, x, y, patch) {
+            let colour = match read_slot(crop, at, x, y) {
                 Ok(Some(_)) => [0, 220, 0, 255],
                 Ok(None) => [120, 120, 120, 255],
                 Err(_) => [255, 0, 0, 255],
             };
             outline(ox, at, Rect { x, y, w: SLOT, h: SLOT }, colour);
-            outline(ox, at, Rect { x: x + patch.x, y: y + patch.y, ..patch }, [255, 255, 255, 255]);
+            outline(ox, at, Rect { x: x + ICON_PATCH.x, y: y + ICON_PATCH.y, ..ICON_PATCH }, [255, 255, 255, 255]);
             outline(ox, at, Rect { x, y: y + COUNT_TOP, w: SLOT, h: COUNT_HEIGHT }, [60, 140, 255, 255]);
         }
     }
@@ -415,7 +413,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let boxes = boxes_for(frame.width, frame.height, Corner::TopRight).ok_or("not 16:9")?;
             let inv = frame.sub(boxes.inventory).ok_or("frame too small")?;
             let quick = frame.sub(boxes.quickslot).ok_or("frame too small")?;
-            for (crop, at, slots) in [(&inv, &boxes.inventory_at, inventory_slots().collect::<Vec<_>>()), (&quick, &boxes.quickslot_at, quickslot_layout(&quick, &boxes.quickslot_at).0.to_vec())] {
+            for (crop, at, slots) in [(&inv, &boxes.inventory_at, inventory_slots().collect::<Vec<_>>()), (&quick, &boxes.quickslot_at, quickslot_layout(&quick, &boxes.quickslot_at).to_vec())] {
                 for (x, y) in slots {
                     let Some((band, left, top)) = at.around(crop, Rect { x, y: y + COUNT_TOP, w: SLOT, h: COUNT_HEIGHT }) else { continue };
                     let scores = best_scores(&Band::new(&band, left, top), at.font_px());

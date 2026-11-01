@@ -1,6 +1,6 @@
 [package]
 name = "classic-exp-tracker"
-version = "0.10.0"
+version = "0.11.0"
 description = "MapleStory Classic World EXP tracker"
 authors = ["Kwuasimoto"]
 license = "MIT"
@@ -34,6 +34,7 @@ tauri-plugin-single-instance = "2"
 # Only for the chat translator's downloads (translator.rs), with Windows' own TLS.
 reqwest = { version = "0.13.5", default-features = false, features = ["blocking", "native-tls", "system-proxy"] }
 sha2 = "0.10.9"
+tokio = { version = "1", features = ["time"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
@@ -51,3 +52,6 @@ dev-tools = []
 name = "glyph-collect"
 path = "src/bin/glyph_collect.rs"
 required-features = ["dev-tools"]
+
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-updater = { version = "2.14.1", default-features = false, features = ["native-tls", "system-proxy"] }

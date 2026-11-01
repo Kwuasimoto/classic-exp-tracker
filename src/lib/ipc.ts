@@ -6,7 +6,7 @@ import { err, ok, type Result } from "./result";
 const count = z.number().int().nonnegative();
 
 export const AppErrorSchema = z.object({
-  kind: z.enum(["storage", "invalid", "notFound", "window", "translator"]),
+  kind: z.enum(["storage", "invalid", "notFound", "window", "translator", "update"]),
   message: z.string(),
 });
 export type AppError = z.infer<typeof AppErrorSchema> | { kind: "ipc"; message: string };
@@ -15,6 +15,7 @@ export const ReaderStatusSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("ok") }),
   z.object({ kind: z.literal("expUnreadable") }),
   z.object({ kind: z.literal("mapUnreadable") }),
+  z.object({ kind: z.literal("gameNotFound") }),
   z.object({ kind: z.literal("starting") }),
   z.object({ kind: z.literal("screenNotSupported"), detail: z.string() }),
   z.object({ kind: z.literal("captureFailed"), detail: z.string() }),
@@ -176,6 +177,8 @@ export const itemNames = (kind: ItemKind) => call("item_names", z.array(z.string
 export const setMainPotion = (slot: PotionSlot, itemId: number | null) => call("set_main_potion", z.null(), { slot, itemId });
 /** Stops tracking an item (or tracks it again): ignored, it's recognised but never counted. */
 export const ignoreItem = (itemId: number, ignored: boolean) => call("ignore_item", z.null(), { itemId, ignored });
+/** Forgets an item learned by mistake; if it's really there, it's learned again. */
+export const deleteItem = (itemId: number) => call("delete_item", z.null(), { itemId });
 /** Names an item from the item list; it counts at the list's price from then on. */
 export const nameItem = (itemId: number, name: string) => call("name_item", z.null(), { itemId, name });
 /** Names a map; OCR never renames it after this. */
@@ -239,6 +242,28 @@ export const removeTranslatorKey = () => call("remove_translator_key", z.null())
 /** The user's reply, translated by Gemini into `language` (one of REPLY_LANGUAGES). */
 export const translateReply = (text: string, language: string) =>
   call("translate_reply", z.object({ text: z.string(), model: z.string() }), { text, language });
+
+/** Updates (updater.rs): checked 10 s after launch and hourly while `autoCheck`; `ready` is a
+ *  newer version, downloaded and its signature checked, that installs on Restart. */
+export const UpdateStatusSchema = z.object({
+  autoCheck: z.boolean(),
+  checking: z.boolean(),
+  checkedAt: z.number().int().nullable(),
+  ready: z.string().nullable(),
+  error: z.string().nullable(),
+});
+export type UpdateStatus = z.infer<typeof UpdateStatusSchema>;
+
+export const updateStatus = () => call("update_status", UpdateStatusSchema);
+export const checkForUpdates = () => call("check_for_updates", UpdateStatusSchema);
+/** The app exits, the installer runs, and the new version starts. */
+export const installUpdate = () => call("install_update", z.null());
+export const setUpdateChecks = (on: boolean) => call("set_update_checks", z.null(), { on });
+export const onUpdateStatus = (cb: (status: Result<UpdateStatus, AppError>) => void) =>
+  subscribe("update-status", (payload) => {
+    const parsed = UpdateStatusSchema.safeParse(payload);
+    cb(parsed.success ? ok(parsed.data) : err({ kind: "ipc", message: `unexpected update status: ${parsed.error.message}` }));
+  });
 
 /** The popout closed (its own ✕, or the app closing it). */
 export const onPopoutClosed = (cb: () => void) => subscribe("popout-closed", () => cb());

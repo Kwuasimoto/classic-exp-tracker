@@ -30,6 +30,8 @@ flowchart LR
 
 Windows 10 (2004+) or 11, 64-bit. No admin rights needed.
 
+**Updates:** the app checks for a new release 10 seconds after it starts and then every hour, downloads it in the background, and shows **Update to v…** in the title bar. It installs only when you click that; it never restarts by itself. Click the version number in the title bar to check now, or to turn the hourly checks off. Versions before the first one with updates (0.10.0 and older) need this one installed by hand.
+
 ## Set up
 
 1. Play **full screen** on your main monitor at a **16:9** resolution (**1366×768** reads best; 1920×1080 works).
@@ -65,6 +67,7 @@ That's it: nothing to calibrate.
 
 The status at the top right of each page says:
 
+- **Can't see the game**: neither the EXP bar nor the minimap has shown any text for a minute. Play full screen on your main display.
 - **EXP not readable**: the game isn't full screen, or the EXP bar is hidden or covered.
 - **Map name not readable**: open the minimap.
 - **… isn't 16:9**: set Windows to a 16:9 resolution.
@@ -79,7 +82,9 @@ Only the main monitor is read. With a second monitor the app opens there; with o
 
 It never opens, reads, injects into or hooks the MapleStory process, reads game files, targets the game window, sends keys or clicks, draws into the game, or saves screenshots.
 
-Everything stays on your PC, except in the Chat translator:
+Everything stays on your PC, except update checks and the Chat translator:
+
+- **Update checks** (10 seconds after starting, then hourly, or **Check now**) fetch this repository's `latest.json` from GitHub Releases, and the installer it names when there's a newer version. Nothing is sent but the request itself. An update installs only if it's signed with this project's key, whose public half is built into the app (`src-tauri/tauri.conf.json`). Turn the hourly checks off from the version number in the title bar.
 
 - **Download** (in Setup) fetches the chat reader's files from Hugging Face (addresses and SHA-256s pinned in `src-tauri/src/translator.rs`).
 - **Translate** (and saving your key, which is checked with one test translation) sends only the text being translated, from your PC straight to Google's Gemini API with your key (`src-tauri/src/gemini.rs`). Google's [Gemini API terms](https://ai.google.dev/gemini-api/terms) apply: you must be 18 or older, and on the free tier Google may use what you send to improve its products and people may read it (not with a paid key, or in the EEA, Switzerland or the UK). Don't send anything private.
@@ -123,7 +128,7 @@ To release, set the same version in `package.json`, `src-tauri/Cargo.toml` and `
 <details>
 <summary><b>Check your download</b></summary>
 
-Installers on the Releases page are built by GitHub from this repository's source by the [Release workflow](.github/workflows/release.yml), never on anyone's PC, and nothing else is uploaded. GitHub signs a [build-provenance attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations) of each one: a public record of the installer's SHA-256, the workflow run and the commit it came from. The release notes list the SHA-256 and link the run and the commit. In PowerShell:
+Installers on the Releases page, and the updates the app installs, are built by GitHub from this repository's source by the [Release workflow](.github/workflows/release.yml), never on anyone's PC; the only other files on a release are the installer's update signature and `latest.json`, which the app's update check reads. GitHub signs a [build-provenance attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations) of each one: a public record of the installer's SHA-256, the workflow run and the commit it came from. The release notes list the SHA-256 and link the run and the commit. In PowerShell:
 
 ```powershell
 (Get-FileHash '.\Classic.EXP.Tracker_<version>_x64-setup.exe' -Algorithm SHA256).Hash   # same as in the release notes

@@ -38,6 +38,9 @@ pub enum ReaderStatus {
     Ok,
     ExpUnreadable,
     MapUnreadable,
+    /// Neither the EXP box nor the minimap has shown any text for a minute: the game isn't
+    /// full screen on the main display (the only one captured).
+    GameNotFound,
     /// No frame read yet.
     Starting,
     /// The screen isn't 16:9 (its resolution): the boxes and the EXP reader need it.
@@ -444,7 +447,7 @@ impl Pipeline {
             self.retry_name_at = None;
             self.screen.reconfirm_map();
         }
-        let FrameRead { exp, map_readable, new_map, shopping } = self.screen.read(t, &exp, map, level, bar);
+        let FrameRead { exp, map_readable, new_map, shopping, game_hidden } = self.screen.read(t, &exp, map, level, bar);
         if let Some((signature, strips)) = &new_map {
             self.resolve_map(t, signature, strips);
         }
@@ -472,6 +475,7 @@ impl Pipeline {
         // Also publishes the minute in progress, before the tick: the UI reloads the chart on each tick.
         self.apply(fx);
         self.publish(match (exp, map_readable || shopping) {
+            (None, _) if game_hidden => ReaderStatus::GameNotFound,
             (None, _) => ReaderStatus::ExpUnreadable,
             (Some(_), false) => ReaderStatus::MapUnreadable,
             (Some(_), true) => ReaderStatus::Ok,

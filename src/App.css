@@ -72,6 +72,14 @@ button, input, select { font: inherit; color: inherit; }
 .titlebar { height: 36px; flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding-left: 20px; background: var(--chrome); border-bottom: 1px solid var(--line); user-select: none; }
 .titlebar-name { white-space: nowrap; font-size: 12px; font-weight: 900; letter-spacing: 0.14em; }
 .titlebar-error { font-size: 12px; }
+.updates { position: relative; display: flex; align-items: center; gap: 8px; }
+.titlebar-version { border: 0; border-radius: 3px; padding: 2px 6px; background: none; cursor: pointer; }
+.titlebar-version:hover, .titlebar-version[aria-expanded="true"] { background: var(--inset); color: var(--text); }
+.update-ready { white-space: nowrap; }
+.update-panel { left: 0; top: calc(100% + 6px); bottom: auto; width: 280px; gap: 10px; padding: 12px; }
+.update-panel p { margin: 0; font-size: 13px; line-height: 1.4; }
+.update-actions { display: flex; gap: 8px; }
+.update-hourly { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #c8c8cc; cursor: pointer; }
 .window-controls { margin-left: auto; display: flex; height: 100%; }
 .window-controls button { width: 46px; height: 100%; display: grid; place-items: center; border: 0; background: none; color: #b5b5b9; cursor: pointer; }
 .window-controls button:hover { background: rgba(255, 255, 255, 0.1); color: var(--text); }

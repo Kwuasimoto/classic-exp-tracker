@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Classic EXP Tracker",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "identifier": "com.classicexp.tracker",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -33,6 +33,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": [
       "nsis"
     ],
@@ -62,6 +63,18 @@
         "customLanguageFiles": {
           "Thai": "nsis/Thai.nsh"
         }
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDM0RDQ4MThFOUIzNEM4RjYKUldUMnlEU2Jqb0hVTk9BREpQZUpGUkRNSnN0MkxFajhjSEdCazdqcWZEQ1FYbWhmQXJjV3A1bzkK",
+      "endpoints": [
+        "https://github.com/Kwuasimoto/classic-exp-tracker/releases/latest/download/latest.json"
+      ],
+      "requireSignedVersion": true,
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

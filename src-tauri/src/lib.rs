@@ -14,6 +14,7 @@ mod screen;
 pub mod store;
 pub mod tracker;
 mod translator;
+mod updater;
 
 use std::sync::Arc;
 
@@ -65,6 +66,7 @@ pub fn run() {
                 log::warn!("could not bring the window forward for a second launch: {e}");
             }
         }))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         // Text log for debugging: %LOCALAPPDATA%\com.classicexp.tracker\logs, 5 files of 1 MB.
         .plugin(
             tauri_plugin_log::Builder::new()
@@ -91,6 +93,7 @@ pub fn run() {
             let loot_enabled = store.loot_enabled()?;
             let translator_on = store.translator_enabled()?;
             let corner = store.inventory_corner()?;
+            let update_checks = store.update_checks()?;
             let state = Arc::new(pipeline::AppState::new(store, live_since, grind_secs, totals, locked_map, loot_enabled, corner));
             app.manage(Arc::clone(&state));
             // The chat translator's files are large and per-machine: local app data, not roaming.
@@ -104,6 +107,8 @@ pub fn run() {
             app.manage(Arc::new(translator));
             app.manage(gemini::Gemini::new()?);
             pipeline::spawn(app.handle().clone(), state)?;
+            app.manage(updater::Updates::new(update_checks));
+            updater::spawn(app.handle().clone());
             // The window starts hidden (tauri.conf.json) so it doesn't flash on the game's monitor.
             let window = app.get_webview_window("main").ok_or("window \"main\" missing from tauri.conf.json")?;
             if let Err(e) = move_off_primary_monitor(&window) {
@@ -151,6 +156,7 @@ pub fn run() {
             commands::item_names,
             commands::name_item,
             commands::ignore_item,
+            commands::delete_item,
             commands::set_main_potion,
             commands::get_snapshots,
             commands::get_snapshot_chart,
@@ -167,6 +173,10 @@ pub fn run() {
             commands::save_translator_key,
             commands::remove_translator_key,
             commands::translate_reply,
+            commands::update_status,
+            commands::check_for_updates,
+            commands::install_update,
+            commands::set_update_checks,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

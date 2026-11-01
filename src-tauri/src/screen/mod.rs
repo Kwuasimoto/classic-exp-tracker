@@ -19,6 +19,10 @@ use level_box::LevelBox;
 /// a user's log shows exactly what failed without flooding it.
 const MAX_LOGGED_UNKNOWN: usize = 40;
 const SAME_LOOK: f32 = 0.9;
+/// Both the EXP box and the minimap strip blank this long: the game isn't full screen on the
+/// main display (windowed, on another monitor, or behind something). A loading screen or a
+/// map change is over well before.
+const GAME_HIDDEN_SECS: i64 = 60;
 
 /// The EXP box's pixels on the last frame, what they read as, and whether touching
 /// glyphs were split apart in them.
@@ -46,6 +50,8 @@ pub struct FrameRead {
     pub shopping: bool,
     /// A map confirmed on this frame, with the strips that confirmed it (for OCR).
     pub new_map: Option<(Signature, Vec<Crop>)>,
+    /// The EXP box and the minimap strip have both been blank for GAME_HIDDEN_SECS.
+    pub game_hidden: bool,
 }
 
 pub struct Screen {
@@ -97,7 +103,11 @@ impl Screen {
             ConfirmOutcome::Unchanged => None,
         });
         self.level_box.observe(level);
-        FrameRead { exp, map_readable, new_map, shopping: is_collapsed_minimap(bar) }
+        let game_hidden = match (self.exp_log.blank_since, self.map_log.blank_since) {
+            (Some(a), Some(b)) => t - a.max(b) >= GAME_HIDDEN_SECS,
+            _ => false,
+        };
+        FrameRead { exp, map_readable, new_map, shopping: is_collapsed_minimap(bar), game_hidden }
     }
 
     /// The EXP readout. A box that looks as it did last frame reads as it did then;
@@ -239,16 +249,19 @@ struct ReadLog {
     failing: Option<(i64, u32)>,
     minute_failures: u32,
     last_error: Option<ReadError>,
+    /// When the region last started showing no text at all (ReadError::Blank), while it still does.
+    blank_since: Option<i64>,
 }
 
 impl ReadLog {
     fn new(name: &'static str) -> Self {
-        Self { name, failing: None, minute_failures: 0, last_error: None }
+        Self { name, failing: None, minute_failures: 0, last_error: None, blank_since: None }
     }
 
     fn record<T>(&mut self, t: i64, read: Result<T, ReadError>) -> Option<T> {
         match read {
             Ok(value) => {
+                self.blank_since = None;
                 if let Some((since, frames)) = self.failing.take() {
                     info!("{} readable again after {frames} unreadable frame(s) over {}s", self.name, t - since);
                 }
@@ -263,6 +276,7 @@ impl ReadLog {
                     }
                 }
                 self.minute_failures += 1;
+                self.blank_since = if e == ReadError::Blank { self.blank_since.or(Some(t)) } else { None };
                 self.last_error = Some(e);
                 None
             }
@@ -277,5 +291,24 @@ impl ReadLog {
         }
         self.minute_failures = 0;
         line
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_blank_run_starts_at_its_first_blank_frame_and_ends_on_anything_else() {
+        let mut log = ReadLog::new("EXP");
+        log.record::<()>(10, Err(ReadError::Blank));
+        log.record::<()>(70, Err(ReadError::Blank));
+        assert_eq!(log.blank_since, Some(10));
+        // Text that doesn't read is something on screen: not a hidden game.
+        log.record::<()>(71, Err(ReadError::Parse("1,2".into())));
+        assert_eq!(log.blank_since, None);
+        log.record::<()>(72, Err(ReadError::Blank));
+        log.record(73, Ok(()));
+        assert_eq!(log.blank_since, None);
     }
 }

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useMessages } from "../lib/i18n";
+import { Updates } from "./Updates";
 
 /** The app's own title bar (the window has no native frame, see tauri.conf.json).
  *  `data-tauri-drag-region` makes the bar drag the window; double-click maximizes. `error` is
@@ -47,7 +48,7 @@ export function TitleBar({ error: appError }: { error: string | null }) {
       <span className="titlebar-name" data-tauri-drag-region>
         CLASSIC EXP TRACKER
       </span>
-      {version && <span className="caption titlebar-version" data-tauri-drag-region>v{version}</span>}
+      {version && <Updates version={version} />}
       {(error ?? appError) && <span className="error titlebar-error" data-tauri-drag-region>{error ?? appError}</span>}
       <div className="window-controls">
         <button aria-label={m.titleBar.minimize} onClick={run(() => win.minimize(), "minimize")}>

@@ -71,6 +71,9 @@ impl LootReader {
             self.items = store.item_patches()?;
             self.main_hp = store.main_potion(PotionSlot::Hp)?;
             self.main_mp = store.main_potion(PotionSlot::Mp)?;
+            // A deleted item leaves the session's pickups too.
+            let items = &self.items;
+            self.picked_up.retain(|id, _| items.iter().any(|i| i.item_id == *id));
             self.loaded = true;
         }
         let inventory = read_inventory(&crops.inventory, &crops.inventory_at);
@@ -131,7 +134,7 @@ impl LootReader {
                 continue;
             }
             let name = self.items.iter().find(|i| i.item_id == id).and_then(|i| i.name.clone());
-            // The patch as on screen now: an item seen on both layouts has a patch for each.
+            // The patch as on screen now.
             pots.push(QuickslotPot { item_id: id, name, count: stack.count, patch: slot.patch.0.clone() });
         }
         pots

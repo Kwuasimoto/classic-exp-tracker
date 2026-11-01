@@ -18,6 +18,7 @@ use crate::store::{NamedBy, SnapshotRecord};
 use crate::credential;
 use crate::gemini::{self, Gemini, Translation};
 use crate::translator::{Translator, TranslatorError, TranslatorStatus};
+use crate::updater::{self, UpdateStatus};
 
 type AppStateRef<'a> = State<'a, Arc<AppState>>;
 
@@ -286,6 +287,17 @@ pub fn ignore_item(state: AppStateRef<'_>, item_id: i64, ignored: bool) -> Resul
     Ok(())
 }
 
+/// Forget an item the app learned by mistake. If it's really there, it's learned again.
+#[tauri::command(async)]
+pub fn delete_item(state: AppStateRef<'_>, item_id: i64) -> Result<(), AppError> {
+    if !state.store.lock().expect("store lock poisoned").delete_item(item_id)? {
+        return Err(AppError::NotFound(format!("item {item_id}")));
+    }
+    state.items_changed.store(true, Ordering::Release);
+    log::info!("item #{item_id} deleted by the user");
+    Ok(())
+}
+
 #[tauri::command(async)]
 pub fn get_snapshots(state: AppStateRef<'_>) -> Result<Vec<SnapshotRecord>, AppError> {
     Ok(state.store.lock().expect("store lock poisoned").snapshots()?)
@@ -422,4 +434,32 @@ pub fn delete_snapshot(state: AppStateRef<'_>, snapshot_id: i64) -> Result<(), A
     } else {
         Err(AppError::NotFound(format!("snapshot {snapshot_id}")))
     }
+}
+
+/// Where updates stand: the setting, the last check, and an update ready to install.
+#[tauri::command(async)]
+pub fn update_status(updates: State<'_, updater::Updates>) -> UpdateStatus {
+    updates.status()
+}
+
+/// Check for an update now (the user's Check now), whatever the hourly setting.
+#[tauri::command]
+pub async fn check_for_updates(app: tauri::AppHandle) -> Result<UpdateStatus, AppError> {
+    updater::check(&app).await;
+    Ok(app.state::<updater::Updates>().status())
+}
+
+/// Install the downloaded update: the app exits and starts again on the new version.
+#[tauri::command(async)]
+pub fn install_update(app: tauri::AppHandle) -> Result<(), AppError> {
+    updater::install(&app)
+}
+
+/// Turn the hourly update checks on or off. Saved first, so a failed save changes nothing.
+#[tauri::command(async)]
+pub fn set_update_checks(app: tauri::AppHandle, state: AppStateRef<'_>, updates: State<'_, updater::Updates>, on: bool) -> Result<(), AppError> {
+    state.store.lock().expect("store lock poisoned").set_update_checks(on)?;
+    updates.set_auto_check(&app, on);
+    log::info!("hourly update checks {}", if on { "on" } else { "off" });
+    Ok(())
 }

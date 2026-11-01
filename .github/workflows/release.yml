@@ -3,6 +3,11 @@
 # from. The installer gets a signed build-provenance attestation, and its SHA-256 goes into the
 # release notes, so anyone can check that a download is exactly what this workflow built from
 # this source. Run it by hand from the Actions tab; review the draft, then publish it.
+#
+# The installer is also signed with the updater key (secrets TAURI_SIGNING_PRIVATE_KEY and
+# TAURI_SIGNING_PRIVATE_KEY_PASSWORD), and latest.json goes up with it: installed copies check
+# releases/latest/download/latest.json and install only what that key signed. Publishing the
+# draft is what ships the update.
 name: Release
 
 on:
@@ -44,6 +49,8 @@ jobs:
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: v__VERSION__
           releaseName: Classic EXP Tracker v__VERSION__
@@ -57,8 +64,9 @@ jobs:
           subject-path: src-tauri/target/release/bundle/nsis/*-setup.exe
 
       # The notes name the file as GitHub stores it (it turns spaces into dots), and the run fails
-      # unless exactly the one installer was uploaded and GitHub's digest of it is the hash of
-      # the file built and attested above.
+      # unless exactly the installer, its updater signature and latest.json were uploaded, GitHub's
+      # digest of the installer is the hash of the file built and attested above, and every
+      # Windows entry in latest.json is this version's installer with that signature.
       - name: Check the upload; release notes with the installer's SHA-256
         shell: pwsh
         env:
@@ -69,11 +77,32 @@ jobs:
           $installers = @(Get-Item src-tauri/target/release/bundle/nsis/*-setup.exe)
           if ($installers.Count -ne 1) { throw "expected one installer, found $($installers.Count)" }
           $hash = (Get-FileHash $installers[0].FullName -Algorithm SHA256).Hash   # uppercase, as Get-FileHash shows it to users
+          $signature = (Get-Content -Raw "$($installers[0].FullName).sig").Trim()
+          if (-not $signature) { throw "no updater signature next to the installer: are the signing secrets set?" }
           $assets = @(gh api "repos/$env:GITHUB_REPOSITORY/releases/$env:RELEASE_ID" --jq '.assets' | ConvertFrom-Json)
-          if ($assets.Count -ne 1) { throw "expected the installer alone on the release, found: $($assets.name -join ', ')" }
-          $asset = $assets[0]
+          $asset = @($assets | Where-Object { $_.name -like '*-setup.exe' })
+          $others = (@($assets | Where-Object { $_.name -notlike '*-setup.exe' } | ForEach-Object name | Sort-Object) -join ',')
+          if ($asset.Count -ne 1 -or $others -ne ((@("$($asset[0].name).sig", 'latest.json') | Sort-Object) -join ',')) {
+            throw "expected the installer, its .sig and latest.json on the release, found: $($assets.name -join ', ')"
+          }
+          $asset = $asset[0]
           if ($asset.digest -ne "sha256:$($hash.ToLowerInvariant())") { throw "uploaded $($asset.name) has digest $($asset.digest), built file has sha256:$hash" }
           $name = $asset.name
+          # A draft's files download through the API (by asset id), not by the tag's URL.
+          foreach ($file in @("$name.sig", 'latest.json')) {
+            $id = ($assets | Where-Object name -eq $file).id
+            gh api "repos/$env:GITHUB_REPOSITORY/releases/assets/$id" -H 'Accept: application/octet-stream' > "uploaded-$file"
+            if ($LASTEXITCODE -ne 0) { throw "could not download the uploaded $file" }
+          }
+          if ((Get-Content -Raw "uploaded-$name.sig").Trim() -ne $signature) { throw "uploaded $name.sig isn't the signature built here" }
+          $latest = Get-Content -Raw uploaded-latest.json | ConvertFrom-Json
+          if ($latest.version -ne $env:VERSION) { throw "latest.json announces $($latest.version), building $env:VERSION" }
+          $windows = @($latest.platforms.PSObject.Properties | Where-Object Name -like 'windows-*')
+          if ($windows.Count -eq 0) { throw "latest.json has no Windows entry" }
+          foreach ($entry in $windows) {
+            if ($entry.Value.signature.Trim() -ne $signature) { throw "latest.json $($entry.Name) has another signature" }
+            if (-not $entry.Value.url.EndsWith("/$name")) { throw "latest.json $($entry.Name) points at $($entry.Value.url), not $name" }
+          }
           $run = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
           $commit = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/commit/$env:GITHUB_SHA"
           $body = @"
@@ -81,7 +110,7 @@ jobs:
 
           ### Built from this source
 
-          This installer was built by the [Release workflow]($run) from commit [``$env:GITHUB_SHA``]($commit), and nothing else was uploaded.
+          This installer was built by the [Release workflow]($run) from commit [``$env:GITHUB_SHA``]($commit). The only other files are its update signature and ``latest.json``, for the app's own update check.
 
           **SHA-256:** ``$hash``
 

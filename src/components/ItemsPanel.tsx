@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { PatchView } from "./PatchView";
 import { Scroller } from "./Scroller";
 import { useMessages } from "../lib/i18n";
-import { getItems, ignoreItem, itemNames, nameItem, setMainPotion, type AppError, type Item, type ItemKind, type PotionSlot } from "../lib/ipc";
+import { deleteItem, getItems, ignoreItem, itemNames, nameItem, setMainPotion, type AppError, type Item, type ItemKind, type PotionSlot } from "../lib/ipc";
 
 type Tab = "etc" | "use" | "ignored";
 const TABS: readonly Tab[] = ["etc", "use", "ignored"];
@@ -31,6 +31,8 @@ export function ItemsPanel({
   const [tab, setTab] = useState<Tab>("etc");
   const [selected, setSelected] = useState<number | null>(null);
   const [typed, setTyped] = useState("");
+  // Deleting asks first.
+  const [deleting, setDeleting] = useState(false);
 
   // The item list's names, once.
   useEffect(() => {
@@ -59,6 +61,7 @@ export function ItemsPanel({
 
   const select = (i: Item) => {
     setSelected(i.id === selected ? null : i.id);
+    setDeleting(false);
     setTyped(i.name ?? "");
   };
 
@@ -78,6 +81,16 @@ export function ItemsPanel({
     const res = await ignoreItem(item.id, ignored);
     if (!res.success) return onError(res.error);
     onDone(ignored ? it.itemIgnored : it.itemTracked);
+    setSelected(null);
+    await load();
+  };
+
+  const remove = async () => {
+    if (!item) return;
+    const res = await deleteItem(item.id);
+    setDeleting(false);
+    if (!res.success) return onError(res.error);
+    onDone(it.itemDeleted);
     setSelected(null);
     await load();
   };
@@ -179,6 +192,14 @@ export function ItemsPanel({
             <button className="btn small" onClick={() => void setIgnored(false)}>{it.unignore}</button>
           ) : (
             <button className="btn small" title={it.ignoreTitle} onClick={() => void setIgnored(true)}>{it.ignore}</button>
+          )}
+          {deleting ? (
+            <>
+              <button className="btn small danger" onClick={() => void remove()}>{m.common.delete}</button>
+              <button className="btn small" onClick={() => setDeleting(false)}>{m.common.keep}</button>
+            </>
+          ) : (
+            <button className="btn small" title={it.deleteItemTitle} onClick={() => setDeleting(true)}>{m.common.delete}</button>
           )}
           </div>
         </div>

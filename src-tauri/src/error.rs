@@ -20,6 +20,14 @@ pub enum AppError {
     Window(String),
     #[error("translator: {0}")]
     Translator(String),
+    #[error("update: {0}")]
+    Update(String),
+}
+
+impl From<tauri_plugin_updater::Error> for AppError {
+    fn from(e: tauri_plugin_updater::Error) -> Self {
+        AppError::Update(e.to_string())
+    }
 }
 
 impl From<StoreError> for AppError {

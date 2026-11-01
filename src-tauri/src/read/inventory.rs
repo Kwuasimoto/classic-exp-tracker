@@ -12,11 +12,13 @@ use crate::read::font;
 
 /// A patch's width in pixels: the part of an icon that tells items apart.
 pub const PATCH: u32 = 12;
-/// Where the patch is in a slot: the icon's upper middle, clear of the count digits.
-pub const ICON_PATCH: Rect = Rect { x: 10, y: 4, w: PATCH, h: PATCH };
-/// On the keyboard quickslot each key's label (and its white edge) covers the icon's rows
-/// 3–11, so the patch is the 8 rows between it and the count, the same on every key.
-pub const KEY_PATCH: Rect = Rect { x: 10, y: 12, w: PATCH, h: 8 };
+/// Where the patch is in a slot: the icon's middle, rows 15–19, below the keyboard quickslot's
+/// key labels (rows 3–11, and the descender of PUp's "p" to row 14) and above the count (from
+/// row 20). It's the same in every slot, inventory or quickslot of either layout, so an item has
+/// one patch wherever it's seen. Measured 2026-10-31: the same pot on both layouts 0 apart,
+/// different items 46 or more; in the inventory, different items 15.5 or more. Wider, the
+/// slots' own backgrounds bring different items closer.
+pub const ICON_PATCH: Rect = Rect { x: 10, y: 15, w: PATCH, h: 5 };
 pub const SLOT: u32 = 32;
 /// A slot's count rows: the outline row above the digits, their 9 rows and the outline
 /// row below (read::count).
@@ -25,6 +27,13 @@ pub const COUNT_HEIGHT: u32 = 11;
 
 /// An empty inventory slot's flat colour.
 const EMPTY_SLOT: [u8; 3] = [225, 223, 213];
+/// The 4 px gaps between slot columns under an item's tooltip: its see-through navy over the
+/// window's (245, 246, 247), measured 2026-10-31. Reads under a tooltip would learn and count
+/// the tint as items. Only the tint counts as covered: the orange frame the game draws round
+/// the last stack picked up spills into the gap too, and stays there.
+const TOOLTIP_GAP: [u8; 3] = [74, 76, 120];
+/// How far a gap pixel may be from TOOLTIP_GAP: on a stretched screen the gap's middle stays flat.
+const TOOLTIP_TOLERANCE: u8 = 16;
 /// Inventory slots: 5 columns 36 px apart, 6 rows 34 px apart.
 const GRID_AT: (u32, u32) = (8, 50);
 const GRID: (u32, u32) = (5, 6);
@@ -148,15 +157,15 @@ fn same(p: [u8; 4], c: [u8; 3], tolerance: u8) -> bool {
 }
 
 /// The slot at native `(x, y)` in `crop`: `Ok(None)` when it holds nothing with a count,
-/// an error when it holds something whose count doesn't read. The patch (`patch`, from the
-/// slot's corner) is the icon's native pixels (geom::Scale::native_rgb), so one learned
-/// patch serves every 16:9 screen.
-pub fn read_slot(crop: &Crop, at: &Scale, x: u32, y: u32, patch: Rect) -> Result<Option<SlotRead>, SlotError> {
+/// an error when it holds something whose count doesn't read. The patch (ICON_PATCH) is the
+/// icon's native pixels (geom::Scale::native_rgb), so one learned patch serves every 16:9
+/// screen.
+pub fn read_slot(crop: &Crop, at: &Scale, x: u32, y: u32) -> Result<Option<SlotRead>, SlotError> {
     let (band, left, top) = at.around(crop, Rect { x, y: y + COUNT_TOP, w: SLOT, h: COUNT_HEIGHT }).ok_or(SlotError::OutsideBox)?;
     let Some(count) = read_count(&Band::new(&band, left, top), at.font_px()).map_err(|_| SlotError::CountUnreadable)? else {
         return Ok(None);
     };
-    let rgb = at.native_rgb(crop, Rect { x: x + patch.x, y: y + patch.y, ..patch }).ok_or(SlotError::OutsideBox)?;
+    let rgb = at.native_rgb(crop, Rect { x: x + ICON_PATCH.x, y: y + ICON_PATCH.y, ..ICON_PATCH }).ok_or(SlotError::OutsideBox)?;
     Ok(Some(SlotRead { patch: Patch(rgb), count }))
 }
 
@@ -197,10 +206,14 @@ pub fn read_inventory(crop: &Crop, at: &Scale) -> InventoryRead {
     let tab = tab.map(|i| TABS[i as usize]);
     let mut slots = Some(Vec::new());
     for (x, y) in inventory_slots() {
+        if !uncovered(crop, at, x, y) {
+            slots = None;
+            break;
+        }
         if at.inside(crop, Rect { x, y, w: SLOT, h: SLOT }).is_some_and(|s| is_empty_slot(&s)) {
             continue;
         }
-        match read_slot(crop, at, x, y, ICON_PATCH) {
+        match read_slot(crop, at, x, y) {
             Ok(Some(slot)) => slots.as_mut().map_or((), |s| s.push(slot)),
             Ok(None) => {}
             Err(_) => slots = None,
@@ -208,6 +221,17 @@ pub fn read_inventory(crop: &Crop, at: &Scale) -> InventoryRead {
     }
     let scroll = SCROLL_TRACK.into_iter().find(|&y| at.pixel(crop, SCROLL_TRACK_X, y).is_some_and(|px| px[2] > px[0].saturating_add(40)));
     InventoryRead { found: title_found(crop, at), meso, tab, scroll, slots }
+}
+
+/// No tooltip is over the slot at native `(x, y)`: the gap beside it (to its right, or its left
+/// in the last column) shows no tooltip tint at three heights, in its middle two columns.
+fn uncovered(crop: &Crop, at: &Scale, x: u32, y: u32) -> bool {
+    let last_column = x == GRID_AT.0 + (GRID.0 - 1) * PITCH.0;
+    let gap_x = if last_column { x - (PITCH.0 - SLOT) + 1 } else { x + SLOT + 1 };
+    ![gap_x, gap_x + 1]
+        .iter()
+        .flat_map(|&gx| [6, 16, 26].map(|dy| (gx, y + dy)))
+        .any(|(gx, gy)| at.pixel(crop, gx, gy).is_some_and(|p| same(p, TOOLTIP_GAP, TOOLTIP_TOLERANCE)))
 }
 
 fn is_empty_slot(slot: &Crop) -> bool {
@@ -219,24 +243,19 @@ pub fn keyboard_layout(crop: &Crop, at: &Scale) -> bool {
     KEY_GAPS.iter().all(|&(x, y)| at.pixel(crop, x, y).is_some_and(|p| same(p, KEY_GAP, 12)))
 }
 
-/// The quickslot layout the game shows in `crop`: its slots and where their patches are.
-/// Anything but the keyboard layout is read as the controller layout.
-pub fn quickslot_layout(crop: &Crop, at: &Scale) -> (&'static [(u32, u32)], Rect) {
-    if keyboard_layout(crop, at) {
-        (&KEY_SLOTS, KEY_PATCH)
-    } else {
-        (&CONTROLLER_SLOTS, ICON_PATCH)
-    }
+/// The slots of the quickslot layout the game shows in `crop`. Anything but the keyboard
+/// layout is read as the controller layout.
+pub fn quickslot_layout(crop: &Crop, at: &Scale) -> &'static [(u32, u32)] {
+    if keyboard_layout(crop, at) { &KEY_SLOTS } else { &CONTROLLER_SLOTS }
 }
 
 /// The quickslot box (geom::Boxes::quickslot): its stacks, or `None` when a count is there
 /// but doesn't read, or no stack is. `None` keeps the last reading, so potions used
 /// meanwhile count once the stacks are back.
 pub fn read_quickslot(crop: &Crop, at: &Scale) -> Option<Vec<SlotRead>> {
-    let (slots, patch) = quickslot_layout(crop, at);
     let mut stacks = Vec::new();
-    for &(x, y) in slots {
-        if let Some(slot) = read_slot(crop, at, x, y, patch).ok()? {
+    for &(x, y) in quickslot_layout(crop, at) {
+        if let Some(slot) = read_slot(crop, at, x, y).ok()? {
             stacks.push(slot);
         }
     }
@@ -265,6 +284,12 @@ mod tests {
         assert_eq!(keys.iter().map(|s| s.count).collect::<Vec<_>>(), [29, 342, 24, 30, 851, 137, 63]);
         // Seven different items: seven patches no two alike.
         assert!(keys.iter().enumerate().all(|(i, a)| keys[i + 1..].iter().all(|b| patch_distance(&a.patch.0, &b.patch.0) > 3.0)));
+        // The same pots on both layouts have the same patch: the controller's 244, 868 and
+        // 29 are the keyboard's 342, 851 and 29.
+        let quick = read_quickslot(&fixture("quickslot_171_244_868_29.png"), &Scale::NATIVE).unwrap();
+        for (c, k) in [(1, 1), (2, 4), (3, 0)] {
+            assert!(patch_distance(&quick[c].patch.0, &keys[k].patch.0) <= 1.0, "controller {c} and key {k}");
+        }
     }
 
     #[test]
@@ -278,5 +303,31 @@ mod tests {
         // A meso field from the same screen whose 8 smoothing split in two (read "418,011").
         let line = read_text_line(&fixture("meso_field_1920x1080_48011.png"), &font::MESO, Ink::Dark).unwrap();
         assert_eq!(parse_mesos(&line.text()), Some(48_011));
+    }
+
+    #[test]
+    fn the_last_pickup_highlight_is_not_a_tooltip() {
+        // The game frames the last stack picked up (the 24 bananas) in orange, spilling into
+        // the gap beside it; the inventory still reads.
+        let at = crate::geom::boxes_for(1920, 1080, crate::geom::Corner::TopRight).expect("16:9").inventory_at;
+        let read = read_inventory(&fixture("inventory_1920x1080_top_right_highlight_109383.png"), &at);
+        assert_eq!((read.found, read.meso, read.tab), (true, Some(109_383), Some(Tab::Etc)));
+        let counts: Vec<u32> = read.slots.expect("no slot covered").iter().map(|s| s.count).collect();
+        assert_eq!(counts, [1, 1, 1, 18, 14, 100, 6, 11, 70, 7, 21, 50, 4, 48, 70, 67, 94, 16, 200, 200, 200, 2, 9, 2, 5, 200, 189, 24, 13]);
+    }
+
+    #[test]
+    fn a_tooltip_over_a_slot_skips_the_read() {
+        // The tooltip's tint painted down the gap right of the last row's first slot.
+        let mut crop = fixture("inventory_etc_240529.png");
+        let (x0, y0) = (GRID_AT.0 + SLOT, GRID_AT.1 + 5 * PITCH.1);
+        for y in y0..y0 + SLOT {
+            for x in x0..x0 + PITCH.0 - SLOT {
+                let i = ((y * crop.width + x) * 4) as usize;
+                crop.rgba[i..i + 3].copy_from_slice(&TOOLTIP_GAP);
+            }
+        }
+        let read = read_inventory(&crop, &Scale::NATIVE);
+        assert_eq!((read.meso, read.tab, read.slots), (Some(240_529), Some(Tab::Etc), None));
     }
 }
