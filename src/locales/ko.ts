@@ -27,6 +27,7 @@ export const ko: Messages = {
     failed: (error: string) => `업데이트를 확인할 수 없습니다: ${error}`,
     available: (version: string) => `버전 ${version}을(를) 사용할 수 있습니다`,
     installing: "업데이트를 다운로드하고 설치하는 중…",
+    updating: "업데이트 중…",
     updateTo: (version: string) => `v${version}(으)로 업데이트`,
     restartTitle: "다운로드하고 서명을 확인한 뒤 설치하고 앱을 다시 시작합니다",
     installFailed: (error: string) => `업데이트를 설치할 수 없습니다: ${error}`,

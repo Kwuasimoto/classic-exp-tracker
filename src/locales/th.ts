@@ -27,6 +27,7 @@ export const th: Messages = {
     failed: (error: string) => `ตรวจหาอัปเดตไม่ได้: ${error}`,
     available: (version: string) => `มีเวอร์ชัน ${version} แล้ว`,
     installing: "กำลังดาวน์โหลดและติดตั้งอัปเดต…",
+    updating: "กำลังอัปเดต…",
     updateTo: (version: string) => `อัปเดตเป็น v${version}`,
     restartTitle: "ดาวน์โหลด ตรวจสอบลายเซ็น ติดตั้ง แล้วรีสตาร์ตแอป",
     installFailed: (error: string) => `ติดตั้งอัปเดตไม่ได้: ${error}`,

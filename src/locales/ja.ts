@@ -27,6 +27,7 @@ export const ja: Messages = {
     failed: (error: string) => `アップデートを確認できませんでした: ${error}`,
     available: (version: string) => `バージョン ${version} が利用できます`,
     installing: "アップデートをダウンロードしてインストールしています…",
+    updating: "更新中…",
     updateTo: (version: string) => `v${version} にアップデート`,
     restartTitle: "ダウンロードして署名を確認し、インストールしてアプリを再起動します",
     installFailed: (error: string) => `アップデートをインストールできませんでした: ${error}`,

@@ -27,6 +27,7 @@ export const ptBR: Messages = {
     failed: (error: string) => `Não foi possível procurar atualizações: ${error}`,
     available: (version: string) => `A versão ${version} está disponível`,
     installing: "Baixando e instalando a atualização…",
+    updating: "Atualizando…",
     updateTo: (version: string) => `Atualizar para v${version}`,
     restartTitle: "Baixa, confere a assinatura, instala e reinicia o app",
     installFailed: (error: string) => `Não foi possível instalar a atualização: ${error}`,

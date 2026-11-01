@@ -27,6 +27,7 @@ export const es: Messages = {
     failed: (error: string) => `No se pudieron buscar actualizaciones: ${error}`,
     available: (version: string) => `La versión ${version} está disponible`,
     installing: "Descargando e instalando la actualización…",
+    updating: "Actualizando…",
     updateTo: (version: string) => `Actualizar a v${version}`,
     restartTitle: "La descarga, comprueba su firma, la instala y reinicia la app",
     installFailed: (error: string) => `No se pudo instalar la actualización: ${error}`,

@@ -27,6 +27,7 @@ export const zhHans: Messages = {
     failed: (error: string) => `无法检查更新：${error}`,
     available: (version: string) => `版本 ${version} 可用`,
     installing: "正在下载并安装更新…",
+    updating: "正在更新…",
     updateTo: (version: string) => `更新到 v${version}`,
     restartTitle: "下载并校验签名，安装后重新启动应用",
     installFailed: (error: string) => `无法安装更新：${error}`,

@@ -75,7 +75,17 @@ button, input, select { font: inherit; color: inherit; }
 .updates { position: relative; display: flex; align-items: center; gap: 8px; }
 .titlebar-version { border: 0; border-radius: 3px; padding: 2px 6px; background: none; cursor: pointer; }
 .titlebar-version:hover, .titlebar-version[aria-expanded="true"] { background: var(--inset); color: var(--text); }
-.update-ready { white-space: nowrap; }
+/* A newer version: the version and its Update button joined into one chip, grey then orange. */
+.updates.has-update { gap: 0; }
+.has-update .titlebar-version { height: 22px; padding: 0 8px; border-radius: 4px 0 0 4px; background: var(--inset); }
+.has-update .titlebar-version:hover, .has-update .titlebar-version[aria-expanded="true"] { background: #333338; }
+.update-ready { height: 22px; display: inline-flex; align-items: center; gap: 6px; padding: 0 9px; border: 0; border-radius: 0 4px 4px 0; background: var(--accent); color: #000000; font-size: 12px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+.update-ready:hover:not(:disabled) { background: #ffa53d; }
+.update-ready:disabled { cursor: default; }
+.update-ready:focus-visible { outline-color: #000000; }
+.spinner { width: 10px; height: 10px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
 .update-panel { left: 0; top: calc(100% + 6px); bottom: auto; width: 280px; gap: 10px; padding: 12px; }
 .update-panel p { margin: 0; font-size: 13px; line-height: 1.4; }
 .update-actions { display: flex; gap: 8px; }
@@ -262,6 +272,9 @@ tr.selected td { background: rgba(255, 255, 255, 0.1); }
 .compressed .titlebar { padding-left: 10px; gap: 8px; }
 .compressed .window-controls button { width: 36px; }
 .compressed .titlebar-version { display: none; }
+/* The compressed bar has no room for the name and the update chip both: the chip takes its place. */
+.compressed .titlebar:has(.has-update) .titlebar-name { display: none; }
+.compressed .has-update .titlebar-version { display: block; }
 .compressed table.snapshots .opt, .compressed table.snapshots .period { display: none; }
 .compressed .panel { padding: 10px 12px; }
 .compressed .ledger { border-right: 0; border-bottom: 1px solid var(--line); }

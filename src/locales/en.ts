@@ -26,6 +26,7 @@ export const en = {
     failed: (error: string) => `Couldn't check for updates: ${error}`,
     available: (version: string) => `Version ${version} is available`,
     installing: "Downloading and installing the update…",
+    updating: "Updating…",
     updateTo: (version: string) => `Update to v${version}`,
     restartTitle: "Downloads it, checks its signature, installs it and restarts the app",
     installFailed: (error: string) => `Couldn't install the update: ${error}`,

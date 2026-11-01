@@ -52,13 +52,19 @@ export function Updates({ version }: { version: string }) {
   const problem = actionError ?? error?.message ?? null;
 
   return (
-    <div className="updates" ref={box}>
+    <div className={updates?.available ? "updates has-update" : "updates"} ref={box}>
       <button className="caption titlebar-version" title={m.updates.title} aria-expanded={open} onClick={() => setOpen(!open)}>
         v{version}
       </button>
       {updates?.available && (
-        <button className="btn small primary update-ready" title={m.updates.restartTitle} disabled={updates.installing} onClick={install}>
-          {m.updates.updateTo(updates.available)}
+        <button
+          className="update-ready"
+          title={updates.installing ? m.updates.installing : m.updates.restartTitle}
+          disabled={updates.installing}
+          onClick={install}
+        >
+          {updates.installing && <span className="spinner" aria-hidden="true" />}
+          {updates.installing ? m.updates.updating : m.updates.updateTo(updates.available)}
         </button>
       )}
       {open && (

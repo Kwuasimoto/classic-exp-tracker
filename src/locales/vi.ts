@@ -27,6 +27,7 @@ export const vi: Messages = {
     failed: (error: string) => `Không kiểm tra được cập nhật: ${error}`,
     available: (version: string) => `Đã có phiên bản ${version}`,
     installing: "Đang tải và cài đặt bản cập nhật…",
+    updating: "Đang cập nhật…",
     updateTo: (version: string) => `Cập nhật lên v${version}`,
     restartTitle: "Tải về, kiểm tra chữ ký, cài đặt rồi khởi động lại ứng dụng",
     installFailed: (error: string) => `Không cài được bản cập nhật: ${error}`,
