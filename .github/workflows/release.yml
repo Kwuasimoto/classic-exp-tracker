@@ -101,7 +101,8 @@ jobs:
           if ($windows.Count -eq 0) { throw "latest.json has no Windows entry" }
           foreach ($entry in $windows) {
             if ($entry.Value.signature.Trim() -ne $signature) { throw "latest.json $($entry.Name) has another signature" }
-            if (-not $entry.Value.url.EndsWith("/$name")) { throw "latest.json $($entry.Name) points at $($entry.Value.url), not $name" }
+            # tauri-action links the asset by its API URL; the updater downloads it as octet-stream.
+            if ($entry.Value.url -ne $asset.url) { throw "latest.json $($entry.Name) points at $($entry.Value.url), not $name ($($asset.url))" }
           }
           $run = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
           $commit = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/commit/$env:GITHUB_SHA"
