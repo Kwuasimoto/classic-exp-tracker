@@ -249,14 +249,15 @@ export const UpdateStatusSchema = z.object({
   autoCheck: z.boolean(),
   checking: z.boolean(),
   checkedAt: z.number().int().nullable(),
-  ready: z.string().nullable(),
+  available: z.string().nullable(),
+  installing: z.boolean(),
   error: z.string().nullable(),
 });
 export type UpdateStatus = z.infer<typeof UpdateStatusSchema>;
 
 export const updateStatus = () => call("update_status", UpdateStatusSchema);
 export const checkForUpdates = () => call("check_for_updates", UpdateStatusSchema);
-/** The app exits, the installer runs, and the new version starts. */
+/** Downloads and checks the new version; then the app exits, the installer runs, and it starts. */
 export const installUpdate = () => call("install_update", z.null());
 export const setUpdateChecks = (on: boolean) => call("set_update_checks", z.null(), { on });
 export const onUpdateStatus = (cb: (status: Result<UpdateStatus, AppError>) => void) =>

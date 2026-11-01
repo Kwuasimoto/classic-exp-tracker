@@ -30,7 +30,7 @@ flowchart LR
 
 Windows 10 (2004+) or 11, 64-bit. No admin rights needed.
 
-**Updates:** the app checks for a new release 10 seconds after it starts and then every hour, downloads it in the background, and shows **Update to v…** in the title bar. It installs only when you click that; it never restarts by itself. Click the version number in the title bar to check now, or to turn the hourly checks off. Versions before the first one with updates (0.10.0 and older) need this one installed by hand.
+**Updates:** the app checks for a new release 10 seconds after it starts and then every hour, and shows **Update to v…** in the title bar when there is one. A check fetches only the release's version file: the new version is downloaded, its signature checked, and installed only when you click that, and the app never restarts by itself. Click the version number in the title bar to check now, or to turn the hourly checks off. Versions before the first one with updates (0.10.0 and older) need this one installed by hand.
 
 ## Set up
 
@@ -84,7 +84,7 @@ It never opens, reads, injects into or hooks the MapleStory process, reads game 
 
 Everything stays on your PC, except update checks and the Chat translator:
 
-- **Update checks** (10 seconds after starting, then hourly, or **Check now**) fetch this repository's `latest.json` from GitHub Releases, and the installer it names when there's a newer version. Nothing is sent but the request itself. An update installs only if it's signed with this project's key, whose public half is built into the app (`src-tauri/tauri.conf.json`). Turn the hourly checks off from the version number in the title bar.
+- **Update checks** (10 seconds after starting, then hourly, or **Check now**) fetch only this repository's `latest.json` from GitHub Releases; the installer it names is downloaded only when you click **Update to v…**. Nothing is sent but the request itself. An update installs only if it's signed with this project's key, whose public half is built into the app (`src-tauri/tauri.conf.json`). Turn the hourly checks off from the version number in the title bar.
 
 - **Download** (in Setup) fetches the chat reader's files from Hugging Face (addresses and SHA-256s pinned in `src-tauri/src/translator.rs`).
 - **Translate** (and saving your key, which is checked with one test translation) sends only the text being translated, from your PC straight to Google's Gemini API with your key (`src-tauri/src/gemini.rs`). Google's [Gemini API terms](https://ai.google.dev/gemini-api/terms) apply: you must be 18 or older, and on the free tier Google may use what you send to improve its products and people may read it (not with a paid key, or in the EEA, Switzerland or the UK). Don't send anything private.

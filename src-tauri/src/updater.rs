@@ -1,8 +1,8 @@
 //! Updates from the repository's GitHub releases (tauri.conf.json, plugins.updater): checked 10 s
 //! after launch and then every hour, unless the user turned that off, and whenever the user asks.
-//! A newer release is downloaded in the background and its signature checked against the public
-//! key built into the app; it's installed only when the user chooses Restart, never on its own,
-//! so a grind is never cut off.
+//! A check fetches only the release's latest.json. Nothing else is downloaded until the user clicks
+//! Update: then the installer is downloaded, its signature checked against the public key built
+//! into the app, and installed, in that order. Never on its own, so a grind is never cut off.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -27,8 +27,10 @@ pub struct UpdateStatus {
     pub checking: bool,
     /// When the last check finished (unix seconds), whether it found anything or failed.
     pub checked_at: Option<i64>,
-    /// A newer version, downloaded with its signature checked, waiting for Restart.
-    pub ready: Option<String>,
+    /// A newer version on GitHub, not downloaded until the user clicks Update.
+    pub available: Option<String>,
+    /// Downloading and installing it (the user clicked Update).
+    pub installing: bool,
     /// Why the last check failed (offline, GitHub unreachable, a bad signature); the next check
     /// that gets through clears it.
     pub error: Option<String>,
@@ -36,18 +38,18 @@ pub struct UpdateStatus {
 
 pub struct Updates {
     status: Mutex<UpdateStatus>,
-    /// The downloaded update and its installer, for Restart.
-    ready: Mutex<Option<(Update, Vec<u8>)>>,
-    /// One check at a time: the hourly one and Check now don't download twice.
-    checking: tokio::sync::Mutex<()>,
+    /// The newer release the last check found, for Update.
+    available: Mutex<Option<Update>>,
+    /// One check or install at a time.
+    busy: tokio::sync::Mutex<()>,
 }
 
 impl Updates {
     pub fn new(auto_check: bool) -> Self {
         Self {
             status: Mutex::new(UpdateStatus { auto_check, ..UpdateStatus::default() }),
-            ready: Mutex::new(None),
-            checking: tokio::sync::Mutex::new(()),
+            available: Mutex::new(None),
+            busy: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -84,10 +86,10 @@ pub fn spawn(app: AppHandle) {
     });
 }
 
-/// Looks for a newer release and downloads it; the outcome goes into the status (and the log).
+/// Looks for a newer release; the outcome goes into the status (and the log).
 pub async fn check(app: &AppHandle) {
     let updates = app.state::<Updates>();
-    let _one = updates.checking.lock().await;
+    let _one = updates.busy.lock().await;
     updates.change(app, |s| s.checking = true);
     let found = find(app, &updates).await;
     if let Err(e) = &found {
@@ -105,30 +107,39 @@ async fn find(app: &AppHandle, updates: &Updates) -> Result<(), tauri_plugin_upd
     // usual shutdown: save the minute in progress first.
     let state = Arc::clone(app.state::<Arc<AppState>>().inner());
     let updater = app.updater_builder().on_before_exit(move || pipeline::shutdown(&state)).build()?;
-    let Some(update) = updater.check().await? else {
-        return Ok(());
-    };
-    if updates.status().ready.as_deref() == Some(update.version.as_str()) {
-        return Ok(());
+    let update = updater.check().await?;
+    if let Some(update) = &update {
+        log::info!("update {} available (running {})", update.version, update.current_version);
     }
-    log::info!("update {} found (running {}); downloading", update.version, update.current_version);
-    // Checks the signature: a download that doesn't match is an error, and never kept.
-    let installer = update.download(|_, _| {}, || {}).await?;
-    log::info!("update {} downloaded and its signature checked; installs on Restart", update.version);
-    let version = update.version.clone();
-    *updates.ready.lock().expect("update lock poisoned") = Some((update, installer));
-    updates.change(app, |s| s.ready = Some(version));
+    let version = update.as_ref().map(|u| u.version.clone());
+    // None clears one found earlier, if that release was taken down.
+    *updates.available.lock().expect("update lock poisoned") = update;
+    updates.change(app, |s| s.available = version);
     Ok(())
 }
 
-/// Installs the downloaded update. On Windows the installer takes over and the app exits; it
-/// starts again once installed.
-pub fn install(app: &AppHandle) -> Result<(), AppError> {
+/// Downloads the newer release, checks its signature and installs it (the user clicked Update).
+/// On Windows the installer takes over and the app exits; it starts again once installed.
+pub async fn install(app: &AppHandle) -> Result<(), AppError> {
     let updates = app.state::<Updates>();
-    let ready = updates.ready.lock().expect("update lock poisoned");
-    let (update, installer) = ready.as_ref().ok_or_else(|| AppError::NotFound("a downloaded update".into()))?;
-    log::info!("installing update {}", update.version);
-    // Kept if installing fails, so Restart can try again.
-    update.install(installer)?;
+    let _one = updates.busy.lock().await;
+    let update = updates.available.lock().expect("update lock poisoned").clone();
+    let update = update.ok_or_else(|| AppError::NotFound("a newer version".into()))?;
+    updates.change(app, |s| s.installing = true);
+    log::info!("downloading update {}", update.version);
+    // Checks the signature: a download that doesn't match is an error, and never installed.
+    let installed = match update.download(|_, _| {}, || {}).await {
+        Ok(installer) => {
+            log::info!("update {} downloaded and its signature checked; installing", update.version);
+            update.install(installer)
+        }
+        Err(e) => Err(e),
+    };
+    // Still available if it failed, so Update can try again.
+    if let Err(e) = installed {
+        updates.change(app, |s| s.installing = false);
+        log::warn!("update {} failed: {e}", update.version);
+        return Err(e.into());
+    }
     app.restart()
 }

@@ -449,10 +449,10 @@ pub async fn check_for_updates(app: tauri::AppHandle) -> Result<UpdateStatus, Ap
     Ok(app.state::<updater::Updates>().status())
 }
 
-/// Install the downloaded update: the app exits and starts again on the new version.
-#[tauri::command(async)]
-pub fn install_update(app: tauri::AppHandle) -> Result<(), AppError> {
-    updater::install(&app)
+/// Download, check and install the newer version: the app exits and starts again on it.
+#[tauri::command]
+pub async fn install_update(app: tauri::AppHandle) -> Result<(), AppError> {
+    updater::install(&app).await
 }
 
 /// Turn the hourly update checks on or off. Saved first, so a failed save changes nothing.

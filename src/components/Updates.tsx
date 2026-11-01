@@ -5,8 +5,8 @@ import { checkForUpdates, installUpdate, setUpdateChecks } from "../lib/ipc";
 import { useUpdates } from "../lib/useUpdates";
 
 /** The title bar's version, which opens what updates stand at (Check now, and the hourly
- *  checks on or off), and once a newer version is downloaded, its Update button: the app
- *  restarts on it only when the user clicks. The panel closes on a click outside or Escape. */
+ *  checks on or off), and once a newer version is out, its Update button: only that click
+ *  downloads, checks and installs it. The panel closes on a click outside or Escape. */
 export function Updates({ version }: { version: string }) {
   const m = useMessages();
   const { updates, error, take } = useUpdates();
@@ -40,8 +40,10 @@ export function Updates({ version }: { version: string }) {
     ? null
     : updates.checking
       ? m.updates.checking
-      : updates.ready
-        ? m.updates.ready(updates.ready)
+      : updates.installing
+        ? m.updates.installing
+      : updates.available
+        ? m.updates.available(updates.available)
         : updates.error
           ? m.updates.failed(updates.error)
           : updates.checkedAt !== null
@@ -54,22 +56,22 @@ export function Updates({ version }: { version: string }) {
       <button className="caption titlebar-version" title={m.updates.title} aria-expanded={open} onClick={() => setOpen(!open)}>
         v{version}
       </button>
-      {updates?.ready && (
-        <button className="btn small primary update-ready" title={m.updates.restartTitle} onClick={install}>
-          {m.updates.updateTo(updates.ready)}
+      {updates?.available && (
+        <button className="btn small primary update-ready" title={m.updates.restartTitle} disabled={updates.installing} onClick={install}>
+          {m.updates.updateTo(updates.available)}
         </button>
       )}
       {open && (
         <div className="flyout update-panel" role="dialog" aria-label={m.updates.title}>
-          {line && <p className={updates?.error && !updates.checking && !updates.ready ? "error" : undefined} role="status">{line}</p>}
+          {line && <p className={updates?.error && !updates.checking && !updates.installing && !updates.available ? "error" : undefined} role="status">{line}</p>}
           {problem && <p className="error">{problem}</p>}
           <div className="update-actions">
-            {updates?.ready && (
-              <button className="btn small primary" title={m.updates.restartTitle} onClick={install}>
-                {m.updates.updateTo(updates.ready)}
+            {updates?.available && (
+              <button className="btn small primary" title={m.updates.restartTitle} disabled={updates.installing} onClick={install}>
+                {m.updates.updateTo(updates.available)}
               </button>
             )}
-            <button className="btn small" disabled={!updates || updates.checking} onClick={check}>
+            <button className="btn small" disabled={!updates || updates.checking || updates.installing} onClick={check}>
               {m.updates.checkNow}
             </button>
           </div>
