@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender};
+use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -223,11 +223,11 @@ impl AppState {
     }
 }
 
-pub fn spawn(app: AppHandle, state: Arc<AppState>) -> std::io::Result<()> {
+pub fn spawn(app: AppHandle, state: Arc<AppState>, chat: SyncSender<(i64, Crop)>) -> std::io::Result<()> {
     let thread_state = Arc::clone(&state);
     let handle = std::thread::Builder::new()
         .name("exp-pipeline".into())
-        .spawn(move || Pipeline::new(app, thread_state).run())?;
+        .spawn(move || Pipeline::new(app, thread_state, chat).run())?;
     *state.thread.lock().expect("thread slot lock poisoned") = Some(handle);
     Ok(())
 }
@@ -247,6 +247,8 @@ struct Pipeline {
     state: Arc<AppState>,
     tx: SyncSender<CaptureMsg>,
     rx: Receiver<CaptureMsg>,
+    /// The chat reader's thread (chat_reader.rs): each chat strip the capture takes.
+    chat: SyncSender<(i64, Crop)>,
     control: Option<Control>,
     retry_at: Instant,
     backoff: Duration,
@@ -275,13 +277,14 @@ struct Pipeline {
 }
 
 impl Pipeline {
-    fn new(app: AppHandle, state: Arc<AppState>) -> Self {
+    fn new(app: AppHandle, state: Arc<AppState>, chat: SyncSender<(i64, Crop)>) -> Self {
         let (tx, rx) = sync_channel(4);
         Self {
             app,
             state,
             tx,
             rx,
+            chat,
             control: None,
             retry_at: Instant::now(),
             backoff: Duration::from_secs(1),
@@ -315,7 +318,10 @@ impl Pipeline {
             }
             self.ensure_capture();
             match self.rx.recv_timeout(Duration::from_millis(500)) {
-                Ok(CaptureMsg::Regions { t, width, height, exp, map, level, bar, loot }) => {
+                Ok(CaptureMsg::Regions { t, width, height, exp, map, level, bar, loot, chat }) => {
+                    if let Some(strip) = chat {
+                        self.send_to_chat_reader(t, strip);
+                    }
                     self.on_regions(t, (width, height), exp, map, level, &bar, loot.as_deref())
                 }
                 Ok(CaptureMsg::NoBoxes { width, height }) => self.on_new_screen(width, height),
@@ -436,6 +442,18 @@ impl Pipeline {
                 self.publish(ReaderStatus::Starting);
             }
             None => self.publish(ReaderStatus::ScreenNotSupported(resolution_key(width, height))),
+        }
+    }
+
+    /// Hand a chat strip to the chat reader. It reads only at 1366x768 for now (its
+    /// measurements are native); busy, it drops the strip and takes the next.
+    fn send_to_chat_reader(&mut self, t: i64, strip: Crop) {
+        if (strip.width, strip.height) != (crate::read::chat::STRIP.w, crate::read::chat::STRIP.h) {
+            return;
+        }
+        match self.chat.try_send((t, strip)) {
+            Ok(()) | Err(TrySendError::Full(_)) => {}
+            Err(TrySendError::Disconnected(_)) => warn!("chat reader stopped; the chat isn't read"),
         }
     }
 

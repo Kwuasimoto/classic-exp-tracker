@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { formatBytes } from "../lib/format";
 import { useMessages } from "../lib/i18n";
-import { cancelInstall, dismissInstallError, downloadReader, removeReader, type AppError, type TranslatorStatus } from "../lib/ipc";
+import { cancelInstall, dismissInstallError, downloadReader, openPartPage, removeReader, type AppError, type TranslatorStatus } from "../lib/ipc";
 import type { Result } from "../lib/result";
 import { TranslatorKey } from "./TranslatorKey";
 
@@ -88,6 +88,46 @@ export function TranslatorSetup({
             <div className="reader-state">{state(status)}</div>
             <div className="row-actions">{actions(status)}</div>
           </div>
+        )}
+        {status && (
+          <ul className="reader-parts">
+            {status.parts.map((part) => {
+              const label = t.readerParts[part.id];
+              const bytes = part.files.reduce((sum, f) => sum + f.size, 0);
+              const licenses = [...new Set(part.files.map((f) => f.license))].join(", ");
+              return (
+                <li key={part.id} className="reader-part">
+                  <div className="reader-part-head">
+                    <strong>{label?.name ?? part.id}</strong>
+                    <span className="caption">
+                      {part.installed ? t.partDownloaded : t.partMissing} · {formatBytes(bytes)} · {t.license} {licenses}
+                    </span>
+                  </div>
+                  {label?.what && <p className="caption reader-part-what">{label.what}</p>}
+                  <div className="reader-part-links">
+                    <button className="link-button" onClick={() => void act(() => openPartPage(part.id, false))}>{t.projectPage}</button>
+                    <button className="link-button" onClick={() => void act(() => openPartPage(part.id, true))}>{t.filesPage}</button>
+                  </div>
+                  <details className="reader-part-files">
+                    <summary>{t.pinnedFiles}</summary>
+                    <ul>
+                      {part.files.map((f) => (
+                        <li key={f.name}>
+                          <code className="path">{f.url}</code>
+                          <span className="caption">SHA-256 <code className="hash">{f.sha256}</code></span>
+                          {f.extract && (
+                            <span className="caption">
+                              {t.keepsOnly} <code>{f.extract.path}</code>, SHA-256 <code className="hash">{f.extract.sha256}</code>
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                </li>
+              );
+            })}
+          </ul>
         )}
         {status && (
           <p className="caption translator-note">

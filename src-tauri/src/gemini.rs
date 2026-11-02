@@ -202,6 +202,14 @@ impl Gemini {
         self.complete(key, &system, text, |t| keeps(t, &amounts)).await
     }
 
+    /// Translate a line read from the game's chat into English, whatever language it's in,
+    /// for the user to read. It was read off the screen, so a letter may be off.
+    pub async fn to_english(&self, key: &str, text: &str) -> Result<Translation, GeminiError> {
+        let system = "Translate this MapleStory chat message into English, whatever language it's in: it may mix              languages, use pinyin or romanized words, game slang and trade shorthand (B> buying, S> selling,              T> trading, PM, C/O, A/W). It was read off the screen, so a letter may be wrong: make your best guess.              Keep names and amounts like 50k or 1.2m exactly as written. If it's already English, return it as is.              Reply with only the translation.";
+        let amounts = amounts(text);
+        self.complete(key, system, text, |t| keeps(t, &amounts)).await
+    }
+
     /// Ask the models in turn, as `Rotation` allows, until one answers with a translation that
     /// passes `check`.
     async fn complete(&self, key: &str, system: &str, user: &str, check: impl Fn(&str) -> bool) -> Result<Translation, GeminiError> {

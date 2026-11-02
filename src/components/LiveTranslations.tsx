@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMessages } from "../lib/i18n";
 import { REPLY_LANGUAGES, translateReply, type TranslatorStatus } from "../lib/ipc";
+import { ChatLog } from "./ChatLog";
 
 /** BCP 47 tags of the translator's language ids, for the translation's `lang`. */
 const LANG_TAG: Record<string, string> = { "zh-hans": "zh-Hans", "pt-br": "pt-BR" };
@@ -13,8 +14,8 @@ type Translated = { text: string; model: string; language: string };
 /** The chat translator's Translations view, laid out like a chat: a log that fills the page
  *  (flat lines, no bubbles) and a reply box under it. A reply is translated by Gemini with the
  *  user's key into any of the translator's languages, to copy into the game; the app never
- *  types into the game itself. Reading the chat isn't built yet, so the log holds what's
- *  needed first. */
+ *  types into the game itself. The log (ChatLog) shows the chat's lines as they're read,
+ *  each translatable into English. */
 export function LiveTranslations({
   status,
   keySaved,
@@ -74,25 +75,29 @@ export function LiveTranslations({
 
   return (
     <section className="panel chat">
-      <div className="chat-log" role="log" aria-label={t.log}>
-        {status === null ? (
+      {status === null ? (
+        <div className="chat-log">
           <p className="caption chat-empty">{t.checking}</p>
-        ) : !status.downloaded ? (
+        </div>
+      ) : !status.downloaded ? (
+        <div className="chat-log">
           <div className="chat-empty">
             <p><b>{t.notDownloaded}</b> {t.notDownloadedText}</p>
             <button className="btn primary" onClick={onSetUp}>{t.openSetup}</button>
           </div>
-        ) : !status.enabled ? (
+        </div>
+      ) : !status.enabled ? (
+        <div className="chat-log">
           <div className="chat-empty">
             <p>
               <b>{t.isOff}</b> {t.isOffText}
             </p>
             <button className="btn primary" onClick={onTurnOn}>{m.common.turnOn}</button>
           </div>
-        ) : (
-          <p className="caption chat-empty">{t.onText}</p>
-        )}
-      </div>
+        </div>
+      ) : (
+        <ChatLog empty={<p className="caption chat-empty">{t.onText}</p>} />
+      )}
 
       {translated && (
         <div className="reply-out">

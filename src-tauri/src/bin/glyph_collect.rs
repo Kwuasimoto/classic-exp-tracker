@@ -422,6 +422,90 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             return Ok(());
         }
+        Some("chat-replay") => {
+            // chat-replay <png>...: the chat tracker and the Latin reader over saved frames in
+            // order, printing each message as it's read and what was skipped.
+            use classic_exp_tracker_lib::read::{chat, chat_ocr};
+            use classic_exp_tracker_lib::tracker::chat::ChatTracker;
+            let models = std::path::PathBuf::from(std::env::var("LOCALAPPDATA")?).join("com.classicexp.tracker/translator");
+            let engine = chat_ocr::Engine::load(&models.join("ocr-engine/onnxruntime.dll"))?;
+            let mut reader = chat_ocr::Reader::load(&engine, &models.join("ocr-reader-latin"))?;
+            let mut tracker = ChatTracker::default();
+            for path in &args[1..] {
+                let frame = Crop::from_image(&image::open(path)?.to_rgba8());
+                let strip = frame.sub(chat::STRIP).ok_or("not a 1366x768 frame")?;
+                let observed = tracker.observe(&strip);
+                let name = std::path::Path::new(path).file_name().map_or(String::new(), |n| n.to_string_lossy().into_owned());
+                if !observed.skipped.is_empty() {
+                    println!("{name}: skipped {:?}", observed.skipped);
+                }
+                for m in observed.new {
+                    let mut sender = String::new();
+                    let mut text = String::new();
+                    let mut worst = 1.0f32;
+                    for p in &m.parts {
+                        if let Some(span) = p.name {
+                            let r = reader.read(&strip, p.top, m.kind, span)?;
+                            worst = worst.min(r.confidence);
+                            sender = r.text;
+                        }
+                        let r = reader.read(&strip, p.top, m.kind, p.message)?;
+                        worst = worst.min(r.confidence);
+                        text.push_str(&r.text);
+                    }
+                    let channel = m.channel.map_or(String::new(), |c| format!(" CH{c:02}"));
+                    println!("{name}: {:?}{channel} [{worst:.2}] {sender:?}: {text:?}", m.kind);
+                }
+            }
+            return Ok(());
+        }
+        Some("chat") => {
+            // chat <png>: what the chat reader sees in a saved 1366x768 frame, newest line first.
+            use classic_exp_tracker_lib::read::chat;
+            let frame = Crop::from_image(&image::open(args.get(1).ok_or("missing png path")?)?.to_rgba8());
+            let strip = frame.sub(chat::STRIP).ok_or("not a 1366x768 frame")?;
+            let state = chat::toggle(&strip);
+            println!("chat {state:?}");
+            if args.get(2).map(String::as_str) == Some("bands") {
+                // Every band up to the first that isn't a line, judged on its own.
+                for k in 0..chat::MAX_BANDS {
+                    let top = chat::band_top(k);
+                    let Some(kind) = chat::classify(&strip, top) else {
+                        println!("  band {k:2}: none");
+                        break;
+                    };
+                    println!("  band {k:2}: {kind:?} covered {:?}", chat::covered(&strip, top, kind).map(|(a, b)| (a + chat::STRIP.x, b + chat::STRIP.x)));
+                }
+                return Ok(());
+            }
+            let lines = match state {
+                chat::Toggle::Open => {
+                    let walk = chat::walk(&strip);
+                    println!("  stopped: {:?}", walk.stop);
+                    for b in walk.bands.iter().filter(|b| b.covered.is_some()) {
+                        println!("  y {:3} covered at columns {:?}", b.top, b.covered);
+                    }
+                    walk.bands.iter().filter(|b| b.covered.is_none()).map(|b| (b.top, b.kind)).collect()
+                }
+                chat::Toggle::Closed => chat::classify_closed(&strip).map(|kind| (chat::CLOSED_BAND, kind)).into_iter().collect(),
+                chat::Toggle::Hidden => Vec::new(),
+            };
+            println!("  {} lines", lines.len());
+            for (top, kind) in lines {
+                let channel = match chat::badge(&strip, top) {
+                    Ok(Some(b)) => format!(" CH{:02}", b.channel),
+                    Ok(None) => String::new(),
+                    Err(e) => format!(" badge: {e}"),
+                };
+                let spans = match chat::split(&strip, top, kind) {
+                    Ok(Some(s)) => format!("name {:?} message {:?}{}", s.name, s.message, if s.continued { " (wrapped part)" } else { "" }),
+                    Ok(None) => "no spans".into(),
+                    Err(e) => format!("split: {e}"),
+                };
+                println!("  y {top:3} {kind:?}{channel}: {spans}");
+            }
+            return Ok(());
+        }
         Some("frame") => {
             let path = args.get(1).ok_or("missing png path")?;
             let monitor = windows_capture::monitor::Monitor::primary()?;
@@ -430,7 +514,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             *shared.regions.write().map_err(|_| "regions lock poisoned")? = Some(Regions {
                 width: whole.w,
                 height: whole.h,
-                boxes: Boxes { exp: whole, map: whole, level: whole, bar: whole, inventory: whole, quickslot: whole, inventory_at: Scale::NATIVE, quickslot_at: Scale::NATIVE },
+                boxes: Boxes { exp: whole, map: whole, level: whole, bar: whole, inventory: whole, quickslot: whole, chat: whole, inventory_at: Scale::NATIVE, quickslot_at: Scale::NATIVE },
             });
             let (tx, rx) = sync_channel(4);
             let control = capture::start(tx, shared)?;
@@ -455,7 +539,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             *shared.regions.write().map_err(|_| "regions lock poisoned")? = Some(Regions {
                 width: monitor.width()?,
                 height: monitor.height()?,
-                boxes: Boxes { exp: rect, map: rect, level: rect, bar: rect, inventory: rect, quickslot: rect, inventory_at: Scale::NATIVE, quickslot_at: Scale::NATIVE },
+                boxes: Boxes { exp: rect, map: rect, level: rect, bar: rect, inventory: rect, quickslot: rect, chat: rect, inventory_at: Scale::NATIVE, quickslot_at: Scale::NATIVE },
             });
             let (tx, rx) = sync_channel(4);
             let control = capture::start(tx, shared)?;

@@ -1,11 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "popout",
-  "description": "The pinned popout: reads the live rates, moves and closes itself.",
-  "windows": ["popout"],
+  "description": "The pinned popouts (rates and chat): read the app's data, move, resize and close themselves.",
+  "windows": ["popout", "chat-popout"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
+    "core:window:allow-start-resize-dragging",
     "core:window:allow-set-position",
     "core:window:allow-set-size",
     "core:window:allow-show",

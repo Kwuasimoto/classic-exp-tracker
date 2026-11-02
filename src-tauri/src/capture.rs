@@ -35,6 +35,8 @@ pub struct Shared {
     pub regions: RwLock<Option<Regions>>,
     /// Meso tracking is on: the inventory and quickslot are cropped too.
     pub loot_enabled: AtomicBool,
+    /// The chat translator is on: the chat strip is cropped too.
+    pub chat_enabled: AtomicBool,
     /// The corner the inventory is kept in (the user's setting).
     pub inventory_corner: RwLock<Corner>,
 }
@@ -51,7 +53,7 @@ pub struct LootCrops {
 
 #[derive(Debug)]
 pub enum CaptureMsg {
-    Regions { t: i64, width: u32, height: u32, exp: Crop, map: Crop, level: Crop, bar: Crop, loot: Option<Box<LootCrops>> },
+    Regions { t: i64, width: u32, height: u32, exp: Crop, map: Crop, level: Crop, bar: Crop, loot: Option<Box<LootCrops>>, chat: Option<Crop> },
     /// A frame at a resolution the pipeline has no boxes for (yet).
     NoBoxes { width: u32, height: u32 },
     Closed,
@@ -117,7 +119,8 @@ impl GraphicsCaptureApiHandler for Handler {
                     && r.boxes.level.fits_in(width, height)
                     && r.boxes.bar.fits_in(width, height)
                     && r.boxes.inventory.fits_in(width, height)
-                    && r.boxes.quickslot.fits_in(width, height) =>
+                    && r.boxes.quickslot.fits_in(width, height)
+                    && r.boxes.chat.fits_in(width, height) =>
             {
                 let loot = if self.shared.loot_enabled.load(Ordering::Acquire) {
                     Some(Box::new(LootCrops {
@@ -129,6 +132,7 @@ impl GraphicsCaptureApiHandler for Handler {
                 } else {
                     None
                 };
+                let chat = if self.shared.chat_enabled.load(Ordering::Acquire) { Some(copy_region(frame, r.boxes.chat)?) } else { None };
                 CaptureMsg::Regions {
                     t: now_unix(),
                     width,
@@ -138,6 +142,7 @@ impl GraphicsCaptureApiHandler for Handler {
                     level: copy_region(frame, r.boxes.level)?,
                     bar: copy_region(frame, r.boxes.bar)?,
                     loot,
+                    chat,
                 }
             }
             _ => CaptureMsg::NoBoxes { width, height },

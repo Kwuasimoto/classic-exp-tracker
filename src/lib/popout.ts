@@ -1,18 +1,20 @@
-/** Whether the popout was open, remembered between runs so it reopens with the app. */
-const KEY = "popout-open";
+import type { Popout } from "./ipc";
 
-export function savedPopoutOpen(): boolean {
+/** Whether each popout was open, remembered between runs so it reopens with the app. */
+const KEY: Record<Popout, string> = { rates: "popout-open", chat: "chat-popout-open" };
+
+export function savedPopoutOpen(popout: Popout): boolean {
   try {
-    return localStorage.getItem(KEY) === "1";
+    return localStorage.getItem(KEY[popout]) === "1";
   } catch {
     // Storage blocked: the popout starts closed.
     return false;
   }
 }
 
-export function savePopoutOpen(open: boolean): void {
+export function savePopoutOpen(popout: Popout, open: boolean): void {
   try {
-    localStorage.setItem(KEY, open ? "1" : "0");
+    localStorage.setItem(KEY[popout], open ? "1" : "0");
   } catch {
     // Storage blocked: the choice lasts for this run only.
   }

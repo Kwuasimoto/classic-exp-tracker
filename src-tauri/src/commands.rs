@@ -5,8 +5,32 @@ use std::sync::Arc;
 
 use tauri::{Manager, State};
 
-/// The popout window's label (see `set_popout`).
+/// The popouts' window labels (see `set_popout`).
 pub const POPOUT: &str = "popout";
+pub const CHAT_POPOUT: &str = "chat-popout";
+
+/// The two windows pinned above the game.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Popout {
+    /// The rates: the level ring, EXP, mesos and time to level.
+    Rates,
+    /// The chat log, sized to sit over the game's chat box.
+    Chat,
+}
+
+impl Popout {
+    pub fn label(self) -> &'static str {
+        match self {
+            Popout::Rates => POPOUT,
+            Popout::Chat => CHAT_POPOUT,
+        }
+    }
+
+    pub fn from_label(label: &str) -> Option<Popout> {
+        [Popout::Rates, Popout::Chat].into_iter().find(|p| p.label() == label)
+    }
+}
 
 use crate::error::AppError;
 use crate::now_unix;
@@ -156,27 +180,38 @@ pub fn set_loot_enabled(state: AppStateRef<'_>, on: bool) -> Result<(), AppError
     Ok(())
 }
 
-/// Open or close the popout: the rates in a small window pinned above the game. It is left
+/// Open or close a popout: the rates or the chat, each in a window pinned above the game. It is left
 /// out of screen capture (WDA_EXCLUDEFROMCAPTURE), so it never hides what the reader reads,
 /// and opens hidden and unfocused: the popout places itself, then shows (src/popout).
 // Async: creating a window from a synchronous command deadlocks on Windows (tauri docs).
 #[tauri::command(async)]
-pub fn set_popout(app: tauri::AppHandle, open: bool) -> Result<(), AppError> {
+pub fn set_popout(app: tauri::AppHandle, popout: Popout, open: bool) -> Result<(), AppError> {
     let window_error = |e: tauri::Error| AppError::Window(e.to_string());
     // Tauri only registers the label once the window exists, so two calls at once (React's
     // double effect in dev, a double-click) would both see no popout and build two.
     static OPENING: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _one_at_a_time = OPENING.lock().expect("popout lock poisoned");
-    match (open, app.get_webview_window(POPOUT)) {
+    match (open, app.get_webview_window(popout.label())) {
         (true, None) => {
-            tauri::WebviewWindowBuilder::new(&app, POPOUT, tauri::WebviewUrl::App("popout.html".into()))
-                .title("Classic EXP Tracker rates")
-                .inner_size(230.0, 96.0)
-                .resizable(false)
+            let builder = match popout {
+                Popout::Rates => tauri::WebviewWindowBuilder::new(&app, POPOUT, tauri::WebviewUrl::App("popout.html".into()))
+                    .title("Classic EXP Tracker rates")
+                    .inner_size(230.0, 96.0)
+                    .resizable(false)
+                    .transparent(true),
+                // Sized like the game's chat box at 1366x768 (its 9 lines and scrollbar); the
+                // page then places it over the box, or where it was left (src/chatpop).
+                Popout::Chat => tauri::WebviewWindowBuilder::new(&app, CHAT_POPOUT, tauri::WebviewUrl::App("chat-popout.html".into()))
+                    .title("Classic EXP Tracker chat")
+                    .inner_size(566.0, 150.0)
+                    .min_inner_size(220.0, 60.0)
+                    .resizable(true),
+            };
+            builder
                 .decorations(false)
-                .transparent(true)
                 .shadow(false)
                 .always_on_top(true)
+                // Hidden from the screen capture, so the readers see the game under it.
                 .content_protected(true)
                 .skip_taskbar(true)
                 .focused(false)
@@ -187,7 +222,7 @@ pub fn set_popout(app: tauri::AppHandle, open: bool) -> Result<(), AppError> {
         (false, Some(window)) => window.close().map_err(window_error)?,
         _ => {}
     }
-    log::info!("popout {}", if open { "opened" } else { "closed" });
+    log::info!("{popout:?} popout {}", if open { "opened" } else { "closed" });
     Ok(())
 }
 
@@ -346,6 +381,28 @@ pub fn dismiss_install_error(translator: TranslatorRef<'_>) {
     translator.dismiss();
 }
 
+/// Open a chat reader part's page (`source` false) or its files' page in the default browser.
+/// Only the addresses pinned in translator.rs can be opened: the page names a part, not a URL.
+#[tauri::command(async)]
+pub fn open_part_page(id: String, source: bool) -> Result<(), AppError> {
+    use windows::core::{w, HSTRING};
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    let url = Translator::page(&id, source).ok_or_else(|| AppError::NotFound(format!("chat reader part {id}")))?;
+    // ShellExecute reports success as a value above 32.
+    let result = unsafe { ShellExecuteW(None, w!("open"), &HSTRING::from(url), None, None, SW_SHOWNORMAL) };
+    if result.0 as usize <= 32 {
+        return Err(AppError::Window(format!("couldn't open {url} (ShellExecute {})", result.0 as usize)));
+    }
+    Ok(())
+}
+
+/// The chat lines read so far (the latest 200), oldest first.
+#[tauri::command]
+pub fn chat_lines(log: State<'_, crate::chat_reader::ChatLog>) -> Vec<crate::chat_reader::ChatLine> {
+    log.lines()
+}
+
 /// Remove the chat reader's files; the translator turns off.
 #[tauri::command(async)]
 pub fn remove_reader(state: AppStateRef<'_>, translator: TranslatorRef<'_>) -> Result<(), AppError> {
@@ -353,6 +410,7 @@ pub fn remove_reader(state: AppStateRef<'_>, translator: TranslatorRef<'_>) -> R
     if translator.enabled() {
         state.store.lock().expect("store lock poisoned").set_translator_enabled(false)?;
         translator.set_enabled(false)?;
+        state.capture.chat_enabled.store(false, Ordering::Release);
         log::info!("chat translator off: chat reader removed");
     }
     Ok(())
@@ -367,6 +425,7 @@ pub fn set_translator_enabled(state: AppStateRef<'_>, translator: TranslatorRef<
     }
     state.store.lock().expect("store lock poisoned").set_translator_enabled(on)?;
     translator.set_enabled(on)?;
+    state.capture.chat_enabled.store(on, Ordering::Release);
     log::info!("chat translator {}", if on { "on" } else { "off" });
     Ok(())
 }
@@ -413,6 +472,18 @@ pub async fn translate_reply(gemini: State<'_, Gemini>, text: String, language: 
     }
     let key = credential::load()?.ok_or_else(|| AppError::Translator("no Gemini key saved: add yours in Setup".into()))?;
     Ok(gemini.reply(&key, text, language).await?)
+}
+
+/// Translate a line read from the game's chat into English with the saved key (the user
+/// clicked Translate on it).
+#[tauri::command]
+pub async fn translate_line(gemini: State<'_, Gemini>, text: String) -> Result<Translation, AppError> {
+    let text = text.trim();
+    if text.is_empty() || text.chars().count() > MAX_REPLY_LEN {
+        return Err(AppError::Invalid(format!("a line is 1 to {MAX_REPLY_LEN} characters")));
+    }
+    let key = credential::load()?.ok_or_else(|| AppError::Translator("no Gemini key saved: add yours in Setup".into()))?;
+    Ok(gemini.to_english(&key, text).await?)
 }
 
 /// Keep an automatic snapshot for good (grinds::KEEP_AUTO_SECS no longer applies).

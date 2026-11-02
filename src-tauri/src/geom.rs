@@ -34,6 +34,8 @@ pub struct Boxes {
     pub inventory: Rect,
     /// The quickslot beside the chat, either layout (read::inventory::read_quickslot).
     pub quickslot: Rect,
+    /// The chat box at its tallest, its input bar and toggle button (read::chat).
+    pub chat: Rect,
     /// Where the inventory's and the quickslot's native pixels land in their boxes: the
     /// readers measure everything inside them in native pixels.
     pub inventory_at: Scale,
@@ -198,6 +200,7 @@ const NATIVE_BOXES: Boxes = Boxes {
     // quickslot, which covers the controller layout's fan and the keyboard layout's 4x2 keys.
     inventory: Rect { x: 1157, y: 0, w: 209, h: 289 },
     quickslot: Rect { x: 860, y: 600, w: 230, h: 100 },
+    chat: crate::read::chat::STRIP,
     inventory_at: Scale::NATIVE,
     quickslot_at: Scale::NATIVE,
 };
@@ -279,6 +282,7 @@ pub fn boxes_for(width: u32, height: u32, corner: Corner) -> Option<Boxes> {
         bar: scale(NATIVE_BOXES.bar),
         inventory: scale(inventory),
         quickslot: scale(NATIVE_BOXES.quickslot),
+        chat: scale(NATIVE_BOXES.chat),
         inventory_at: place(inventory),
         quickslot_at: place(NATIVE_BOXES.quickslot),
     })

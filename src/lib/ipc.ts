@@ -184,7 +184,9 @@ export const nameItem = (itemId: number, name: string) => call("name_item", z.nu
 /** Names a map; OCR never renames it after this. */
 export const renameMap = (mapId: number, name: string) => call("rename_map", z.null(), { mapId, name });
 /** Opens or closes the popout: the rates in a small window pinned above the game. */
-export const setPopout = (open: boolean) => call("set_popout", z.null(), { open });
+/** The two windows pinned above the game (commands::Popout). */
+export type Popout = "rates" | "chat";
+export const setPopout = (popout: Popout, open: boolean) => call("set_popout", z.null(), { popout, open });
 /** Ends the session and starts the live view afresh; saves nothing. */
 export const resetSession = () => call("reset_session", z.null());
 export const resetTotals = () => call("reset_totals", z.null());
@@ -209,6 +211,25 @@ export const onTick = (cb: (tick: Result<Tick, AppError>) => void) =>
   });
 
 
+/** A chat message as read (chat_reader.rs): the sender is empty on notices and crate
+ *  announcements; confidence is the reader's lowest for any character. */
+export const ChatLineSchema = z.object({
+  t: z.number().int(),
+  kind: z.string(),
+  channel: z.number().int().nullable(),
+  sender: z.string(),
+  text: z.string(),
+  confidence: z.number(),
+});
+export type ChatLine = z.infer<typeof ChatLineSchema>;
+
+export const chatLines = () => call("chat_lines", z.array(ChatLineSchema));
+export const onChatLine = (cb: (line: Result<ChatLine, AppError>) => void) =>
+  subscribe("chat-line", (payload) => {
+    const parsed = ChatLineSchema.safeParse(payload);
+    cb(parsed.success ? ok(parsed.data) : err({ kind: "ipc", message: `unexpected chat line: ${parsed.error.message}` }));
+  });
+
 /** The chat translator (translator.rs): on or off, and its chat reader's download (the
  *  one running, or the last one if it failed, with why). */
 export const TranslatorStatusSchema = z.object({
@@ -219,6 +240,26 @@ export const TranslatorStatusSchema = z.object({
   downloadBytes: count,
   job: z.object({ doneBytes: count, totalBytes: count, error: z.string().nullable() }).nullable(),
   dir: z.string(),
+  /** Each download, its pinned files and its pages (translator.rs PARTS). */
+  parts: z.array(
+    z.object({
+      id: z.string(),
+      homepage: z.string(),
+      sourcePage: z.string(),
+      installed: z.boolean(),
+      files: z.array(
+        z.object({
+          name: z.string(),
+          url: z.string(),
+          size: count,
+          sha256: z.string(),
+          license: z.string(),
+          /** The one file kept from a zip download, checked on its own. */
+          extract: z.object({ path: z.string(), size: count, sha256: z.string() }).nullable(),
+        }),
+      ),
+    }),
+  ),
 });
 export type TranslatorStatus = z.infer<typeof TranslatorStatusSchema>;
 
@@ -227,6 +268,8 @@ export const translatorStatus = () => call("translator_status", TranslatorStatus
 export const downloadReader = () => call("download_reader", z.null());
 export const cancelInstall = () => call("cancel_install", z.null());
 export const dismissInstallError = () => call("dismiss_install_error", z.null());
+/** Opens a chat reader part's page (or its files' page) in the browser; only pages pinned in translator.rs. */
+export const openPartPage = (id: string, source: boolean) => call("open_part_page", z.null(), { id, source });
 /** Deletes the chat reader's files; the translator turns off. */
 export const removeReader = () => call("remove_reader", z.null());
 /** On needs the chat reader downloaded. */
@@ -242,6 +285,9 @@ export const removeTranslatorKey = () => call("remove_translator_key", z.null())
 /** The user's reply, translated by Gemini into `language` (one of REPLY_LANGUAGES). */
 export const translateReply = (text: string, language: string) =>
   call("translate_reply", z.object({ text: z.string(), model: z.string() }), { text, language });
+
+/** Translate a line read from the game's chat into English, whatever its language (gemini.rs). */
+export const translateLine = (text: string) => call("translate_line", z.object({ text: z.string(), model: z.string() }), { text });
 
 /** Updates (updater.rs): checked 10 s after launch and hourly while `autoCheck`; `ready` is a
  *  newer version, downloaded and its signature checked, that installs on Restart. */
@@ -279,4 +325,7 @@ export const onUpdateStatus = (cb: (status: Result<UpdateStatus, AppError>) => v
   });
 
 /** The popout closed (its own ✕, or the app closing it). */
-export const onPopoutClosed = (cb: () => void) => subscribe("popout-closed", () => cb());
+export const onPopoutClosed = (cb: (popout: Popout) => void) =>
+  subscribe("popout-closed", (payload) => {
+    if (payload === "rates" || payload === "chat") cb(payload);
+  });

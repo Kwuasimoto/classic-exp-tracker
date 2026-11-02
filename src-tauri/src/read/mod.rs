@@ -1,5 +1,7 @@
 //! Pure screen readers: in-memory crop in, parsed value out.
 
+pub mod chat;
+pub mod chat_ocr;
 pub mod count;
 pub mod exp;
 pub mod font;

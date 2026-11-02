@@ -1,4 +1,5 @@
 pub mod capture;
+mod chat_reader;
 mod commands;
 mod credential;
 mod error;
@@ -20,7 +21,7 @@ use std::sync::Arc;
 
 use tauri::{Emitter, Manager};
 
-/// Sent to the main window when the popout closes.
+/// Sent to the main window when a popout closes, with which one (commands::Popout).
 const POPOUT_CLOSED_EVENT: &str = "popout-closed";
 
 /// Current UTC time in unix seconds.
@@ -104,9 +105,17 @@ pub fn run() {
                 state.store.lock().expect("store lock poisoned").set_translator_enabled(false)?;
                 log::info!("chat translator off: chat reader not downloaded");
             }
+            state.capture.chat_enabled.store(translator.enabled(), std::sync::atomic::Ordering::Release);
+            // The chat reader's thread, fed by the pipeline only while the translator is on.
+            let chat = chat_reader::spawn(
+                app.handle().clone(),
+                translator.part_dir(&translator::ENGINE).join("onnxruntime.dll"),
+                translator.part_dir(&translator::READER_LATIN),
+            )?;
+            app.manage(chat_reader::ChatLog::default());
             app.manage(Arc::new(translator));
             app.manage(gemini::Gemini::new()?);
-            pipeline::spawn(app.handle().clone(), state)?;
+            pipeline::spawn(app.handle().clone(), state, chat)?;
             app.manage(updater::Updates::new(update_checks));
             updater::spawn(app.handle().clone());
             // The window starts hidden (tauri.conf.json) so it doesn't flash on the game's monitor.
@@ -117,8 +126,8 @@ pub fn run() {
             window.show()?;
             Ok(())
         })
-        // Closing the main window closes the popout too, so the app exits; the main window
-        // hears when the popout closes, from its own ✕ or this.
+        // Closing the main window closes the popouts too, so the app exits; the main window
+        // hears when a popout closes, from its own ✕ or this.
         .on_window_event(|window, event| {
             if !matches!(event, tauri::WindowEvent::Destroyed) {
                 return;
@@ -126,18 +135,21 @@ pub fn run() {
             let app = window.app_handle();
             match window.label() {
                 "main" => {
-                    if let Some(popout) = app.get_webview_window(commands::POPOUT)
-                        && let Err(e) = popout.close()
+                    for label in [commands::POPOUT, commands::CHAT_POPOUT] {
+                        if let Some(popout) = app.get_webview_window(label)
+                            && let Err(e) = popout.close()
+                        {
+                            log::warn!("could not close the {label} with the main window: {e}");
+                        }
+                    }
+                }
+                label => {
+                    if let Some(popout) = commands::Popout::from_label(label)
+                        && let Err(e) = app.emit_to("main", POPOUT_CLOSED_EVENT, popout)
                     {
-                        log::warn!("could not close the popout with the main window: {e}");
+                        log::warn!("could not tell the main window the {label} closed: {e}");
                     }
                 }
-                commands::POPOUT => {
-                    if let Err(e) = app.emit_to("main", POPOUT_CLOSED_EVENT, ()) {
-                        log::warn!("could not tell the main window the popout closed: {e}");
-                    }
-                }
-                _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -169,6 +181,9 @@ pub fn run() {
             commands::dismiss_install_error,
             commands::remove_reader,
             commands::set_translator_enabled,
+            commands::open_part_page,
+            commands::chat_lines,
+            commands::translate_line,
             commands::translator_key_saved,
             commands::save_translator_key,
             commands::remove_translator_key,

@@ -24,7 +24,7 @@ tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 windows-capture = "2.0.1"
-windows = { version = "0.62.2", features = ["Media_Ocr", "Graphics_Imaging", "Storage_Streams", "Foundation", "Globalization", "Win32_Security", "Win32_Security_Credentials"] }
+windows = { version = "0.62.2", features = ["Media_Ocr", "Graphics_Imaging", "Storage_Streams", "Foundation", "Globalization", "Win32_Security", "Win32_Security_Credentials", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 thiserror = "2.0.21"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
@@ -36,6 +36,10 @@ reqwest = { version = "0.13.5", default-features = false, features = ["blocking"
 sha2 = "0.10.9"
 # Comparing versions for the patch notes between the running version and the newest (updater.rs).
 semver = "1.0.28"
+# The chat reader's OCR: ONNX Runtime loaded from the DLL Setup downloads (translator.rs), and
+# that DLL taken out of Microsoft's package. ort is pinned: its 2.0 API is still a release candidate.
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "load-dynamic", "api-31"] }
+zip = { version = "9.2.1", default-features = false, features = ["deflate-flate2"] }
 tokio = { version = "1", features = ["time"] }
 
 

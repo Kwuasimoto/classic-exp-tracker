@@ -1,0 +1,38 @@
+/* The chat log (ChatLog.tsx), the same in the main window and the chat popout: lines read
+   from the game's chat, talk first, with their English hanging under them. Colours are the
+   app's tokens (App.css, chatpop.css). */
+.chat-log { position: relative; overflow-y: auto; }
+/* Lines read from the game's chat, talk first: people talking large, ads small and quiet. */
+.chat-talk { margin: 0; padding: 4px 0; overflow-wrap: anywhere; }
+.chat-talk .chat-sender { display: block; font-size: 14px; }
+.chat-talk .chat-said { display: block; font-size: 16px; line-height: 1.4; }
+.chat-party .chat-sender { color: #ff9900; }
+.chat-ad { display: flex; gap: 6px; align-items: baseline; margin: 0; padding: 1px 0 1px 8px; border-left: 2px solid #5a5a60; color: #9a9aa2; font-size: 12.5px; line-height: 1.45; }
+.chat-ad .chat-sender { flex: none; color: #c4c4c8; font-weight: 600; }
+.chat-ad .chat-channel { flex: none; color: #6f6f76; font-size: 11px; }
+.chat-ad .chat-said { min-width: 0; overflow-wrap: anywhere; }
+.chat-item { color: #c9a63a; }
+.chat-crate { border-left-color: #c0503f; }
+.chat-megaphone-pink { border-left-color: #dba8be; }
+.chat-megaphone-gold { border-left-color: #e4b407; }
+.chat-megaphone-teal { border-left-color: #5cdac8; }
+.chat-megaphone-channel { border-left-color: #afbcc2; }
+.chat-notice { margin: 8px 0; padding: 6px 10px; border-radius: 4px; background: rgba(255, 255, 0, 0.06); color: #e6e46a; font-size: 12.5px; overflow-wrap: anywhere; }
+/* Each line with its English translation under it; its Translate button shows on hover
+   (or keyboard focus), half see-through until the pointer is on it. */
+.chat-entry { position: relative; }
+.chat-entry + .chat-entry:has(.chat-talk), .chat-entry:has(.chat-talk) + .chat-entry { margin-top: 10px; }
+.chat-translate { position: absolute; top: 0; right: 0; padding: 2px 10px; border: 0; border-radius: 4px; background: var(--text); color: #000; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; opacity: 0; pointer-events: none; transition: opacity 0.12s; }
+.chat-entry:hover .chat-translate, .chat-translate:focus-visible, .chat-entry.busy .chat-translate { opacity: 0.55; pointer-events: auto; }
+.chat-translate:hover:not(:disabled), .chat-translate:focus-visible { opacity: 1; }
+.chat-translate:disabled { cursor: default; }
+@media (prefers-reduced-motion: reduce) { .chat-translate { transition: none; } }
+/* A translation hangs off its line like a tree view: a green line comes down from the
+   message, turns right and points at the English. */
+.chat-english { position: relative; margin: 0 0 6px; padding: 3px 0 0 34px; color: var(--text); font-size: 15px; line-height: 1.4; overflow-wrap: anywhere; user-select: text; }
+.chat-english::before { content: ""; position: absolute; left: 8px; top: -1px; width: 13px; height: 13px; border-left: 2px solid var(--ok); border-bottom: 2px solid var(--ok); border-bottom-left-radius: 3px; }
+.chat-english::after { content: ""; position: absolute; left: 21px; top: 8px; border: 5px solid transparent; border-right: 0; border-left: 7px solid var(--ok); }
+.chat-english-error { margin: 2px 0 6px; padding-left: 10px; color: var(--warn); font-size: 12.5px; }
+/* Shown while the user has scrolled up: sticks to the log's bottom edge. */
+.chat-jump { position: sticky; bottom: 0; display: flex; justify-content: center; padding-top: 6px; pointer-events: none; }
+.chat-jump button { pointer-events: auto; padding: 3px 14px; border: 0; border-radius: 14px; background: var(--text); color: #000; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }

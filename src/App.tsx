@@ -4,10 +4,11 @@ import "@fontsource/titillium-web/700.css";
 import "@fontsource/titillium-web/900.css";
 import "./App.css";
 import { LanguagePicker } from "./components/LanguagePicker";
+import { PinMenu } from "./components/PinMenu";
 import { ReaderStatus } from "./components/ReaderStatus";
 import { TitleBar } from "./components/TitleBar";
 import { useMessages } from "./lib/i18n";
-import { onPopoutClosed, setPopout } from "./lib/ipc";
+import { onPopoutClosed, setPopout, type Popout } from "./lib/ipc";
 import { saveLayout, savedLayout, type Layout } from "./lib/layout";
 import { savePopoutOpen, savedPopoutOpen } from "./lib/popout";
 import { compressedSize, currentSize, resizeWindow, saveExpandedSize, savedExpandedSize, type WindowSize } from "./lib/windowSize";
@@ -28,8 +29,6 @@ const TABS: ReadonlyArray<{ id: Tab; icon: ReactNode }> = [
 ];
 // Arrows pointing in (compress) and out (expand).
 const COMPRESS = <><polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" /><line x1="14" y1="10" x2="21" y2="3" /><line x1="3" y1="21" x2="10" y2="14" /></>;
-// A pushpin: the popout pinned above the game.
-const PIN = <><line x1="12" y1="17" x2="12" y2="22" /><path d="M9 3h6l-1 6 3 3v2H7v-2l3-3z" /></>;
 const EXPAND = <><polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" /><line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" /></>;
 
 export default function App() {
@@ -40,7 +39,7 @@ export default function App() {
   const { tick, error } = useTick();
   const root = useRef<HTMLDivElement>(null);
   const [windowError, setWindowError] = useState<string | null>(null);
-  const [popoutOpen, setPopoutOpen] = useState(false);
+  const [popouts, setPopouts] = useState<Record<Popout, boolean>>({ rates: false, chat: false });
   const status = <ReaderStatus status={tick?.status ?? null} error={error} />;
 
   const resize = (size: WindowSize) =>
@@ -54,21 +53,24 @@ export default function App() {
     saveLayout(next);
   };
 
-  const openPopout = (open: boolean) =>
-    void setPopout(open).then((res) => {
+  const openPopout = (popout: Popout, open: boolean) =>
+    void setPopout(popout, open).then((res) => {
       if (!res.success) return setWindowError(`popout: ${res.error.message}`);
-      setPopoutOpen(open);
-      savePopoutOpen(open);
+      setPopouts((now) => ({ ...now, [popout]: open }));
+      savePopoutOpen(popout, open);
     });
+  const togglePopout = (popout: Popout) => openPopout(popout, !popouts[popout]);
 
-  // The popout reopens with the app if it was open; its own ✕ closes it.
+  // Each popout reopens with the app if it was open; its own ✕ closes it.
   useEffect(() => {
-    if (savedPopoutOpen()) openPopout(true);
+    for (const popout of ["rates", "chat"] as const) {
+      if (savedPopoutOpen(popout)) openPopout(popout, true);
+    }
     let disposed = false;
     let unlisten: (() => void) | null = null;
-    void onPopoutClosed(() => {
-      setPopoutOpen(false);
-      savePopoutOpen(false);
+    void onPopoutClosed((popout) => {
+      setPopouts((now) => ({ ...now, [popout]: false }));
+      savePopoutOpen(popout, false);
     }).then((res) => {
       if (!res.success) return setWindowError(`popout: ${res.error.message}`);
       if (disposed) res.data();
@@ -106,15 +108,7 @@ export default function App() {
             </button>
           ))}
           <span style={{ flex: 1 }} />
-          <button
-            className={popoutOpen ? "rail-btn open" : "rail-btn"}
-            aria-label={m.app.pin}
-            aria-pressed={popoutOpen}
-            title={popoutOpen ? m.app.pinOpenTitle : m.app.pinClosedTitle}
-            onClick={() => openPopout(!popoutOpen)}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" {...ICON}>{PIN}</svg>
-          </button>
+          <PinMenu open={popouts} onToggle={togglePopout} />
           <button
             className="rail-btn"
             aria-label={m.app.compressed}

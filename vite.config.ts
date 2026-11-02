@@ -8,10 +8,11 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(() => ({
   plugins: [react()],
 
-  // Two pages: the app (index.html) and the pinned popout (popout.html, commands::set_popout).
+  // Three pages: the app (index.html) and the two pinned popouts (popout.html for the rates,
+  // chat-popout.html for the chat; commands::set_popout).
   build: {
     rollupOptions: {
-      input: { main: "index.html", popout: "popout.html" },
+      input: { main: "index.html", popout: "popout.html", chatPopout: "chat-popout.html" },
     },
   },
 

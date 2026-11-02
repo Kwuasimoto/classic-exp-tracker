@@ -1,6 +1,7 @@
 //! Pure EXP/session state machine and map debouncing: samples in, effects out.
 //! No I/O apart from log lines explaining its decisions.
 
+pub mod chat;
 mod confirm;
 mod level;
 pub mod loot;
