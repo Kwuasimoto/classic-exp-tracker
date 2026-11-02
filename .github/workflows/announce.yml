@@ -30,7 +30,7 @@ jobs:
         with:
           ref: ${{ env.VERSION }}
 
-      - name: Post to #exp-tracker
+      - name: 'Post to #exp-tracker'
         shell: pwsh
         env:
           WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
