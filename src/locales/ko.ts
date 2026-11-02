@@ -33,6 +33,9 @@ export const ko: Messages = {
     installFailed: (error: string) => `업데이트를 설치할 수 없습니다: ${error}`,
     checkNow: "지금 확인",
     hourly: "1시간마다 업데이트 확인",
+    notesTitle: "변경 사항",
+    notesSections: { new: "새 기능", convenience: "편의성", technical: "정확도와 성능", fixes: "수정" },
+    seeChangesTitle: "변경 사항을 보고 업데이트",
   },
   status: {
     ok: "정상 인식 중",

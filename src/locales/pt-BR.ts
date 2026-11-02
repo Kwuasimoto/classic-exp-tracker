@@ -33,6 +33,9 @@ export const ptBR: Messages = {
     installFailed: (error: string) => `Não foi possível instalar a atualização: ${error}`,
     checkNow: "Procurar agora",
     hourly: "Procurar atualizações a cada hora",
+    notesTitle: "O que mudou",
+    notesSections: { new: "Novidades", convenience: "Conveniência", technical: "Precisão e desempenho", fixes: "Correções" },
+    seeChangesTitle: "Veja o que mudou e depois atualize",
   },
   status: {
     ok: "Lendo bem",

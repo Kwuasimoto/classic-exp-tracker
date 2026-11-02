@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { formatClock } from "../lib/format";
 import { useMessages } from "../lib/i18n";
-import { checkForUpdates, installUpdate, setUpdateChecks } from "../lib/ipc";
+import { checkForUpdates, installUpdate, setUpdateChecks, type UpdateStatus } from "../lib/ipc";
 import { useUpdates } from "../lib/useUpdates";
 
 /** The title bar's version, which opens what updates stand at (Check now, and the hourly
- *  checks on or off), and once a newer version is out, its Update button: only that click
- *  downloads, checks and installs it. The panel closes on a click outside or Escape. */
+ *  checks on or off), and once a newer version is out, what changed in every version up to it
+ *  (the patch notes) and its Update button: only that click downloads, checks and installs it.
+ *  The orange chip opens the panel, so the changes are read before updating. The panel closes
+ *  on a click outside or Escape. */
 export function Updates({ version }: { version: string }) {
   const m = useMessages();
   const { updates, error, take } = useUpdates();
@@ -59,9 +61,10 @@ export function Updates({ version }: { version: string }) {
       {updates?.available && (
         <button
           className="update-ready"
-          title={updates.installing ? m.updates.installing : m.updates.restartTitle}
+          title={updates.installing ? m.updates.installing : m.updates.seeChangesTitle}
+          aria-expanded={open}
           disabled={updates.installing}
-          onClick={install}
+          onClick={() => setOpen(true)}
         >
           {updates.installing && <span className="spinner" aria-hidden="true" />}
           {updates.installing ? m.updates.updating : m.updates.updateTo(updates.available)}
@@ -71,6 +74,7 @@ export function Updates({ version }: { version: string }) {
         <div className="flyout update-panel" role="dialog" aria-label={m.updates.title}>
           {line && <p className={updates?.error && !updates.checking && !updates.installing && !updates.available ? "error" : undefined} role="status">{line}</p>}
           {problem && <p className="error">{problem}</p>}
+          {updates?.available && updates.notes.length > 0 && <PatchNotes notes={updates.notes} />}
           <div className="update-actions">
             {updates?.available && (
               <button className="btn small primary" title={m.updates.restartTitle} disabled={updates.installing} onClick={install}>
@@ -88,5 +92,36 @@ export function Updates({ version }: { version: string }) {
         </div>
       )}
     </div>
+  );
+}
+
+/** The patch notes of each version between the running one and the newest, newest first, in
+ *  sections; the notes themselves are written in English. */
+function PatchNotes({ notes }: { notes: UpdateStatus["notes"] }) {
+  const u = useMessages().updates;
+  const sections = ["new", "convenience", "technical", "fixes"] as const;
+  return (
+    <section className="patch-notes" aria-label={u.notesTitle}>
+      <h2>{u.notesTitle}</h2>
+      {notes.map((n) => (
+        <article key={n.version} className="patch-version">
+          <h3>
+            v{n.version} <span className="caption">{n.date}</span>
+          </h3>
+          {sections
+            .filter((key) => n[key].length > 0)
+            .map((key) => (
+              <div key={key} className="patch-section">
+                <h4>{u.notesSections[key]}</h4>
+                <ul lang="en">
+                  {n[key].map((item, i) => (
+                    <li key={i}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+        </article>
+      ))}
+    </section>
   );
 }

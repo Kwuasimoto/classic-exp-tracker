@@ -45,6 +45,30 @@ jobs:
       # The reader and tracker tests (they read the fixtures in src-tauri/tests/fixtures).
       - run: cargo test --manifest-path src-tauri/Cargo.toml --locked
 
+      # The patch notes (patch-notes.json): this version must have exactly one entry. The last 15
+      # versions' notes, as JSON, are latest.json's notes, for the app to show what changed between
+      # the user's version and this one (updater.rs); this version's, as text, start the release page.
+      - id: notes
+        name: Patch notes
+        shell: pwsh
+        run: |
+          $version = (Get-Content -Raw src-tauri/tauri.conf.json | ConvertFrom-Json).version
+          $all = Get-Content -Raw patch-notes.json | ConvertFrom-Json
+          $this = @($all.versions | Where-Object { $_.version -eq $version })
+          if ($this.Count -ne 1) { throw "patch-notes.json needs exactly one entry for $version, found $($this.Count)" }
+          if ($all.versions[0].version -ne $version) { throw "patch-notes.json's newest entry is $($all.versions[0].version), not $version" }
+          $json = ConvertTo-Json -InputObject ([ordered]@{ versions = @($all.versions | Select-Object -First 15) }) -Depth 6 -Compress
+          Set-Content -Path patch-notes.min.json -Value $json -Encoding utf8NoBOM -NoNewline
+          $delimiter = "NOTES_$([guid]::NewGuid().ToString('N'))"
+          "json<<$delimiter`n$json`n$delimiter" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          $sections = [ordered]@{ new = 'New'; convenience = 'Convenience'; technical = 'Accuracy & performance'; fixes = 'Fixes' }
+          $md = @("## What's new in v$version", '')
+          foreach ($key in $sections.Keys) {
+            $items = @($this[0].$key | Where-Object { $_ })
+            if ($items.Count -gt 0) { $md += "### $($sections[$key])"; $md += $items | ForEach-Object { "- $_" }; $md += '' }
+          }
+          Set-Content -Path patch-notes.md -Value ($md -join "`n") -Encoding utf8NoBOM
+
       - id: tauri
         uses: tauri-apps/tauri-action@v1
         env:
@@ -54,7 +78,7 @@ jobs:
         with:
           tagName: v__VERSION__
           releaseName: Classic EXP Tracker v__VERSION__
-          releaseBody: Release notes are added once the build is attested.
+          releaseBody: ${{ steps.notes.outputs.json }}
           releaseDraft: true
           prerelease: false
 
@@ -97,6 +121,7 @@ jobs:
           if ((Get-Content -Raw "uploaded-$name.sig").Trim() -ne $signature) { throw "uploaded $name.sig isn't the signature built here" }
           $latest = Get-Content -Raw uploaded-latest.json | ConvertFrom-Json
           if ($latest.version -ne $env:VERSION) { throw "latest.json announces $($latest.version), building $env:VERSION" }
+          if ($latest.notes -ne (Get-Content -Raw patch-notes.min.json)) { throw "latest.json's notes aren't the patch notes" }
           $windows = @($latest.platforms.PSObject.Properties | Where-Object Name -like 'windows-*')
           if ($windows.Count -eq 0) { throw "latest.json has no Windows entry" }
           foreach ($entry in $windows) {
@@ -106,7 +131,7 @@ jobs:
           }
           $run = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
           $commit = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/commit/$env:GITHUB_SHA"
-          $body = @"
+          $body = (Get-Content -Raw patch-notes.md) + "`n" + @"
           Windows 10 (2004 or later) or 11, 64-bit. Download ``$name`` below and run it; see the [README](https://github.com/$env:GITHUB_REPOSITORY#install) for setup. The installer isn't code-signed, so SmartScreen may warn: choose **More info**, then **Run anyway**.
 
           ### Built from this source

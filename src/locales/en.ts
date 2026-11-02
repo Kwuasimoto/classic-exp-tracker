@@ -32,6 +32,9 @@ export const en = {
     installFailed: (error: string) => `Couldn't install the update: ${error}`,
     checkNow: "Check now",
     hourly: "Check for updates every hour",
+    notesTitle: "What's changed",
+    notesSections: { new: "New", convenience: "Convenience", technical: "Accuracy & performance", fixes: "Fixes" },
+    seeChangesTitle: "See what's changed, then update",
   },
   status: {
     ok: "Reading OK",

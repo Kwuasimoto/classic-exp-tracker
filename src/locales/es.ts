@@ -33,6 +33,9 @@ export const es: Messages = {
     installFailed: (error: string) => `No se pudo instalar la actualización: ${error}`,
     checkNow: "Buscar ahora",
     hourly: "Buscar actualizaciones cada hora",
+    notesTitle: "Qué ha cambiado",
+    notesSections: { new: "Novedades", convenience: "Comodidad", technical: "Precisión y rendimiento", fixes: "Correcciones" },
+    seeChangesTitle: "Mira qué ha cambiado y luego actualiza",
   },
   status: {
     ok: "Leyendo bien",

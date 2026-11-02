@@ -250,6 +250,18 @@ export const UpdateStatusSchema = z.object({
   checking: z.boolean(),
   checkedAt: z.number().int().nullable(),
   available: z.string().nullable(),
+  /** What changed in each version after the running one, up to `available`, newest first
+   *  (updater.rs, from patch-notes.json); the notes are in English. */
+  notes: z.array(
+    z.object({
+      version: z.string(),
+      date: z.string(),
+      new: z.array(z.string()),
+      convenience: z.array(z.string()),
+      technical: z.array(z.string()),
+      fixes: z.array(z.string()),
+    }),
+  ),
   installing: z.boolean(),
   error: z.string().nullable(),
 });

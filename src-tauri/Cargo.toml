@@ -1,6 +1,6 @@
 [package]
 name = "classic-exp-tracker"
-version = "0.11.4"
+version = "0.12.0"
 description = "MapleStory Classic World EXP tracker"
 authors = ["Kwuasimoto"]
 license = "MIT"
@@ -34,6 +34,8 @@ tauri-plugin-single-instance = "2"
 # Only for the chat translator's downloads (translator.rs), with Windows' own TLS.
 reqwest = { version = "0.13.5", default-features = false, features = ["blocking", "native-tls", "system-proxy"] }
 sha2 = "0.10.9"
+# Comparing versions for the patch notes between the running version and the newest (updater.rs).
+semver = "1.0.28"
 tokio = { version = "1", features = ["time"] }
 
 

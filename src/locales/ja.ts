@@ -33,6 +33,9 @@ export const ja: Messages = {
     installFailed: (error: string) => `アップデートをインストールできませんでした: ${error}`,
     checkNow: "今すぐ確認",
     hourly: "1時間ごとにアップデートを確認",
+    notesTitle: "変更点",
+    notesSections: { new: "新機能", convenience: "使いやすさ", technical: "精度とパフォーマンス", fixes: "修正" },
+    seeChangesTitle: "変更点を見てから更新",
   },
   status: {
     ok: "読み取り中",

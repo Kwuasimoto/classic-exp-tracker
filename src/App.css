@@ -88,6 +88,15 @@ button, input, select { font: inherit; color: inherit; }
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
 .update-panel { left: 0; top: calc(100% + 6px); bottom: auto; width: 280px; gap: 10px; padding: 12px; }
 .update-panel p { margin: 0; font-size: 13px; line-height: 1.4; }
+.update-panel:has(.patch-notes) { width: 380px; }
+/* The patch notes between the running version and the newest: scrolls inside the panel. */
+.patch-notes { max-height: 340px; overflow-y: auto; padding: 2px 4px 2px 0; border-top: 1px solid var(--line); scrollbar-width: thin; }
+.patch-notes h2 { margin: 10px 0 2px; font-size: 14px; }
+.patch-version h3 { margin: 10px 0 4px; font-size: 15px; }
+.patch-version h3 .caption { margin-left: 6px; font-weight: 400; }
+.patch-section h4 { margin: 8px 0 2px; color: var(--accent); font-size: 12.5px; font-weight: 700; }
+.patch-section ul { margin: 0; padding-left: 18px; }
+.patch-section li { margin: 2px 0; font-size: 13px; line-height: 1.4; color: #dcdce0; }
 .update-actions { display: flex; gap: 8px; }
 .update-hourly { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #c8c8cc; cursor: pointer; }
 .window-controls { margin-left: auto; display: flex; height: 100%; }

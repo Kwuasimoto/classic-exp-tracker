@@ -3,11 +3,14 @@
 //! A check fetches only the release's latest.json. Nothing else is downloaded until the user clicks
 //! Update: then the installer is downloaded, its signature checked against the public key built
 //! into the app, and installed, in that order. Never on its own, so a grind is never cut off.
+//!
+//! latest.json's notes are the patch notes (patch-notes.json, put there by the Release workflow):
+//! the user sees what changed in every version between theirs and the newest before updating.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
@@ -29,11 +32,69 @@ pub struct UpdateStatus {
     pub checked_at: Option<i64>,
     /// A newer version on GitHub, not downloaded until the user clicks Update.
     pub available: Option<String>,
+    /// What changed in each version after the running one, up to `available`, newest first;
+    /// empty when its release has no patch notes (before 0.12.0).
+    pub notes: Vec<VersionNotes>,
     /// Downloading and installing it (the user clicked Update).
     pub installing: bool,
     /// Why the last check failed (offline, GitHub unreachable, a bad signature); the next check
     /// that gets through clears it.
     pub error: Option<String>,
+}
+
+/// One version's patch notes; each section a list of short paragraphs.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionNotes {
+    pub version: String,
+    pub date: String,
+    #[serde(default)]
+    pub new: Vec<String>,
+    #[serde(default)]
+    pub convenience: Vec<String>,
+    #[serde(default)]
+    pub technical: Vec<String>,
+    #[serde(default)]
+    pub fixes: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct PatchNotes {
+    versions: Vec<VersionNotes>,
+}
+
+/// latest.json isn't covered by the update's signature: its notes are only shown, as plain
+/// text, and these bound how much of them is.
+const MAX_VERSIONS: usize = 15;
+const MAX_ITEMS: usize = 30;
+const MAX_ITEM_CHARS: usize = 600;
+
+/// The notes of each version after `current`, up to and including `latest`, newest first.
+/// Release notes that aren't patch notes (releases before 0.12.0), and entries that aren't
+/// versions, give none.
+pub fn notes_between(body: Option<&str>, current: &str, latest: &str) -> Vec<VersionNotes> {
+    let (Ok(current), Ok(latest)) = (semver::Version::parse(current), semver::Version::parse(latest)) else { return Vec::new() };
+    let Some(Ok(notes)) = body.map(serde_json::from_str::<PatchNotes>) else { return Vec::new() };
+    let mut between: Vec<(semver::Version, VersionNotes)> = notes
+        .versions
+        .into_iter()
+        .filter_map(|n| semver::Version::parse(&n.version).ok().map(|v| (v, n)))
+        .filter(|(v, _)| *v > current && *v <= latest)
+        .collect();
+    between.sort_by(|a, b| b.0.cmp(&a.0));
+    let trim = |items: Vec<String>| -> Vec<String> { items.into_iter().take(MAX_ITEMS).map(|i| i.chars().take(MAX_ITEM_CHARS).collect()).collect() };
+    between
+        .into_iter()
+        .take(MAX_VERSIONS)
+        .map(|(_, n)| VersionNotes {
+            date: n.date.chars().take(20).collect(),
+            new: trim(n.new),
+            convenience: trim(n.convenience),
+            technical: trim(n.technical),
+            fixes: trim(n.fixes),
+            version: n.version,
+        })
+        .collect()
 }
 
 pub struct Updates {
@@ -112,9 +173,13 @@ async fn find(app: &AppHandle, updates: &Updates) -> Result<(), tauri_plugin_upd
         log::info!("update {} available (running {})", update.version, update.current_version);
     }
     let version = update.as_ref().map(|u| u.version.clone());
+    let notes = update.as_ref().map_or_else(Vec::new, |u| notes_between(u.body.as_deref(), &u.current_version, &u.version));
     // None clears one found earlier, if that release was taken down.
     *updates.available.lock().expect("update lock poisoned") = update;
-    updates.change(app, |s| s.available = version);
+    updates.change(app, |s| {
+        s.available = version;
+        s.notes = notes;
+    });
     Ok(())
 }
 
@@ -142,4 +207,28 @@ pub async fn install(app: &AppHandle) -> Result<(), AppError> {
         return Err(e.into());
     }
     app.restart()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shows_the_notes_between_the_running_version_and_the_newest() {
+        let body = r#"{"versions":[
+            {"version":"0.14.0","date":"2026-12-01","new":["c"]},
+            {"version":"0.13.0","date":"2026-11-20","technical":["b"],"fixes":["b2"]},
+            {"version":"0.12.0","date":"2026-11-02","new":["a"]}]}"#;
+        let versions = |notes: Vec<VersionNotes>| notes.into_iter().map(|n| n.version).collect::<Vec<_>>();
+        assert_eq!(versions(notes_between(Some(body), "0.12.0", "0.14.0")), ["0.14.0", "0.13.0"]);
+        assert_eq!(versions(notes_between(Some(body), "0.11.4", "0.12.0")), ["0.12.0"]);
+        let thirteen = &notes_between(Some(body), "0.12.0", "0.13.0")[0];
+        assert_eq!((thirteen.technical.as_slice(), thirteen.fixes.as_slice(), thirteen.new.len()), (&["b".to_string()][..], &["b2".to_string()][..], 0));
+        // Releases before patch notes had a plain sentence there.
+        assert!(notes_between(Some("Release notes are added once the build is attested."), "0.11.3", "0.11.4").is_empty());
+        assert!(notes_between(None, "0.12.0", "0.13.0").is_empty());
+        // Bounded: a long item is cut.
+        let long = format!(r#"{{"versions":[{{"version":"0.13.0","date":"x","new":["{}"]}}]}}"#, "a".repeat(5000));
+        assert_eq!(notes_between(Some(&long), "0.12.0", "0.13.0")[0].new[0].len(), MAX_ITEM_CHARS);
+    }
 }

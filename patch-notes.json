@@ -1,0 +1,15 @@
+{
+  "$comment": "What changed in each version, newest first. Every release needs an entry for its version (the Release workflow fails without one). The last 15 versions' notes go into the release's latest.json, so the app can show everything that changed between the user's version and the newest (src-tauri/src/updater.rs); this version's also go on its release page. Sections, each optional: new (features), convenience (easier or quicker to use), technical (accuracy and performance), fixes.",
+  "versions": [
+    {
+      "version": "0.12.0",
+      "date": "2026-11-02",
+      "new": [
+        "Patch notes: when an update is ready, click the version in the title bar to see what changed in every version between yours and the newest, before you update."
+      ],
+      "convenience": [
+        "Each release's notes are also on its GitHub release page."
+      ]
+    }
+  ]
+}

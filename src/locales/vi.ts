@@ -33,6 +33,9 @@ export const vi: Messages = {
     installFailed: (error: string) => `Không cài được bản cập nhật: ${error}`,
     checkNow: "Kiểm tra ngay",
     hourly: "Kiểm tra cập nhật mỗi giờ",
+    notesTitle: "Những gì đã thay đổi",
+    notesSections: { new: "Mới", convenience: "Tiện lợi", technical: "Độ chính xác và hiệu năng", fixes: "Sửa lỗi" },
+    seeChangesTitle: "Xem những gì đã thay đổi rồi cập nhật",
   },
   status: {
     ok: "Đang đọc tốt",

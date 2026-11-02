@@ -30,7 +30,7 @@ flowchart LR
 
 Windows 10 (2004+) or 11, 64-bit. No admin rights needed.
 
-**Updates:** the app checks for a new release 10 seconds after it starts and then every hour, and shows **Update to v…** in the title bar when there is one. A check fetches only the release's version file: the new version is downloaded, its signature checked, and installed only when you click that, and the app never restarts by itself. Click the version number in the title bar to check now, or to turn the hourly checks off. Versions before the first one with updates (0.10.0 and older) need this one installed by hand.
+**Updates:** the app checks for a new release 10 seconds after it starts and then every hour, and shows **Update to v…** in the title bar when there is one. Clicking it shows what changed in every version between yours and the new one (the patch notes, kept in [`patch-notes.json`](patch-notes.json)), with the **Update** button under them. A check fetches only the release's version file: the new version is downloaded, its signature checked, and installed only when you click **Update**, and the app never restarts by itself. Click the version number to check now, or to turn the hourly checks off. Versions before the first one with updates (0.10.0 and older) need this one installed by hand.
 
 ## Set up
 

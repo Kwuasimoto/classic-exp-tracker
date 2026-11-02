@@ -33,6 +33,9 @@ export const zhHans: Messages = {
     installFailed: (error: string) => `无法安装更新：${error}`,
     checkNow: "立即检查",
     hourly: "每小时检查更新",
+    notesTitle: "更新内容",
+    notesSections: { new: "新功能", convenience: "便利性", technical: "准确度与性能", fixes: "修复" },
+    seeChangesTitle: "查看更新内容后再更新",
   },
   status: {
     ok: "读取正常",

@@ -33,6 +33,9 @@ export const th: Messages = {
     installFailed: (error: string) => `ติดตั้งอัปเดตไม่ได้: ${error}`,
     checkNow: "ตรวจตอนนี้",
     hourly: "ตรวจหาอัปเดตทุกชั่วโมง",
+    notesTitle: "สิ่งที่เปลี่ยนไป",
+    notesSections: { new: "ใหม่", convenience: "ความสะดวก", technical: "ความแม่นยำและประสิทธิภาพ", fixes: "การแก้ไข" },
+    seeChangesTitle: "ดูสิ่งที่เปลี่ยนไป แล้วอัปเดต",
   },
   status: {
     ok: "อ่านได้ปกติ",
