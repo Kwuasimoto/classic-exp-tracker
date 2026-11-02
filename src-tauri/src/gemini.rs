@@ -25,8 +25,10 @@ use serde::{Deserialize, Serialize};
 pub const MODELS: [&str; 3] = ["gemini-3-flash-preview", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"];
 
 /// What replies can be translated into: the app's id for each, and its English name for the prompt.
-pub const LANGUAGES: [(&str, &str); 6] = [
+/// Pinyin is as players type it: plain letters, no tone marks.
+pub const LANGUAGES: [(&str, &str); 7] = [
     ("zh-hans", "Simplified Chinese"),
+    ("zh-pinyin", "Mandarin Chinese written in pinyin with plain letters, no tone marks and no Chinese characters"),
     ("ko", "Korean"),
     ("ja", "Japanese"),
     ("es", "Spanish"),

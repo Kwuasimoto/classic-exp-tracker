@@ -4,11 +4,48 @@
 //! chat strip (STRIP), which covers the tallest box, the input bar and the toggle button.
 
 use super::ReadError;
-use crate::geom::{Crop, Rect};
+use crate::geom::{Crop, Rect, Scale};
 
 /// Where the chat strip is on a 1366x768 screen: the tallest box (20 bands, its scrollbar
 /// at y 374) down to the closed chat line's descenders (y 722), past the toggle button.
 pub const STRIP: Rect = Rect { x: 283, y: 374, w: 576, h: 349 };
+
+/// The chat strip in native pixels from the chat box's crop, its native pixels landing as
+/// `at` says. At native it's the crop itself. On a bigger 16:9 screen the game's stretch is
+/// taken back out (Scale::native_rgb); that leaves the game's colours up to rounding (on
+/// 1920x1080 frames, 2026-11-02: text inks exact or 1 off, a few edge pixels 2–3), so a
+/// pixel within SNAP of a colour the reader matches exactly is set to it.
+pub fn native_strip(crop: &Crop, at: &Scale) -> Option<Crop> {
+    if *at == Scale::NATIVE && (crop.width, crop.height) == (STRIP.w, STRIP.h) {
+        return Some(crop.clone());
+    }
+    let rgb = at.native_rgb(crop, Rect { x: 0, y: 0, w: STRIP.w, h: STRIP.h })?;
+    let rgba = rgb
+        .chunks_exact(3)
+        .flat_map(|p| {
+            let near = EXACT.iter().find(|c| p.iter().zip(c.iter()).all(|(&a, &b)| a.abs_diff(b) <= SNAP));
+            let [r, g, b] = near.copied().unwrap_or([p[0], p[1], p[2]]);
+            [r, g, b, 255]
+        })
+        .collect();
+    Crop::new(STRIP.w, STRIP.h, rgba)
+}
+
+const SNAP: u8 = 2;
+
+/// Every colour the reader matches exactly.
+const EXACT: [[u8; 3]; 13] = {
+    let mut all = [[0; 3]; 13];
+    let mut i = 0;
+    while i < KNOWN_INKS.len() {
+        all[i] = KNOWN_INKS[i];
+        i += 1;
+    }
+    all[10] = BADGE_RED;
+    all[11] = CLOSED_GREY;
+    all[12] = [0, 0, 0];
+    all
+};
 
 /// Band height; every line, wrapped part or not, takes exactly one band.
 pub const BAND: u32 = 16;
@@ -111,11 +148,15 @@ pub enum LineKind {
     Megaphone(Megaphone),
     /// White "Name obtained [Item] from …" on a red band.
     Crate,
+    /// Pink "[Friend] Name has logged in." on the tint.
+    Friend,
 }
 
 const WHITE: [u8; 3] = [255, 255, 255];
 const PARTY: [u8; 3] = [255, 153, 0];
 const NOTICE: [u8; 3] = [255, 255, 0];
+/// Measured on "[Friend] … has logged in." in 17 frames (2026-11-02).
+const FRIEND: [u8; 3] = [255, 175, 175];
 
 impl Megaphone {
     /// Its text colour and its item names' colour (pink's item colour not seen yet).
@@ -127,6 +168,25 @@ impl Megaphone {
             Megaphone::Channel => &[[0, 63, 127]],
         }
     }
+
+    /// Its item names' colour, brackets included (measured on gold and teal, 2026-11-02).
+    pub fn item_ink(self) -> Option<[u8; 3]> {
+        match self {
+            Megaphone::Gold => Some([255, 254, 153]),
+            Megaphone::Teal => Some([15, 89, 98]),
+            Megaphone::Pink | Megaphone::Channel => None,
+        }
+    }
+}
+
+impl LineKind {
+    /// Its item names' colour, if it has its own.
+    pub fn item_ink(self) -> Option<[u8; 3]> {
+        match self {
+            LineKind::Megaphone(m) => m.item_ink(),
+            _ => None,
+        }
+    }
 }
 
 impl LineKind {
@@ -136,6 +196,7 @@ impl LineKind {
             LineKind::Normal | LineKind::Crate => &[WHITE],
             LineKind::Party => &[PARTY],
             LineKind::Notice => &[NOTICE],
+            LineKind::Friend => &[FRIEND],
             LineKind::Megaphone(m) => m.inks(),
         }
     }
@@ -162,12 +223,17 @@ impl Megaphone {
 }
 const BACKGROUND_TOLERANCE: u8 = 25;
 
+/// The channel megaphone's band lets about 15% of what's behind it through: on row +1 of the
+/// 69 clean ones in the frames (2026-11-02), every pixel was within these bounds, 39 apart in
+/// each channel, and each covered one broke them on 200 or more columns.
+const CHANNEL_BAND: ([u8; 3], [u8; 3]) = ([137, 157, 174], [180, 200, 217]);
+
 /// The box's tint darkens what's behind it: the median of a tinted band's brightest
 /// channel was at most 102 in the frames, scenery above the box's at least 119.
 const TINT_MAX: u8 = 110;
 
-const KNOWN_INKS: [[u8; 3]; 9] =
-    [WHITE, PARTY, NOTICE, [119, 0, 66], [70, 39, 6], [255, 254, 153], [9, 69, 76], [15, 89, 98], [0, 63, 127]];
+const KNOWN_INKS: [[u8; 3]; 10] =
+    [WHITE, PARTY, NOTICE, FRIEND, [119, 0, 66], [70, 39, 6], [255, 254, 153], [9, 69, 76], [15, 89, 98], [0, 63, 127]];
 
 fn median(mut v: Vec<u8>) -> u8 {
     let mid = v.len() / 2;
@@ -227,7 +293,7 @@ pub fn classify(strip: &Crop, top: u32) -> Option<LineKind> {
     // (at most 102 inside the box, at least 119 above it), where a patch of bright scenery
     // can push a 30-column first slot past it.
     let tint = tinted(strip, top, TEXT_X);
-    for kind in [LineKind::Notice, LineKind::Party] {
+    for kind in [LineKind::Notice, LineKind::Party, LineKind::Friend] {
         if ink_count(kind.inks(), TEXT_X) >= MIN_INK && starts_line(kind) {
             return tint.then_some(kind);
         }
@@ -259,6 +325,7 @@ pub fn classify_closed(strip: &Crop) -> Option<LineKind> {
         LineKind::Megaphone(Megaphone::Channel),
         LineKind::Notice,
         LineKind::Party,
+        LineKind::Friend,
         LineKind::Normal,
     ];
     kinds.into_iter().find(|kind| {
@@ -292,9 +359,10 @@ pub fn covered(strip: &Crop, top: u32, kind: LineKind) -> Option<(u32, u32)> {
                 return false;
             }
             match kind {
+                LineKind::Megaphone(Megaphone::Channel) => [r, g, b].iter().enumerate().any(|(i, c)| !(CHANNEL_BAND.0[i]..=CHANNEL_BAND.1[i]).contains(c)),
                 LineKind::Megaphone(m) => [r, g, b].iter().zip(m.background()).any(|(&c, want)| c.abs_diff(want) > BAND_SPREAD),
                 LineKind::Crate => !is_crate_red([r, g, b, a]),
-                LineKind::Normal | LineKind::Party | LineKind::Notice => !KNOWN_INKS.contains(&[r, g, b]) && r.max(g).max(b) > TINT_BRIGHTEST,
+                LineKind::Normal | LineKind::Party | LineKind::Notice | LineKind::Friend => !KNOWN_INKS.contains(&[r, g, b]) && r.max(g).max(b) > TINT_BRIGHTEST,
             }
         })
         .collect();
@@ -369,6 +437,60 @@ pub fn is_ink(strip: &Crop, x: u32, y: u32, ink: [u8; 3]) -> bool {
     }
     let Some(&f) = y.checked_sub(FADE_ROWS.0).and_then(|i| FADE_ROWS.1.get(i as usize)) else { return false };
     [r, g, b].iter().zip(ink).all(|(&got, want)| (f32::from(got) - f32::from(want) * f).abs() <= 2.0)
+}
+
+/// An item name's bracket, found from its pixels: 3 columns from `x`, '[' when `open`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Bracket {
+    pub x: u32,
+    pub open: bool,
+}
+
+pub const BRACKET_W: u32 = 3;
+
+/// The brackets round the item names in the message in columns `span` of band `top`, in
+/// order. An item name is drawn in its own colour, brackets included, so a bracket can only
+/// be at either end of a run of that colour: a '[' at its start, a ']' at its end (a name
+/// wrapped onto the next line has no ']' on the first part and no '[' on the next). Found
+/// here, a bracket is never left to the OCR, which reads "g]" as "gl". None on kinds whose
+/// item names have no colour of their own.
+pub fn brackets(strip: &Crop, top: u32, kind: LineKind, (start, end): (u32, u32)) -> Vec<Bracket> {
+    let Some(ink) = kind.item_ink() else { return Vec::new() };
+    let inked = |x: u32, ink: [u8; 3]| (2..16).any(|r| top + r < strip.height && is_ink(strip, x, top + r, ink));
+    // Runs of columns in one colour: (an item name, first column, last column).
+    let mut runs: Vec<(bool, u32, u32)> = Vec::new();
+    for x in start..end {
+        let item = inked(x, ink);
+        if !item && !kind.inks().iter().any(|&i| i != ink && inked(x, i)) {
+            continue;
+        }
+        match runs.last_mut() {
+            Some((is_item, _, last)) if *is_item == item => *last = x,
+            _ => runs.push((item, x, x)),
+        }
+    }
+    let mut found = Vec::new();
+    for (_, first, last) in runs.into_iter().filter(|r| r.0) {
+        if is_bracket(strip, top, ink, first, true) {
+            found.push(Bracket { x: first, open: true });
+        }
+        if last >= first + 2 * BRACKET_W && is_bracket(strip, top, ink, last, false) {
+            found.push(Bracket { x: last + 1 - BRACKET_W, open: false });
+        }
+    }
+    found
+}
+
+/// Whether the columns at `x` hold a '[' (`open`, x its left column) or a ']' (x its right
+/// column): two columns inked on rows +4 to +12, and a third only on +4, the top serif.
+fn is_bracket(strip: &Crop, top: u32, ink: [u8; 3], x: u32, open: bool) -> bool {
+    let (near, serif) = if open { (Some(x + 1), Some(x + 2)) } else { (x.checked_sub(1), x.checked_sub(2)) };
+    let (Some(near), Some(serif)) = (near, serif) else { return false };
+    if serif.max(x) >= strip.width || top + 12 >= strip.height {
+        return false;
+    }
+    let at = |c: u32, r: u32| is_ink(strip, c, top + r, ink);
+    at(x, 4) && at(near, 4) && at(serif, 4) && (5..=12).all(|r| at(x, r) && at(near, r) && !at(serif, r))
 }
 
 /// A megaphone's channel badge: a white frame 32 px wide (34 with its sides) on band rows
@@ -462,6 +584,9 @@ const COLON_ROWS: [u32; 2] = [6, 13];
 /// Where a line's parts are, as strip column ranges [start, end).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Spans {
+    /// The time the game puts before every line when the player turns timestamps on,
+    /// "[hh:mm]", brackets included.
+    pub time: Option<(u32, u32)>,
     /// The sender: `None` on notices, crate announcements, wrapped parts and lines
     /// without a ':'.
     pub name: Option<(u32, u32)>,
@@ -480,14 +605,18 @@ pub fn split(strip: &Crop, top: u32, kind: LineKind) -> Result<Option<Spans>, Re
     let cols: Vec<(u32, Vec<u32>)> = (TEXT_X.0..TEXT_X.1).map(|x| (x, column(x))).filter(|(_, c)| !c.is_empty()).collect();
     let (Some((first, _)), Some((last, _))) = (cols.first(), cols.last()) else { return Ok(None) };
     let (first, end) = (*first, last + 1);
+    if first >= WRAP_X {
+        return Ok(Some(Spans { time: None, name: None, message: (first, end), continued: false }.continued()));
+    }
+    // The rest is split after the time, whose ':' would pass for the name's.
+    let time = timestamp(strip, top, kind, &cols);
+    let cols: Vec<(u32, Vec<u32>)> = cols.into_iter().filter(|&(x, _)| time.is_none_or(|(_, e)| x >= e)).collect();
+    let Some(&(first, _)) = cols.first() else { return Ok(None) };
     let extent = |from: u32, to: u32| {
         let xs: Vec<u32> = cols.iter().map(|&(x, _)| x).filter(|&x| x >= from && x < to).collect();
         Some((*xs.first()?, xs.last()? + 1))
     };
-    let whole = Spans { name: None, message: (first, end), continued: false };
-    if first >= WRAP_X {
-        return Ok(Some(Spans { continued: true, ..whole }));
-    }
+    let whole = Spans { time, name: None, message: (first, end), continued: false };
     // The first lone column with just the colon's two dots; names have no spaces.
     let by_colon = || {
         let colon = cols.iter().enumerate().find(|&(i, (x, c))| {
@@ -498,18 +627,50 @@ pub fn split(strip: &Crop, top: u32, kind: LineKind) -> Result<Option<Spans>, Re
         });
         match colon {
             None => Some(whole),
-            Some((_, &(x, _))) => extent(x + 1, end).map(|message| Spans { name: extent(first, x), message, continued: false }),
+            Some((_, &(x, _))) => extent(x + 1, end).map(|message| Spans { name: extent(first, x), message, ..whole }),
         }
     };
     Ok(match kind {
         // The closed chat shows megaphones without their badge: split those at the colon.
         LineKind::Megaphone(_) => match badge(strip, top)? {
             None => by_colon(),
-            Some(b) => extent(b.colon_x + 1, end).map(|message| Spans { name: extent(first, b.left), message, continued: false }),
+            Some(b) => extent(b.colon_x + 1, end).map(|message| Spans { name: extent(first, b.left), message, ..whole }),
         },
         LineKind::Normal | LineKind::Party => by_colon(),
-        LineKind::Notice | LineKind::Crate => Some(whole),
+        LineKind::Notice | LineKind::Crate | LineKind::Friend => Some(whole),
     })
+}
+
+impl Spans {
+    fn continued(self) -> Spans {
+        Spans { continued: true, ..self }
+    }
+}
+
+/// The time's '[' and ']': a bar on band rows +4 to +15 (+16 is below the box on the bottom
+/// band) with a serif on +4, one column in (measured 2026-11-02, "[11:10]" on gold and pink).
+const TIME_BAR_ROWS: (u32, u32) = (4, 15);
+/// The time's width, '[' to ']': 41 px for "[11:10]", whose ones are the narrowest digits.
+const TIME_W: (u32, u32) = (30, 60);
+
+/// The "[hh:mm]" at the start of a line, if the player has timestamps on: a '[' in the
+/// line's first column, a ']' within TIME_W, and a ':' (the colon's lone two dots) between
+/// them, which "[Notice]" and other bracketed words don't have.
+fn timestamp(strip: &Crop, top: u32, kind: LineKind, cols: &[(u32, Vec<u32>)]) -> Option<(u32, u32)> {
+    let ink = |x: u32, r: u32| kind.inks().iter().any(|&i| is_ink(strip, x, top + r, i));
+    let bar = |x: u32| (TIME_BAR_ROWS.0..=TIME_BAR_ROWS.1).all(|r| ink(x, r));
+    let serif = |x: u32| ink(x, TIME_BAR_ROWS.0) && !(TIME_BAR_ROWS.0 + 1..=TIME_BAR_ROWS.1).any(|r| ink(x, r));
+    let &(first, _) = cols.first()?;
+    if !(bar(first) && serif(first + 1)) {
+        return None;
+    }
+    let close = (first + TIME_W.0..first + TIME_W.1).find(|&x| bar(x) && serif(x - 1) && !ink(x + 1, TIME_BAR_ROWS.0))?;
+    // Alone, like the name's colon: an "o" has the same two rows inked at its top and bottom.
+    let colon = cols.windows(3).any(|w| {
+        let (prev, (x, rows), next) = (w[0].0, &w[1], w[2].0);
+        (first + 2..close - 1).contains(x) && rows.as_slice() == COLON_ROWS && prev + 1 < *x && next > x + 1
+    });
+    colon.then_some((first, close + 1))
 }
 
 #[cfg(test)]
@@ -521,7 +682,10 @@ mod tests {
     fn strip(name: &str) -> Crop {
         let dir = std::env::var("CHAT_FRAMES").expect("set CHAT_FRAMES to the chat frames folder");
         let img = image::open(std::path::Path::new(&dir).join(name)).unwrap_or_else(|e| panic!("{name}: {e}")).to_rgba8();
-        Crop::from_image(&img).sub(STRIP).expect("1366x768 frame")
+        // Any 16:9 frame, in native pixels as the chat reader gets it.
+        let frame = Crop::from_image(&img);
+        let boxes = crate::geom::boxes_for(frame.width, frame.height, crate::geom::Corner::TopRight).expect("16:9 frame");
+        native_strip(&frame.sub(boxes.chat).expect("chat box"), &boxes.chat_at).expect("native strip")
     }
 
     /// One letter per band, bottom band first: N normal, O party (orange), Y notice,
@@ -537,6 +701,7 @@ mod tests {
                 Some(LineKind::Megaphone(Megaphone::Teal)) => 'T',
                 Some(LineKind::Megaphone(Megaphone::Channel)) => 'C',
                 Some(LineKind::Crate) => 'R',
+                Some(LineKind::Friend) => 'F',
                 None => '-',
             })
             .collect()
@@ -619,7 +784,7 @@ mod tests {
         // "Amala : glgl": the name's ink, then "glgl" after the colon at 53 (strip columns).
         let s = strip("chat2.png");
         let amala = split(&s, band_top(6), LineKind::Normal).expect("readable").expect("a line");
-        assert_eq!(amala, Spans { name: Some((9, 47)), message: (61, 81), continued: false });
+        assert_eq!(amala, Spans { time: None, name: Some((9, 47)), message: (61, 81), continued: false });
         assert!(named > 200, "{named}");
     }
 
@@ -646,9 +811,9 @@ mod tests {
     #[ignore = "needs CHAT_FRAMES"]
     fn chat_walk_marks_covered_lines() {
         let want = [
-            "Teal Teal Teal[475-793] Teal[475-793] Teal[475-793] Channel[442-814] Gold[475-793] Pink[475-793] -",
-            "Pink Teal Teal[475-793] Teal[475-793] Teal[475-793] Teal[475-793] Channel[461-831] Gold[475-793] Pink[475-831] -",
-            "Pink Teal Teal Teal Teal Teal Channel[461-831] Gold[611-831] Pink[611-831] -",
+            "Teal Teal Teal[475-793] Teal[475-793] Teal[475-793] Channel[475-793] Gold[475-793] Pink[475-793] -",
+            "Pink Teal Teal[475-793] Teal[475-793] Teal[475-793] Teal[475-793] Channel[475-793] Gold[475-793] Pink[475-831] -",
+            "Pink Teal Teal Teal Teal Teal Channel Gold[611-831] Pink[611-831] -",
             "Pink Teal Teal Teal[519-831] Teal[309-831] Teal[309-831] Channel[309-831] Gold[309-831] Pink[309-831] -",
             "Pink Teal[312-515] -",
             "Pink Teal[616-819] Teal[613-822] Teal[613-822] Teal[613-822] Teal[613-822] -",
@@ -695,6 +860,8 @@ mod tests {
             ("chat1.png", Toggle::Open, 9, "PPPRRPPPP"),
             ("chat2.png", Toggle::Open, 9, "PPGNPGNYY"),
             ("max.png", Toggle::Open, 20, "PPPPPTTGGPPGGPPTTPGG"),
+            // The game full screen on a 1920x1080 monitor (2026-11-02).
+            ("stretched1080.png", Toggle::Open, 6, "TTGGY-"),
         ] {
             let s = strip(name);
             assert_eq!(toggle(&s), toggle_state, "{name}");

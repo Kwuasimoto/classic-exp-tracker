@@ -19,6 +19,8 @@ pub const REMEMBERED: usize = 1000;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Part {
     pub top: u32,
+    /// The "[hh:mm]" before the line (the first band only, with timestamps on).
+    pub time: Option<(u32, u32)>,
     pub name: Option<(u32, u32)>,
     pub message: (u32, u32),
 }
@@ -98,6 +100,7 @@ fn fingerprint(strip: &Crop, kind: LineKind, tops: &[u32]) -> u64 {
         LineKind::Party => 2,
         LineKind::Notice => 3,
         LineKind::Crate => 4,
+        LineKind::Friend => 5,
         LineKind::Megaphone(m) => 10 + m as u32,
     });
     for (i, &top) in tops.iter().enumerate() {
@@ -151,7 +154,7 @@ impl ChatTracker {
             }
             let continued = spans.is_some_and(|s| s.continued)
                 || (band.kind == LineKind::Notice && !starts_with_bracket(strip, band.top, band.kind.inks()[0]));
-            let part = spans.map(|s| Part { top: band.top, name: s.name, message: s.message });
+            let part = spans.map(|s| Part { top: band.top, time: s.time, name: s.name, message: s.message });
             if continued {
                 match open.as_mut() {
                     Some((m, ok)) if m.kind == band.kind => {

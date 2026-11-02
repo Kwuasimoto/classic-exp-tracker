@@ -13,7 +13,7 @@ use log::{error, info, warn};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
-use crate::capture::{self, CaptureMsg, Control, LootCrops, Regions, Shared};
+use crate::capture::{self, CaptureMsg, ChatCrop, Control, LootCrops, Regions, Shared};
 use crate::loot::LootReader;
 use crate::geom::{boxes_for, resolution_key, Corner, Crop, NATIVE};
 use crate::grinds;
@@ -223,7 +223,7 @@ impl AppState {
     }
 }
 
-pub fn spawn(app: AppHandle, state: Arc<AppState>, chat: SyncSender<(i64, Crop)>) -> std::io::Result<()> {
+pub fn spawn(app: AppHandle, state: Arc<AppState>, chat: SyncSender<(i64, ChatCrop)>) -> std::io::Result<()> {
     let thread_state = Arc::clone(&state);
     let handle = std::thread::Builder::new()
         .name("exp-pipeline".into())
@@ -248,7 +248,7 @@ struct Pipeline {
     tx: SyncSender<CaptureMsg>,
     rx: Receiver<CaptureMsg>,
     /// The chat reader's thread (chat_reader.rs): each chat strip the capture takes.
-    chat: SyncSender<(i64, Crop)>,
+    chat: SyncSender<(i64, ChatCrop)>,
     control: Option<Control>,
     retry_at: Instant,
     backoff: Duration,
@@ -277,7 +277,7 @@ struct Pipeline {
 }
 
 impl Pipeline {
-    fn new(app: AppHandle, state: Arc<AppState>, chat: SyncSender<(i64, Crop)>) -> Self {
+    fn new(app: AppHandle, state: Arc<AppState>, chat: SyncSender<(i64, ChatCrop)>) -> Self {
         let (tx, rx) = sync_channel(4);
         Self {
             app,
@@ -319,8 +319,8 @@ impl Pipeline {
             self.ensure_capture();
             match self.rx.recv_timeout(Duration::from_millis(500)) {
                 Ok(CaptureMsg::Regions { t, width, height, exp, map, level, bar, loot, chat }) => {
-                    if let Some(strip) = chat {
-                        self.send_to_chat_reader(t, strip);
+                    if let Some(chat) = chat {
+                        self.send_to_chat_reader(t, *chat);
                     }
                     self.on_regions(t, (width, height), exp, map, level, &bar, loot.as_deref())
                 }
@@ -445,13 +445,9 @@ impl Pipeline {
         }
     }
 
-    /// Hand a chat strip to the chat reader. It reads only at 1366x768 for now (its
-    /// measurements are native); busy, it drops the strip and takes the next.
-    fn send_to_chat_reader(&mut self, t: i64, strip: Crop) {
-        if (strip.width, strip.height) != (crate::read::chat::STRIP.w, crate::read::chat::STRIP.h) {
-            return;
-        }
-        match self.chat.try_send((t, strip)) {
+    /// Hand the chat box to the chat reader; busy, it drops it and takes the next.
+    fn send_to_chat_reader(&mut self, t: i64, chat: ChatCrop) {
+        match self.chat.try_send((t, chat)) {
             Ok(()) | Err(TrySendError::Full(_)) => {}
             Err(TrySendError::Disconnected(_)) => warn!("chat reader stopped; the chat isn't read"),
         }

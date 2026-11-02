@@ -40,6 +40,7 @@ pub struct Boxes {
     /// readers measure everything inside them in native pixels.
     pub inventory_at: Scale,
     pub quickslot_at: Scale,
+    pub chat_at: Scale,
 }
 
 /// How a box's native pixels land in its crop: `sx`×`sy` screen pixels per native pixel,
@@ -105,11 +106,12 @@ impl Scale {
         let across: Vec<Vec<[f64; 3]>> = ys
             .iter()
             .map(|&y| {
-                (1..=r.w as usize)
-                    .map(|nx| {
+                from_x[1..=r.w as usize]
+                    .iter()
+                    .map(|taps| {
                         let mut v = [0.0; 3];
-                        for (&x, &w) in xs.iter().zip(&from_x[nx]) {
-                            let px = crop.px(x, y);
+                        for &(i, w) in taps {
+                            let px = crop.px(xs[i], y);
                             (0..3).for_each(|c| v[c] += w * f64::from(px[c]));
                         }
                         v
@@ -119,69 +121,74 @@ impl Scale {
             .collect();
         // Then down, the native pixel round its rows' weights.
         let mut out = Vec::with_capacity(r.w as usize * r.h as usize * 3);
-        for weights in &from_y[1..=r.h as usize] {
-            for nx in 0..r.w as usize {
-                for c in 0..3 {
-                    let v: f64 = across.iter().zip(weights).map(|(row, w)| w * row[nx][c]).sum();
-                    out.push(v.round().clamp(0.0, 255.0) as u8);
+        for taps in &from_y[1..=r.h as usize] {
+            let mut row = vec![[0.0; 3]; r.w as usize];
+            for &(i, w) in taps {
+                for (v, a) in row.iter_mut().zip(&across[i]) {
+                    v.iter_mut().zip(a).for_each(|(v, a)| *v += w * a);
                 }
             }
+            out.extend(row.iter().flatten().map(|v| v.round().clamp(0.0, 255.0) as u8));
         }
         Some(out)
     }
 }
 
+/// A native pixel's rebuilding weights: (sample, weight).
+type Taps = Vec<(usize, f64)>;
+
+/// A rebuilding weight smaller than this is left out: the weights fall off fast either side
+/// of a native pixel, and what's left out moves no pixel by as much as rounding does.
+const TAP_MIN: f64 = 1e-7;
+
 /// One axis of Scale::native_rgb, for native pixels `a`..`a + n` with one more either side
 /// (the screen pixels at the run's edges mix those in): the screen pixels sampling only
-/// those native pixels, and for each of the n + 2 native pixels the weights that rebuild it
-/// from them (least squares). `None` when the crop doesn't hold them, or they don't decide
-/// every native pixel.
-fn unstretch(s: f64, o: f64, a: u32, n: u32, len: u32) -> Option<(Vec<u32>, Vec<Vec<f64>>)> {
+/// those native pixels, and for each of the n + 2 native pixels the weights (by sample)
+/// that rebuild it from them (least squares). `None` when the crop doesn't hold them, or
+/// they don't decide every native pixel.
+fn unstretch(s: f64, o: f64, a: u32, n: u32, len: u32) -> Option<(Vec<u32>, Vec<Taps>)> {
     // Screen pixel j's centre samples native position u, native pixel k's centre being at k.
     let u = |j: u32| (f64::from(j) + 0.5 - o) / s - 0.5;
     let (lo, hi) = (f64::from(a) - 1.0, f64::from(a + n));
     let samples: Vec<u32> = (0..len).filter(|&j| (lo..=hi).contains(&u(j))).collect();
     let k = n as usize + 2;
-    // Each sample's mix of the k native pixels.
-    let mix: Vec<Vec<f64>> = samples
-        .iter()
-        .map(|&j| {
-            let v = u(j) - lo;
-            let (i, t) = (v.floor() as usize, v - v.floor());
-            let mut row = vec![0.0; k];
-            row[i] += 1.0 - t;
-            if t > 0.0 {
-                row[i + 1] += t;
-            }
-            row
-        })
-        .collect();
-    // Normal equations: (MᵀM) W = Mᵀ, solved by elimination with partial pivoting.
-    let mut lhs: Vec<Vec<f64>> = (0..k).map(|p| (0..k).map(|q| mix.iter().map(|row| row[p] * row[q]).sum()).collect()).collect();
-    let mut rhs: Vec<Vec<f64>> = (0..k).map(|p| mix.iter().map(|row| row[p]).collect()).collect();
-    for col in 0..k {
-        let pivot = (col..k).max_by(|&x, &y| lhs[x][col].abs().total_cmp(&lhs[y][col].abs()))?;
-        if lhs[pivot][col].abs() < 1e-9 {
+    // Each sample mixes two neighbouring native pixels, so the normal equations
+    // (MᵀM) W = Mᵀ are tridiagonal: MᵀM's diagonal and the entries beside it.
+    let (mut diag, mut side) = (vec![0.0; k], vec![0.0; k]);
+    let mut rhs = vec![vec![0.0; samples.len()]; k];
+    for (r, &j) in samples.iter().enumerate() {
+        let v = u(j) - lo;
+        let (i, t) = (v.floor() as usize, v - v.floor());
+        diag[i] += (1.0 - t) * (1.0 - t);
+        rhs[i][r] += 1.0 - t;
+        if t > 0.0 {
+            diag[i + 1] += t * t;
+            side[i] += (1.0 - t) * t;
+            rhs[i + 1][r] += t;
+        }
+    }
+    // MᵀM is positive definite once every native pixel is sampled, so the elimination needs
+    // no pivoting: down, then back up.
+    for p in 0..k {
+        if p > 0 {
+            let f = side[p - 1] / diag[p - 1];
+            diag[p] -= f * side[p - 1];
+            let (done, rest) = rhs.split_at_mut(p);
+            rest[0].iter_mut().zip(&done[p - 1]).for_each(|(v, above)| *v -= f * above);
+        }
+        if diag[p].abs() < 1e-9 {
             return None;
         }
-        lhs.swap(col, pivot);
-        rhs.swap(col, pivot);
-        let (pivot_lhs, pivot_rhs) = (lhs[col].clone(), rhs[col].clone());
-        for (row, (l, r)) in lhs.iter_mut().zip(rhs.iter_mut()).enumerate() {
-            let f = l[col] / pivot_lhs[col];
-            if row == col || f == 0.0 {
-                continue;
-            }
-            l.iter_mut().zip(&pivot_lhs).for_each(|(v, p)| *v -= f * p);
-            r.iter_mut().zip(&pivot_rhs).for_each(|(v, p)| *v -= f * p);
+    }
+    for p in (0..k).rev() {
+        if p + 1 < k {
+            let (row, below) = rhs.split_at_mut(p + 1);
+            row[p].iter_mut().zip(&below[0]).for_each(|(v, b)| *v -= side[p] * b);
         }
+        rhs[p].iter_mut().for_each(|w| *w /= diag[p]);
     }
-    // The left side is diagonal now.
-    for (i, row) in rhs.iter_mut().enumerate() {
-        let d = lhs[i][i];
-        row.iter_mut().for_each(|w| *w /= d);
-    }
-    Some((samples, rhs))
+    let taps = rhs.into_iter().map(|row| row.into_iter().enumerate().filter(|(_, w)| w.abs() >= TAP_MIN).collect()).collect();
+    Some((samples, taps))
 }
 
 /// The game's own resolution: its EXP font is drawn one screen pixel per font pixel
@@ -203,6 +210,7 @@ const NATIVE_BOXES: Boxes = Boxes {
     chat: crate::read::chat::STRIP,
     inventory_at: Scale::NATIVE,
     quickslot_at: Scale::NATIVE,
+    chat_at: Scale::NATIVE,
 };
 
 /// The corner the user keeps the item inventory in (the top-left one is the minimap's).
@@ -285,6 +293,7 @@ pub fn boxes_for(width: u32, height: u32, corner: Corner) -> Option<Boxes> {
         chat: scale(NATIVE_BOXES.chat),
         inventory_at: place(inventory),
         quickslot_at: place(NATIVE_BOXES.quickslot),
+        chat_at: place(NATIVE_BOXES.chat),
     })
 }
 

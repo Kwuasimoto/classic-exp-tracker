@@ -260,7 +260,7 @@ export const en = {
     startTitle: "Read the chat and translate it (reading it uses some processing power)",
     notFinished: "Not finished yet.",
     notFinishedText: "Reading the chat is being tested: English lines show here as they're read, at 1366×768. Point at a line and click Translate to read it in English.",
-    languages: { "zh-hans": "Chinese (Simplified)", ko: "Korean", ja: "Japanese", es: "Spanish", "pt-br": "Portuguese (Brazil)", th: "Thai" } as Record<string, string>,
+    languages: { "zh-hans": "Chinese (Simplified)", "zh-pinyin": "Chinese (Pinyin)", ko: "Korean", ja: "Japanese", es: "Spanish", "pt-br": "Portuguese (Brazil)", th: "Thai" } as Record<string, string>,
     // Translations view
     log: "Chat as read",
     checking: "Checking what's installed…",
@@ -278,6 +278,7 @@ export const en = {
       "party": "Party",
       "notice": "Notice",
       "crate": "Crate",
+      "friend": "Friend",
       "megaphone-pink": "Megaphone",
       "megaphone-gold": "Megaphone",
       "megaphone-teal": "Megaphone",

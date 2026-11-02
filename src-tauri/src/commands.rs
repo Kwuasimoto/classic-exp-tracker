@@ -474,11 +474,35 @@ pub async fn translate_reply(gemini: State<'_, Gemini>, text: String, language: 
     Ok(gemini.reply(&key, text, language).await?)
 }
 
-/// Translate a line read from the game's chat into English with the saved key (the user
-/// clicked Translate on it).
+/// Translate line `id` read from the game's chat into English with the saved key (the user
+/// clicked Translate on it, in the app or the chat popout). The translation is kept with the
+/// line and sent to every window as it starts and as it's done or fails (chat_reader::ENGLISH_EVENT),
+/// so all of them show the same one; a click while it's being made does nothing.
 #[tauri::command]
-pub async fn translate_line(gemini: State<'_, Gemini>, text: String) -> Result<Translation, AppError> {
-    let text = text.trim();
+pub async fn translate_line(
+    app: tauri::AppHandle,
+    gemini: State<'_, Gemini>,
+    log: State<'_, crate::chat_reader::ChatLog>,
+    id: u64,
+) -> Result<(), AppError> {
+    use crate::chat_reader::{Begin, English};
+    let text = match log.begin_english(id) {
+        Begin::Started(text) => text,
+        Begin::AlreadyBusy => return Ok(()),
+        Begin::Gone => return Err(AppError::NotFound(format!("chat line {id}"))),
+    };
+    let sent = |english| log.set_english(&app, id, english).map_err(|e| AppError::Window(format!("couldn't send the translation: {e}")));
+    // Translated even if Busy couldn't be sent, so the line never stays Busy.
+    let busy = sent(English::Busy);
+    let english = match english_of(&gemini, text.trim()).await {
+        Ok(t) => English::Done { text: t.text, model: t.model },
+        Err(e) => English::Failed { error: e.to_string() },
+    };
+    let done = sent(english);
+    busy.and(done)
+}
+
+async fn english_of(gemini: &Gemini, text: &str) -> Result<Translation, AppError> {
     if text.is_empty() || text.chars().count() > MAX_REPLY_LEN {
         return Err(AppError::Invalid(format!("a line is 1 to {MAX_REPLY_LEN} characters")));
     }

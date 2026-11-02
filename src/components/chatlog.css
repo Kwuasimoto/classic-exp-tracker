@@ -17,6 +17,7 @@
 .chat-megaphone-gold { border-left-color: #e4b407; }
 .chat-megaphone-teal { border-left-color: #5cdac8; }
 .chat-megaphone-channel { border-left-color: #afbcc2; }
+.chat-friend { border-left-color: #ffafaf; }
 .chat-notice { margin: 8px 0; padding: 6px 10px; border-radius: 4px; background: rgba(255, 255, 0, 0.06); color: #e6e46a; font-size: 12.5px; overflow-wrap: anywhere; }
 /* Each line with its English translation under it; its Translate button shows on hover
    (or keyboard focus), half see-through until the pointer is on it. */

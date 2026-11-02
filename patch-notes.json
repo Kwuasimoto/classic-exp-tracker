@@ -2,6 +2,20 @@
   "$comment": "What changed in each version, newest first. Every release needs an entry for its version (the Release workflow fails without one). The last 15 versions' notes go into the release's latest.json, so the app can show everything that changed between the user's version and the newest (src-tauri/src/updater.rs); this version's also go on its release page. Sections, each optional: new (features), convenience (easier or quicker to use), technical (accuracy and performance), fixes.",
   "versions": [
     {
+      "version": "0.13.0",
+      "date": "2026-11-02",
+      "new": [
+        "Chat reader: the Chat translator page now shows the game's chat as it comes in, with each line's channel, sender and type (normal, party, notice, friend logins, megaphones of every colour, and crates). It works at any 16:9 resolution; so far it's been tested at 1366x768 and 1920x1080.",
+        "Translate any chat line to English with one click. A translation shows in both the app and the chat popout.",
+        "Chat popout: a window that sits over the game's chat box and shows the chat as it's read. Like the other popouts, it stays out of screenshots and recordings.",
+        "If timestamps are on in the game's chat, hover a line to see its time.",
+        "Chinese (Pinyin) is now one of the reply languages. Replying hasn't been tested much yet: this version focuses on reading and translating the chat."
+      ],
+      "convenience": [
+        "One pin button on the left rail opens a menu with a switch for each popout, so you can open and close them from one place."
+      ]
+    },
+    {
       "version": "0.12.0",
       "date": "2026-11-02",
       "new": [

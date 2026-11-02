@@ -51,9 +51,17 @@ pub struct LootCrops {
     pub quickslot_at: Scale,
 }
 
+/// The chat box, cropped only while the chat translator is on.
+#[derive(Debug)]
+pub struct ChatCrop {
+    pub crop: Crop,
+    /// Where the box's native pixels land in the crop (geom::Boxes).
+    pub at: Scale,
+}
+
 #[derive(Debug)]
 pub enum CaptureMsg {
-    Regions { t: i64, width: u32, height: u32, exp: Crop, map: Crop, level: Crop, bar: Crop, loot: Option<Box<LootCrops>>, chat: Option<Crop> },
+    Regions { t: i64, width: u32, height: u32, exp: Crop, map: Crop, level: Crop, bar: Crop, loot: Option<Box<LootCrops>>, chat: Option<Box<ChatCrop>> },
     /// A frame at a resolution the pipeline has no boxes for (yet).
     NoBoxes { width: u32, height: u32 },
     Closed,
@@ -132,7 +140,11 @@ impl GraphicsCaptureApiHandler for Handler {
                 } else {
                     None
                 };
-                let chat = if self.shared.chat_enabled.load(Ordering::Acquire) { Some(copy_region(frame, r.boxes.chat)?) } else { None };
+                let chat = if self.shared.chat_enabled.load(Ordering::Acquire) {
+                    Some(Box::new(ChatCrop { crop: copy_region(frame, r.boxes.chat)?, at: r.boxes.chat_at }))
+                } else {
+                    None
+                };
                 CaptureMsg::Regions {
                     t: now_unix(),
                     width,

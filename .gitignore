@@ -2,6 +2,7 @@
 node_modules/
 dist/
 src-tauri/target/
+src-tauri/target-tools/
 src-tauri/gen/schemas/
 
 # App data: the tracker's database and logs live in %APPDATA% and %LOCALAPPDATA%,

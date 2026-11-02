@@ -211,15 +211,27 @@ export const onTick = (cb: (tick: Result<Tick, AppError>) => void) =>
   });
 
 
+/** A chat line's English translation, kept with the line so every window shows the same one. */
+export const EnglishSchema = z.discriminatedUnion("state", [
+  z.object({ state: z.literal("busy") }),
+  z.object({ state: z.literal("done"), text: z.string(), model: z.string() }),
+  z.object({ state: z.literal("failed"), error: z.string() }),
+]);
+export type English = z.infer<typeof EnglishSchema>;
+
 /** A chat message as read (chat_reader.rs): the sender is empty on notices and crate
  *  announcements; confidence is the reader's lowest for any character. */
 export const ChatLineSchema = z.object({
+  id: z.number().int(),
   t: z.number().int(),
+  /** The game's own "hh:mm", when the player has its chat timestamps on. */
+  time: z.string().nullable(),
   kind: z.string(),
   channel: z.number().int().nullable(),
   sender: z.string(),
   text: z.string(),
   confidence: z.number(),
+  english: EnglishSchema.nullable(),
 });
 export type ChatLine = z.infer<typeof ChatLineSchema>;
 
@@ -228,6 +240,13 @@ export const onChatLine = (cb: (line: Result<ChatLine, AppError>) => void) =>
   subscribe("chat-line", (payload) => {
     const parsed = ChatLineSchema.safeParse(payload);
     cb(parsed.success ? ok(parsed.data) : err({ kind: "ipc", message: `unexpected chat line: ${parsed.error.message}` }));
+  });
+const EnglishChangeSchema = z.object({ id: z.number().int(), english: EnglishSchema });
+/** A line's translation started, was done or failed, in whichever window it was asked for. */
+export const onChatEnglish = (cb: (change: Result<z.infer<typeof EnglishChangeSchema>, AppError>) => void) =>
+  subscribe("chat-english", (payload) => {
+    const parsed = EnglishChangeSchema.safeParse(payload);
+    cb(parsed.success ? ok(parsed.data) : err({ kind: "ipc", message: `unexpected chat translation: ${parsed.error.message}` }));
   });
 
 /** The chat translator (translator.rs): on or off, and its chat reader's download (the
@@ -275,7 +294,7 @@ export const removeReader = () => call("remove_reader", z.null());
 /** On needs the chat reader downloaded. */
 export const setTranslatorEnabled = (on: boolean) => call("set_translator_enabled", z.null(), { on });
 /** What replies can be translated into (gemini.rs LANGUAGES). */
-export const REPLY_LANGUAGES = ["zh-hans", "ko", "ja", "es", "pt-br", "th"] as const;
+export const REPLY_LANGUAGES = ["zh-hans", "zh-pinyin", "ko", "ja", "es", "pt-br", "th"] as const;
 
 /** Whether a Gemini API key is saved (the key stays in Windows Credential Manager). */
 export const translatorKeySaved = () => call("translator_key_saved", z.boolean());
@@ -286,8 +305,9 @@ export const removeTranslatorKey = () => call("remove_translator_key", z.null())
 export const translateReply = (text: string, language: string) =>
   call("translate_reply", z.object({ text: z.string(), model: z.string() }), { text, language });
 
-/** Translate a line read from the game's chat into English, whatever its language (gemini.rs). */
-export const translateLine = (text: string) => call("translate_line", z.object({ text: z.string(), model: z.string() }), { text });
+/** Translate chat line `id` into English, whatever its language (gemini.rs); the translation
+ *  arrives in every window through onChatEnglish. */
+export const translateLine = (id: number) => call("translate_line", z.null(), { id });
 
 /** Updates (updater.rs): checked 10 s after launch and hourly while `autoCheck`; `ready` is a
  *  newer version, downloaded and its signature checked, that installs on Restart. */

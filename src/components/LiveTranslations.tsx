@@ -4,7 +4,7 @@ import { REPLY_LANGUAGES, translateReply, type TranslatorStatus } from "../lib/i
 import { ChatLog } from "./ChatLog";
 
 /** BCP 47 tags of the translator's language ids, for the translation's `lang`. */
-const LANG_TAG: Record<string, string> = { "zh-hans": "zh-Hans", "pt-br": "pt-BR" };
+const LANG_TAG: Record<string, string> = { "zh-hans": "zh-Hans", "zh-pinyin": "zh-Latn-pinyin", "pt-br": "pt-BR" };
 
 /** A translation still running after this long gets the high-demand note. */
 const SLOW_MS = 2000;
