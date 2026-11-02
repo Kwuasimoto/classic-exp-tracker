@@ -1,0 +1,62 @@
+# Announces a release in the Discord server's #exp-tracker channel when it's published (the
+# Release workflow builds and checks it as a draft; publishing it is what ships it), with that
+# version's patch notes from patch-notes.json, pinging the Tracker updates role. Run it by hand
+# with a version to post that version's announcement again.
+#
+# It posts through a webhook made on #exp-tracker (secret DISCORD_WEBHOOK_URL), which can post in
+# that one channel and nothing else; the Tracker updates role's ID is the variable
+# DISCORD_TRACKER_ROLE_ID, and that role is the only thing the post may ping.
+name: Announce
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to announce, e.g. 0.12.0 (its release must exist)
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  discord:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || format('v{0}', inputs.version) }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.VERSION }}
+
+      - name: Post to #exp-tracker
+        shell: pwsh
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          ROLE_ID: ${{ vars.DISCORD_TRACKER_ROLE_ID }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          if (-not $env:WEBHOOK) { throw "the secret DISCORD_WEBHOOK_URL isn't set" }
+          if ($env:ROLE_ID -notmatch '^\d{17,20}$') { throw "the variable DISCORD_TRACKER_ROLE_ID isn't a role ID" }
+          $version = $env:VERSION.TrimStart('v')
+          $notes = @((Get-Content -Raw patch-notes.json | ConvertFrom-Json).versions | Where-Object { $_.version -eq $version })
+          if ($notes.Count -ne 1) { throw "patch-notes.json at $env:VERSION has no single entry for $version" }
+          $sections = [ordered]@{ new = 'New'; convenience = 'Convenience'; technical = 'Accuracy & performance'; fixes = 'Fixes' }
+          $lines = @()
+          foreach ($key in $sections.Keys) {
+            $items = @($notes[0].$key | Where-Object { $_ })
+            if ($items.Count -gt 0) { $lines += "**$($sections[$key])**"; $lines += $items | ForEach-Object { "- $_" }; $lines += '' }
+          }
+          $description = ($lines -join "`n").Trim()
+          # Discord's limit for an embed's text.
+          if ($description.Length -gt 4000) { $description = $description.Substring(0, 3990) + "`n…" }
+          $release = "$env:REPO_URL/releases/tag/v$version"
+          $message = [ordered]@{
+            content = "<@&$env:ROLE_ID> **Classic EXP Tracker v$version** is out.`nClick the version number in the app's title bar to see what changed, then **Update to v$version**."
+            allowed_mentions = @{ parse = @(); roles = @($env:ROLE_ID) }
+            embeds = @(@{ title = "What's new in v$version"; url = $release; description = $description; color = 0xF68D13 })
+          }
+          $body = ConvertTo-Json -InputObject $message -Depth 6
+          Invoke-RestMethod -Method Post -Uri "$($env:WEBHOOK)?wait=true" -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($body)) | Out-Null
+          "Announced v$version in #exp-tracker" >> $env:GITHUB_STEP_SUMMARY
